@@ -4,6 +4,15 @@
   "description": "petari — paste AI chat patches onto your codebase",
   "keywords": ["cli", "ai", "patch", "diff", "apply"],
   "license": "MIT",
+  "author": "Yuki Sakakibara",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ishibashi0112/petari.git"
+  },
+  "homepage": "https://github.com/ishibashi0112/petari#readme",
+  "bugs": {
+    "url": "https://github.com/ishibashi0112/petari/issues"
+  },
   "type": "module",
   "bin": {
     "petari": "./dist/cli.js"
