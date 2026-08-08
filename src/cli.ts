@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { err as errLine } from "./infra/term.ts";
 
 const SUBCOMMANDS = ["undo", "show", "list", "protocol", "init"] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number] | "apply";
@@ -84,7 +85,8 @@ if (invokedDirectly || process.argv[1]?.endsWith("cli.js") || process.argv[1]?.e
       process.exitCode = code;
     },
     (err: unknown) => {
-      process.stderr.write(`petari: ${err instanceof Error ? err.message : String(err)}\n`);
+      // エラーメッセージには changes.md 由来の文字が混入し得るためサニタイズして出力
+      errLine(`petari: ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
     },
   );

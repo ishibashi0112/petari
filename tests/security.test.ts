@@ -39,6 +39,11 @@ describe("invalidPathReason: Windows 特殊パス (指摘 6)", () => {
     expect(invalidPathReason("src/nullable.vb")).toBeNull();
     expect(invalidPathReason("com10/x.ts")).toBeNull();
   });
+  it("末尾ドット/空白での予約名バイパスを拒否する (Windows は末尾を無視して解釈)", () => {
+    expect(invalidPathReason("src/con.")).not.toBeNull();
+    expect(invalidPathReason("src/aux.txt ")).not.toBeNull();
+    expect(invalidPathReason("nul...")).not.toBeNull();
+  });
 });
 
 describe("symlink ディレクトリ経由のルート外書き込み防止 (指摘 2)", () => {
@@ -99,9 +104,11 @@ describe("undo は改ざんされた manifest を拒否する (指摘 1)", () =>
 });
 
 describe("vscodeCommand の形式制限 (指摘 3)", () => {
-  it("相対パスを拒否し、コマンド名と絶対パスを許可する", () => {
+  it("相対パス・UNC を拒否し、コマンド名と絶対パスを許可する", () => {
     expect(invalidVscodeCommandReason("./evil.sh")).not.toBeNull();
     expect(invalidVscodeCommandReason("scripts\\evil.cmd")).not.toBeNull();
+    expect(invalidVscodeCommandReason("\\\\server\\share\\evil.exe")).not.toBeNull();
+    expect(invalidVscodeCommandReason("//server/share/evil")).not.toBeNull();
     expect(invalidVscodeCommandReason("")).not.toBeNull();
     expect(invalidVscodeCommandReason("code")).toBeNull();
     expect(invalidVscodeCommandReason("code-insiders")).toBeNull();
@@ -128,5 +135,31 @@ describe("sanitizeForTerminal (指摘 4)", () => {
     expect(sanitizeForTerminal("\u001b[31m赤\u001b[0m")).toBe("[31m赤[0m");
     expect(sanitizeForTerminal("a\u0007b\u0000c\u009bd")).toBe("abcd");
     expect(sanitizeForTerminal("line1\nline2\tend")).toBe("line1\nline2\tend");
+  });
+
+  it("双方向制御文字 (Trojan Source) を除去する", () => {
+    expect(sanitizeForTerminal("a\u202egnp.exe")).toBe("agnp.exe");
+    expect(sanitizeForTerminal("x\u2066y\u2069z\u200f")).toBe("xyz");
+  });
+});
+
+describe("config の実行時検証 (指摘 5 追補)", () => {
+  it("不正な newFile.encoding / historyLimit は明確なエラーになる", async () => {
+    const { loadConfig } = await import("../src/infra/config.ts");
+    const root = mkdtempSync(join(tmpdir(), "petari-sec-cfg-"));
+    mkdirSync(join(root, ".petari"));
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ newFile: { encoding: "utf16" } }),
+      "utf8",
+    );
+    expect(() => loadConfig(root)).toThrow(/newFile\.encoding/);
+
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ historyLimit: -5 }),
+      "utf8",
+    );
+    expect(() => loadConfig(root)).toThrow(/historyLimit/);
   });
 });

@@ -28,6 +28,9 @@ const execFileP = promisify(execFile);
  */
 export function invalidVscodeCommandReason(cmd: string): string | null {
   if (cmd.trim() === "") return "vscodeCommand が空です";
+  if (cmd.startsWith("\\\\") || cmd.startsWith("//")) {
+    return "vscodeCommand に UNC パスは使えません";
+  }
   if ((cmd.includes("/") || cmd.includes("\\")) && !isAbsolute(cmd)) {
     return "vscodeCommand に相対パスは使えません (コマンド名または絶対パスを指定してください)";
   }

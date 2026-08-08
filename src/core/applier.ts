@@ -89,7 +89,8 @@ export function invalidPathReason(path: string): string | null {
   const segments = path.split("/");
   if (segments.includes("..")) return "'..' を含むパスは使えません";
   if (path.startsWith("~")) return "'~' で始まるパスは使えません";
-  if (segments.some((s) => WINDOWS_RESERVED.test(s))) {
+  // Windows は末尾のドット/空白を無視して解釈するため、除去してから予約名判定する
+  if (segments.some((s) => WINDOWS_RESERVED.test(s.replace(/[. ]+$/, "")))) {
     return "Windows の予約デバイス名 (CON, NUL, COM1 等) を含むパスは使えません";
   }
   return null;
