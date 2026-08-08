@@ -97,7 +97,9 @@
 
 ## メモ
 
-- npm への publish は未実施。package.json は publish 可能な形 (files: dist, bin)。
-  ユーザーの npm 認証を得てから `pnpm build && pnpm publish` で名前を確保する
+- npm へ publish 済み (2026-08-08, v0.1.0)。リポジトリ: https://github.com/ishibashi0112/petari
+  リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
+- 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
+  (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) は自動テストなし (実機確認のみ)。
   Windows 実機での Get-Clipboard / reg query / Known Folder の動作確認が未了
