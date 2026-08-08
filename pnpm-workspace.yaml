@@ -1,0 +1,9 @@
+packages:
+  - "."
+
+allowBuilds:
+  # esbuild は optionalDependencies でバイナリ配布されるため postinstall 不要
+  esbuild: false
+
+# サプライチェーン対策: 公開から 7 日未満のバージョンをインストールしない
+minimumReleaseAge: 10080
