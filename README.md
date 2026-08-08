@@ -25,6 +25,22 @@ git diff                 # VS Code で差分レビュー・手修正
 petari undo              # 直近の適用を巻き戻す
 ```
 
+### slnmix 連携 (レガシー VB.NET プロジェクト)
+
+[slnmix](https://www.npmjs.com/package/slnmix) v0.7.0 以降は、入力 (.sln / .vbproj) と
+同じディレクトリにある `protocol.md` を出力末尾に自動で連結します (repomix の
+`instructionFilePath` 相当。別の場所に置く場合は `--instruction-file <path>`)。
+
+```sh
+npx petari init      # protocol.md を生成 (.sln と同じプロジェクト直下に)
+npx slnmix           # .sln を解析。出力末尾に規約文が自動で付く
+                     # → 出力を M365 Copilot Chat に貼る
+petari               # 返答 (changes.md) を適用
+```
+
+petari の更新で規約文が変わった場合は、`petari init` を再実行すると protocol.md の
+差分を検出して更新を提案します (slnmix 側の更新は不要)。
+
 ### コマンド
 
 | コマンド | 説明 |

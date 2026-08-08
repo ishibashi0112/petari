@@ -105,6 +105,6 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   out("");
   out("セットアップ完了。repomix 実行で規約文入りのコンテキストが生成されます。");
-  out("slnmix を使う場合は、出力に protocol.md を連結してください (petari protocol でも出力できます)。");
+  out("slnmix (v0.7.0+) は同じディレクトリの protocol.md を出力末尾に自動連結します。");
   return 0;
 }

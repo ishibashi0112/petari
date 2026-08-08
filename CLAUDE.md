@@ -103,3 +103,10 @@
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) は自動テストなし (実機確認のみ)。
   Windows 実機での Get-Clipboard / reg query / Known Folder の動作確認が未了
+- slnmix 連携は slnmix v0.7.0 (2026-08-08) で対応済み: 入力と同じディレクトリの
+  protocol.md を `<instruction>` タグで囲んで出力末尾に自動連結する。このため
+  **規約文に `<instruction>` という文字列を含めない** (protocol.ts の docstring にも明記)。
+  規約文の変更時は PROTOCOL_VERSION を上げ、利用者には `petari init` 再実行で追従してもらう
+- Bun 移行は検討の上で不採用 (2026-08-08)。run-once CLI のため速度差は知覚不能、
+  npm 配布 (Node 前提) と情シス審査向けの保守的構成を優先。テストが遅くなったら
+  `bun test` のみの部分採用を再検討

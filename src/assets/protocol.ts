@@ -3,6 +3,8 @@
  * slnmix は `petari protocol` の出力を取り込み、repomix は
  * `petari protocol > protocol.md` + instructionFilePath で読み込む。
  * 内容を変更したら PROTOCOL_VERSION を上げること。
+ * 制約: slnmix (v0.7.0+) はこのテキストを <instruction>...</instruction> で囲んで
+ * 出力へ連結するため、規約文に <instruction> という文字列を含めないこと。
  */
 export const PROTOCOL_VERSION = 1;
 
