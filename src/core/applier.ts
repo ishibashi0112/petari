@@ -27,6 +27,8 @@ export interface FileState {
   exists: boolean;
   symlink: boolean;
   bytes: Uint8Array | null;
+  /** パスが symlink ディレクトリ経由でプロジェクトルートの外を指している (§9) */
+  escapesRoot?: boolean;
 }
 
 export type FailureKind =
@@ -74,14 +76,22 @@ export interface Plan {
   ok: boolean;
 }
 
-/** §9: プロジェクトルート相対のみ。絶対パス・`..`・`~` を拒否 */
+/** Windows の予約デバイス名 (拡張子付きも不可) */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..+)?$/i;
+
+/** §9: プロジェクトルート相対のみ。絶対パス・`..`・`~`・Windows 特殊パスを拒否 */
 export function invalidPathReason(path: string): string | null {
   if (path.trim() === "") return "パスが空です";
   if (path.startsWith("/") || path.startsWith("\\\\") || /^[a-zA-Z]:/.test(path)) {
     return "絶対パスは使えません (プロジェクトルート相対で指定してください)";
   }
-  if (path.split("/").includes("..")) return "'..' を含むパスは使えません";
+  if (path.includes(":")) return "':' を含むパスは使えません (Windows の代替データストリーム対策)";
+  const segments = path.split("/");
+  if (segments.includes("..")) return "'..' を含むパスは使えません";
   if (path.startsWith("~")) return "'~' で始まるパスは使えません";
+  if (segments.some((s) => WINDOWS_RESERVED.test(s))) {
+    return "Windows の予約デバイス名 (CON, NUL, COM1 等) を含むパスは使えません";
+  }
   return null;
 }
 
@@ -163,6 +173,13 @@ function planReplace(
 function planFile(change: FileChange, state: FileState, newFile: NewFileConfig): FileOutcome {
   const pathReason = invalidPathReason(change.path);
   if (pathReason !== null) return fileFailure(change, "path-invalid", pathReason);
+  if (state.escapesRoot === true) {
+    return fileFailure(
+      change,
+      "path-invalid",
+      "シンボリックリンクを経由してプロジェクトルートの外を指しています (§9)",
+    );
+  }
   if (state.symlink) {
     return fileFailure(change, "symlink", "シンボリックリンクは書き換え対象外です (§9)");
   }

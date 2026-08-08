@@ -8,9 +8,7 @@ import { parseArgs } from "node:util";
 import { PROTOCOL_TEXT } from "../assets/protocol.ts";
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
-
-const out = (s: string): void => void process.stdout.write(s + "\n");
-const err = (s: string): void => void process.stderr.write(s + "\n");
+import { err, out } from "../infra/term.ts";
 
 const CONFIG_TEMPLATE = `{
   "downloadsDir": null,

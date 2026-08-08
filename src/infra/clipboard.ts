@@ -48,13 +48,15 @@ export async function writeClipboard(text: string): Promise<void> {
     return;
   }
   if (process.platform === "win32") {
-    // コンソールのコードページに依存しないよう UTF-8 の一時ファイル経由で渡す
+    // コンソールのコードページに依存しないよう UTF-8 の一時ファイル経由で渡す。
+    // パスは PowerShell の単一引用符で渡す (' は '' にエスケープ。展開・注入が起きない)
     const file = join(mkdtempSync(join(tmpdir(), "petari-clip-")), "report.txt");
     writeFileSync(file, text, "utf8");
+    const quoted = `'${file.replaceAll("'", "''")}'`;
     await execFileP("powershell", [
       "-NoProfile",
       "-Command",
-      `Get-Content -Raw -Encoding UTF8 "${file}" | Set-Clipboard`,
+      `Get-Content -Raw -Encoding UTF8 -LiteralPath ${quoted} | Set-Clipboard`,
     ]);
     return;
   }

@@ -22,8 +22,9 @@ import {
   resolveDownloadsDir,
   type CandidateFile,
 } from "../infra/downloads.ts";
-import { deleteFile, readFileState, sha256, writeBytes } from "../infra/files.ts";
+import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
 import { gitDirtyFiles } from "../infra/git.ts";
+import { err, out } from "../infra/term.ts";
 import {
   beginHistory,
   createHistoryId,
@@ -34,9 +35,6 @@ import {
 } from "../infra/history.ts";
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
-
-const out = (s: string): void => void process.stdout.write(s + "\n");
-const err = (s: string): void => void process.stderr.write(s + "\n");
 
 /** --partial 時: このファイルは書き込み対象か */
 function isApplicable(o: FileOutcome): boolean {
@@ -159,12 +157,17 @@ export async function applyCommand(argv: string[]): Promise<number> {
   // 2. 全ブロックのドライラン検証
   const states = new Map<string, FileState>();
   for (const f of changeSet.files) {
-    states.set(
-      f.path,
-      invalidPathReason(f.path) === null
-        ? readFileState(join(root, f.path))
-        : { exists: false, symlink: false, bytes: null },
-    );
+    if (invalidPathReason(f.path) !== null) {
+      states.set(f.path, { exists: false, symlink: false, bytes: null });
+      continue;
+    }
+    const abs = join(root, f.path);
+    // symlink ディレクトリ経由でルート外に出るパスは検証段階で失敗させる (§9)
+    if (!isInsideRoot(root, abs)) {
+      states.set(f.path, { exists: false, symlink: false, bytes: null, escapesRoot: true });
+      continue;
+    }
+    states.set(f.path, readFileState(abs));
   }
   const plan: Plan = planChangeSet(changeSet, states, config.newFile);
 

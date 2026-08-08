@@ -7,14 +7,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { invalidPathReason } from "../core/applier.ts";
 import { loadConfig } from "../infra/config.ts";
-import { deleteFile, readFileState, sha256, writeBytes } from "../infra/files.ts";
+import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
 import { historyRoot, listHistoryIds, readManifest, type ManifestFileEntry } from "../infra/history.ts";
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
-
-const out = (s: string): void => void process.stdout.write(s + "\n");
-const err = (s: string): void => void process.stderr.write(s + "\n");
+import { err, out } from "../infra/term.ts";
 
 interface UndoAction {
   entry: ManifestFileEntry;
@@ -58,8 +57,22 @@ export async function undoCommand(argv: string[]): Promise<number> {
   // 逆適用の材料を全件検証してから書き込む (undo 自体も all-or-nothing)
   const actions: UndoAction[] = [];
   for (const entry of applied) {
+    // manifest は改ざんされ得るため、apply と同じパス検証をここでも行う (§9)
+    const pathReason = invalidPathReason(entry.path);
+    if (pathReason !== null) {
+      err(`petari: manifest のパスが不正です: ${entry.path} (${pathReason})`);
+      return 1;
+    }
     const abs = join(root, entry.path);
+    if (!isInsideRoot(root, abs)) {
+      err(`petari: manifest のパスがプロジェクトルートの外を指しています: ${entry.path}`);
+      return 1;
+    }
     const current = readFileState(abs);
+    if (current.symlink) {
+      err(`petari: シンボリックリンクは巻き戻し対象外です: ${entry.path}`);
+      return 1;
+    }
     let restoreBytes: Uint8Array | null = null;
     if (entry.op !== "create") {
       const beforePath = join(hdir, "before", entry.path);

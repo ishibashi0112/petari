@@ -76,6 +76,21 @@
 - Downloads 由来の適用成功後は元ファイルを削除 (原本は history に保存済み)
 - 失敗レポートは SEARCH と REPLACE の両方を引用 (単体で AI に貼り返せるように)
 
+### セキュリティ設計 (2026-08-08 レビューで確定)
+
+- 信頼境界: changes.md (AI/クリップボード由来) と、リポジトリ同梱され得る
+  `.petari/` (config.json / manifest.json) は**非信頼入力**として扱う
+- パス検証 (`invalidPathReason`) は apply だけでなく **undo / show でも manifest のパスに適用**する
+- 書き込み系は `isInsideRoot` (最も近い実在祖先ディレクトリの realpath がルート配下か) で
+  **symlink ディレクトリ経由のルート外書き込みを拒否**。undo は対象が symlink 化されていても拒否
+- パス規則: 絶対パス・UNC・ドライブレター・`..`・`~`・`:` (ADS)・Windows 予約デバイス名を拒否
+- `vscodeCommand` はコマンド名か絶対パスのみ (相対パス拒否 — リポジトリ内スクリプトの実行防止)
+- 端末出力は `src/infra/term.ts` の `out`/`err` を必ず使う (C0/C1 制御文字を除去。
+  ANSI エスケープ注入対策)。`process.stdout.write` 直書きは protocol (信頼済み同梱テキスト) のみ可
+- 子プロセスは常に execFile/spawn の配列引数 (シェル非経由)。PowerShell へ渡すパスは
+  単一引用符 + `''` エスケープ
+- 許容済みの残リスク: 検証と書き込みの間の TOCTOU (単独利用 CLI のため)
+
 ## メモ
 
 - npm への publish は未実施。package.json は publish 可能な形 (files: dist, bin)。

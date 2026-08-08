@@ -8,18 +8,31 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
+import { invalidPathReason } from "../core/applier.ts";
 import { parseChanges } from "../core/parser.ts";
 import { loadConfig } from "../infra/config.ts";
 import { historyRoot, listHistoryIds, readManifest, type ManifestFileEntry } from "../infra/history.ts";
 import { createInterface } from "node:readline/promises";
 import { findProjectRoot } from "../infra/root.ts";
+import { err, out } from "../infra/term.ts";
 
 const execFileP = promisify(execFile);
-const out = (s: string): void => void process.stdout.write(s + "\n");
-const err = (s: string): void => void process.stderr.write(s + "\n");
+
+/**
+ * vscodeCommand の形式制限 (セキュリティレビュー指摘 3)。
+ * プロジェクト設定はリポジトリに同梱され得るため、リポジトリ内のスクリプトを
+ * 指せる相対パス (./evil.sh 等) を拒否する。PATH 上のコマンド名か絶対パスのみ許可。
+ */
+export function invalidVscodeCommandReason(cmd: string): string | null {
+  if (cmd.trim() === "") return "vscodeCommand が空です";
+  if ((cmd.includes("/") || cmd.includes("\\")) && !isAbsolute(cmd)) {
+    return "vscodeCommand に相対パスは使えません (コマンド名または絶対パスを指定してください)";
+  }
+  return null;
+}
 
 let emptyFileCache: string | null = null;
 function emptyFile(): string {
@@ -130,6 +143,18 @@ export async function showCommand(argv: string[]): Promise<number> {
       return 1;
     }
     entry = picked;
+  }
+
+  // manifest は改ざんされ得るため、パスと起動コマンドをここでも検証する (§9)
+  const pathReason = invalidPathReason(entry.path);
+  if (pathReason !== null) {
+    err(`petari: manifest のパスが不正です: ${entry.path} (${pathReason})`);
+    return 1;
+  }
+  const cmdReason = invalidVscodeCommandReason(config.vscodeCommand);
+  if (cmdReason !== null) {
+    err(`petari: ${cmdReason}: ${config.vscodeCommand}`);
+    return 1;
   }
 
   const pair = resolveDiffPair(root, hdir, entry, values.mine);

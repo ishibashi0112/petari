@@ -1,7 +1,40 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, sep } from "node:path";
 import type { FileState } from "../core/applier.ts";
+
+/**
+ * absPath の「存在する最も近い祖先ディレクトリ」の実体 (realpath) が
+ * root 配下にあるかを検証する (§9 の defense-in-depth)。
+ * プロジェクト内の symlink ディレクトリを経由したルート外への書き込みを防ぐ。
+ */
+export function isInsideRoot(root: string, absPath: string): boolean {
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    return false;
+  }
+  let dir = dirname(absPath);
+  for (;;) {
+    try {
+      const real = realpathSync(dir);
+      return real === rootReal || real.startsWith(rootReal + sep);
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return false;
+      dir = parent;
+    }
+  }
+}
 
 /** 適用対象ファイルの状態を読む (シンボリックリンク検出は lstat・§9) */
 export function readFileState(absPath: string): FileState {

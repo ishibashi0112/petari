@@ -7,8 +7,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { historyRoot, listHistoryIds, readManifest } from "../infra/history.ts";
 import { findProjectRoot } from "../infra/root.ts";
-
-const out = (s: string): void => void process.stdout.write(s + "\n");
+import { out } from "../infra/term.ts";
 
 function dirSize(dir: string): number {
   let total = 0;
