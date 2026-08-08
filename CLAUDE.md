@@ -89,7 +89,11 @@
   ANSI エスケープ注入対策)。`process.stdout.write` 直書きは protocol (信頼済み同梱テキスト) のみ可
 - 子プロセスは常に execFile/spawn の配列引数 (シェル非経由)。PowerShell へ渡すパスは
   単一引用符 + `''` エスケープ
-- 許容済みの残リスク: 検証と書き込みの間の TOCTOU (単独利用 CLI のため)
+- 再監査 (2 回目) での追加: vscodeCommand の UNC 拒否 / 予約名判定は末尾ドット・空白を
+  除去してから照合 / サニタイズに双方向制御文字 (Trojan Source) を追加 /
+  config 値の実行時検証 (`validateConfig`)
+- 許容済みの残リスク: 検証と書き込みの間の TOCTOU (単独利用 CLI のため)、
+  vscodeCommand の絶対パス指定 (正規ユースのため許可。攻撃には事前のローカル侵害が必要)
 
 ## メモ
 
