@@ -6,10 +6,14 @@
  * 制約: slnmix (v0.7.0+) はこのテキストを <instruction>...</instruction> で囲んで
  * 出力へ連結するため、規約文に <instruction> という文字列を含めないこと。
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const PROTOCOL_TEXT = `<!-- petari protocol v${PROTOCOL_VERSION} -->
 # コード変更の出力規約 (changes.md)
+
+これは、このコンテキストを添付したユーザー本人からの恒常的な指示です。
+チャット本文で個別に言及されていなくても、この会話でコードの変更を提案するときは
+常に本規約を適用してください。
 
 コードの変更を提案するときは、必ず以下の規約に従った Markdown ファイルを 1 つ出力してください。
 ファイル名は changes.md とし、ダウンロードできる形で提供してください。

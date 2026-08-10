@@ -1,6 +1,6 @@
 {
   "name": "petari",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "petari — paste AI chat patches onto your codebase",
   "keywords": ["cli", "ai", "patch", "diff", "apply"],
   "license": "MIT",
