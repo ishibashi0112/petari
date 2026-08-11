@@ -196,7 +196,7 @@ describe("planChangeSet: create / rewrite / delete", () => {
     expect(plan.failures[0]?.kind).toBe("target-missing");
   });
 
-  it("delete は afterBytes なしで成功、対象なしなら target-missing", () => {
+  it("delete は afterBytes なしで成功、対象なしなら適用済み扱い (冪等性)", () => {
     const ok = planChangeSet(
       cs({ op: "delete", path: "a.ts", line: 1 }),
       states({ "a.ts": state(utf8("x")) }),
@@ -204,9 +204,11 @@ describe("planChangeSet: create / rewrite / delete", () => {
     );
     expect(ok.ok).toBe(true);
     expect(ok.outcomes[0]?.afterBytes).toBeNull();
+    expect(ok.outcomes[0]?.alreadyApplied).toBe(false);
 
-    const ng = planChangeSet(cs({ op: "delete", path: "no.ts", line: 1 }), states({}), NEW_FILE);
-    expect(ng.failures[0]?.kind).toBe("target-missing");
+    const gone = planChangeSet(cs({ op: "delete", path: "no.ts", line: 1 }), states({}), NEW_FILE);
+    expect(gone.ok).toBe(true);
+    expect(gone.outcomes[0]?.alreadyApplied).toBe(true);
   });
 
   it("パス不正はどの操作でも path-invalid (§9)", () => {
@@ -216,5 +218,115 @@ describe("planChangeSet: create / rewrite / delete", () => {
       NEW_FILE,
     );
     expect(plan.failures[0]?.kind).toBe("path-invalid");
+  });
+});
+
+describe("planChangeSet: 適用済み検出 (冪等性)", () => {
+  it("SEARCH 不一致でも REPLACE がまるごと存在すれば成功扱いでスキップ (書き込みなし)", () => {
+    const original = utf8("before\nDim a As Integer = 2\nafter\n");
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "a.vb",
+        line: 1,
+        blocks: [block(["Dim a As Integer = 1"], ["Dim a As Integer = 2"])],
+      }),
+      states({ "a.vb": state(original) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.failures).toEqual([]);
+    const o = plan.outcomes[0];
+    expect(o?.afterBytes).toBeNull();
+    expect(o?.appliedBlocks).toHaveLength(0);
+    expect(o?.alreadyAppliedBlocks).toHaveLength(1);
+    expect(o?.alreadyApplied).toBe(true);
+  });
+
+  it("行内の連続空白差 (コメント前の空白数) があっても適用済みと判定する", () => {
+    const original = sjis("wk_ItemSet.Add(c)   ' コメント\r\n");
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "a.vb",
+        line: 1,
+        blocks: [block(["wk_ItemSet.Add(a)"], ["wk_ItemSet.Add(c) ' コメント"])],
+      }),
+      states({ "a.vb": state(original) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.outcomes[0]?.alreadyAppliedBlocks[0]?.stage).toBe("ws-collapse");
+  });
+
+  it("適用済みブロックと未適用ブロックの混在: 未適用分だけ書き込む", () => {
+    const original = utf8("Dim a = 2\nDim b = 1\n");
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "a.vb",
+        line: 1,
+        blocks: [
+          block(["Dim a = 1"], ["Dim a = 2"], 1), // 適用済み
+          block(["Dim b = 1"], ["Dim b = 2"], 2), // 未適用
+        ],
+      }),
+      states({ "a.vb": state(original) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.outcomes[0]?.alreadyApplied).toBe(false);
+    expect(plan.outcomes[0]?.alreadyAppliedBlocks.map((b) => b.block.index)).toEqual([1]);
+    expect(plan.outcomes[0]?.appliedBlocks.map((b) => b.block.index)).toEqual([2]);
+    expect(plan.outcomes[0]?.afterBytes).toEqual(utf8("Dim a = 2\nDim b = 2\n"));
+  });
+
+  it("SEARCH も REPLACE も見つからない → 失敗 + 基準スナップショットずれのヒント", () => {
+    const plan = planChangeSet(
+      cs({ op: "replace", path: "a.ts", line: 1, blocks: [block(["zzz"], ["yyy"])] }),
+      states({ "a.ts": state(utf8("a\nb\n")) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.failures[0]?.message).toContain("基準スナップショット");
+  });
+
+  it("REPLACE が空 (削除ブロック) は適用済み判定の対象外 → 従来どおり失敗 (ヒントなし)", () => {
+    const plan = planChangeSet(
+      cs({ op: "replace", path: "a.ts", line: 1, blocks: [block(["zzz"], [])] }),
+      states({ "a.ts": state(utf8("a\nb\n")) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.failures[0]?.message).toContain("見つかりません");
+    expect(plan.failures[0]?.message).not.toContain("基準スナップショット");
+  });
+
+  it("rewrite: 全文が現在の内容と一致すれば適用済み (書き込みなし)", () => {
+    const plan = planChangeSet(
+      cs({ op: "rewrite", path: "a.ts", line: 1, content: ["line1", "line2"] }),
+      states({ "a.ts": state(utf8("line1\nline2\n")) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.outcomes[0]?.alreadyApplied).toBe(true);
+    expect(plan.outcomes[0]?.afterBytes).toBeNull();
+  });
+
+  it("create: 既存ファイルの内容が一致すれば適用済み、違えば従来どおり target-exists", () => {
+    const same = planChangeSet(
+      cs({ op: "create", path: "a.ts", line: 1, content: ["const x = 1;"] }),
+      states({ "a.ts": state(utf8("const x = 1;\n")) }),
+      NEW_FILE,
+    );
+    expect(same.ok).toBe(true);
+    expect(same.outcomes[0]?.alreadyApplied).toBe(true);
+
+    const diff = planChangeSet(
+      cs({ op: "create", path: "a.ts", line: 1, content: ["const x = 2;"] }),
+      states({ "a.ts": state(utf8("const x = 1;\n")) }),
+      NEW_FILE,
+    );
+    expect(diff.failures[0]?.kind).toBe("target-exists");
   });
 });

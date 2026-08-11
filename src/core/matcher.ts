@@ -46,6 +46,48 @@ const STAGES: { stage: MatchStage; eq: (a: string, b: string) => boolean }[] = [
   { stage: "trim-all", eq: (a, b) => a.trim() === b.trim() },
 ];
 
+/**
+ * 適用済み判定 (冪等性) 用の比較段階。ws-collapse は行内の連続空白・タブを 1 個の
+ * 空白に圧縮して比較する (例: `Add(c)   ' コメント` と `Add(c) ' コメント` を同一視)。
+ * 書き込みを伴わない「スキップしてよいか」の判定専用で、書き換え位置を決める
+ * SEARCH のマッチング (STAGES) には使わない。
+ */
+export type PresenceStage = MatchStage | "ws-collapse";
+
+export const PRESENCE_STAGE_LABEL: Record<PresenceStage, string> = {
+  ...STAGE_LABEL,
+  "ws-collapse": "空白圧縮一致",
+};
+
+const collapseWs = (s: string): string => s.trim().replace(/[ \t]+/g, " ");
+
+const PRESENCE_STAGES: { stage: PresenceStage; eq: (a: string, b: string) => boolean }[] = [
+  ...STAGES,
+  { stage: "ws-collapse", eq: (a, b) => collapseWs(a) === collapseWs(b) },
+];
+
+/**
+ * 適用済み判定: content ブロック全体 (複数行まるごと) が lines 内に存在するか。
+ * 見つかった最初の (最も厳密な) 段階を返す。空・空行のみの content は偶然一致
+ * しやすいため常に null (判定対象外 = 従来どおり失敗扱い)。
+ */
+export function findContentStage(lines: string[], content: string[]): PresenceStage | null {
+  if (!content.some((l) => l.trim() !== "")) return null;
+  for (const { stage, eq } of PRESENCE_STAGES) {
+    if (findMatches(lines, content, eq).length > 0) return stage;
+  }
+  return null;
+}
+
+/** 適用済み判定 (rewrite/create): content がファイル全行と一致するか */
+export function contentEqualsStage(lines: string[], content: string[]): PresenceStage | null {
+  if (lines.length !== content.length) return null;
+  for (const { stage, eq } of PRESENCE_STAGES) {
+    if (lines.every((line, i) => eq(line, content[i] as string))) return stage;
+  }
+  return null;
+}
+
 function findMatches(
   lines: string[],
   search: string[],

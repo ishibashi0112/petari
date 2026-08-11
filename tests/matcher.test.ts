@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyBlocks, matchBlock, reindent } from "../src/core/matcher.ts";
+import {
+  applyBlocks,
+  contentEqualsStage,
+  findContentStage,
+  matchBlock,
+  reindent,
+} from "../src/core/matcher.ts";
 import type { ReplaceBlock } from "../src/types.ts";
 
 const block = (search: string[], replace: string[], index = 1): ReplaceBlock => ({
@@ -207,5 +213,61 @@ describe("applyBlocks: 複数ブロックの順次適用", () => {
     const { lines, results } = applyBlocks(["a"], []);
     expect(lines).toEqual(["a"]);
     expect(results).toEqual([]);
+  });
+});
+
+describe("findContentStage: 適用済み判定 (冪等性)", () => {
+  it("ブロック全体が完全一致で存在すれば exact", () => {
+    const lines = ["a", "Dim x = 2", "If x Then", "c"];
+    expect(findContentStage(lines, ["Dim x = 2", "If x Then"])).toBe("exact");
+  });
+
+  it("複数箇所に存在しても検出できる (曖昧エラーにしない)", () => {
+    expect(findContentStage(["x", "mid", "x"], ["x"])).toBe("exact");
+  });
+
+  it("行末空白・インデント差は既存段階で吸収する", () => {
+    expect(findContentStage(["const a = 1;  "], ["const a = 1;"])).toBe("trim-end");
+    expect(findContentStage(["    const a = 1;"], ["  const a = 1;"])).toBe("trim-all");
+  });
+
+  it("行内の連続空白差は ws-collapse で吸収する (コメント前の空白数の差)", () => {
+    const lines = ["wk_ItemSet.Add(c)   ' コメント"];
+    expect(findContentStage(lines, ["wk_ItemSet.Add(c) ' コメント"])).toBe("ws-collapse");
+  });
+
+  it("一部の行しか一致しなければ null (ブロックまるごと一致が条件)", () => {
+    expect(findContentStage(["a", "b"], ["a", "zzz"])).toBeNull();
+  });
+
+  it("空・空行のみの content は常に null (偶然一致の誤検出防止)", () => {
+    expect(findContentStage(["a", "", "b"], [])).toBeNull();
+    expect(findContentStage(["a", "", "b"], [""])).toBeNull();
+    expect(findContentStage(["a", "  ", "b"], ["  "])).toBeNull();
+  });
+
+  it("存在しなければ null", () => {
+    expect(findContentStage(["a", "b"], ["zzz"])).toBeNull();
+  });
+});
+
+describe("contentEqualsStage: 全文一致の適用済み判定 (rewrite/create)", () => {
+  it("全行一致なら exact、行数が違えば null", () => {
+    expect(contentEqualsStage(["a", "b"], ["a", "b"])).toBe("exact");
+    expect(contentEqualsStage(["a", "b", "c"], ["a", "b"])).toBeNull();
+    expect(contentEqualsStage(["a"], ["a", "b"])).toBeNull();
+  });
+
+  it("空白差は presence 段階で吸収する", () => {
+    expect(contentEqualsStage(["a  ", "b"], ["a", "b"])).toBe("trim-end");
+    expect(contentEqualsStage(["f(1)   ' c"], ["f(1) ' c"])).toBe("ws-collapse");
+  });
+
+  it("空ファイル vs 空 content は exact (完全一致している)", () => {
+    expect(contentEqualsStage([], [])).toBe("exact");
+  });
+
+  it("内容が違えば null", () => {
+    expect(contentEqualsStage(["a"], ["b"])).toBeNull();
   });
 });

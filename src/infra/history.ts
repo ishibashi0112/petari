@@ -17,6 +17,10 @@ export interface ManifestFileEntry {
   appliedBlocks: number;
   /** --partial でスキップしたブロック (index と理由) */
   skippedBlocks?: { index: number; reason: string }[];
+  /** REPLACE が既に存在したためスキップしたブロック index (冪等性・成功扱い) */
+  alreadyAppliedBlocks?: number[];
+  /** ファイル全体が適用済みだったため書き込みをスキップした */
+  alreadyApplied?: boolean;
   beforeSha256: string | null;
   afterSha256: string | null;
 }
@@ -26,7 +30,7 @@ export interface Manifest {
   appliedAt: string;
   success: boolean;
   partial: boolean;
-  source: { type: "file" | "clipboard" | "downloads"; path?: string };
+  source: { type: "file" | "clipboard" | "downloads" | "project-root"; path?: string };
   files: ManifestFileEntry[];
 }
 

@@ -14,7 +14,14 @@ import {
   type Eol,
   type FileEncoding,
 } from "./encoding.ts";
-import { STAGE_LABEL, matchBlock, type MatchStage } from "./matcher.ts";
+import {
+  STAGE_LABEL,
+  contentEqualsStage,
+  findContentStage,
+  matchBlock,
+  type MatchStage,
+  type PresenceStage,
+} from "./matcher.ts";
 
 export interface NewFileConfig {
   encoding: FileEncoding;
@@ -59,12 +66,25 @@ export interface AppliedBlockInfo {
   inserted: string[];
 }
 
+/** REPLACE が既にファイル内に存在したためスキップしたブロック (冪等性・成功扱い) */
+export interface AlreadyAppliedBlock {
+  block: ReplaceBlock;
+  stage: PresenceStage;
+}
+
 export interface FileOutcome {
   change: FileChange;
   failures: Failure[];
-  /** 書き込むバイト列。delete と「書き込み不要 (失敗/全ブロック失敗)」は null */
+  /** 書き込むバイト列。delete と「書き込み不要 (失敗/全ブロック失敗/適用済み)」は null */
   afterBytes: Uint8Array | null;
   appliedBlocks: AppliedBlockInfo[];
+  /** 適用済みとしてスキップしたブロック (replace のみ) */
+  alreadyAppliedBlocks: AlreadyAppliedBlock[];
+  /**
+   * ファイル全体が既に適用後の状態で、書き込み不要 (成功扱い)。
+   * replace: 全ブロック適用済み / rewrite・create: 内容一致 / delete: 既に存在しない
+   */
+  alreadyApplied: boolean;
   totalBlocks: number;
 }
 
@@ -102,7 +122,22 @@ function fileFailure(change: FileChange, kind: FailureKind, message: string): Fi
     failures: [{ path: change.path, kind, message }],
     afterBytes: null,
     appliedBlocks: [],
+    alreadyAppliedBlocks: [],
+    alreadyApplied: false,
     totalBlocks: change.op === "replace" ? change.blocks.length : 0,
+  };
+}
+
+/** rewrite / create / delete がファイル単位で適用済みだったときの成功 outcome */
+function fileAlreadyApplied(change: FileChange): FileOutcome {
+  return {
+    change,
+    failures: [],
+    afterBytes: null,
+    appliedBlocks: [],
+    alreadyAppliedBlocks: [],
+    alreadyApplied: true,
+    totalBlocks: 0,
   };
 }
 
@@ -124,16 +159,30 @@ function planReplace(
 
   const failures: Failure[] = [];
   const applied: AppliedBlockInfo[] = [];
+  const already: AlreadyAppliedBlock[] = [];
   let docLines: DocLine[] = doc.lines;
   let textLines: string[] = docLines.map((l) => l.text);
 
   for (const block of change.blocks) {
     const m = matchBlock(textLines, block);
     if (!m.ok) {
+      // 冪等性 (§6): SEARCH 不一致でも REPLACE がまるごと存在すれば「適用済み」として
+      // 成功扱いでスキップする (書き込みなし)。空・空行のみの REPLACE は判定対象外
+      if (m.reason === "not-found") {
+        const stage = findContentStage(textLines, block.replace);
+        if (stage !== null) {
+          already.push({ block, stage });
+          continue;
+        }
+      }
+      const checkedReplace = block.replace.some((l) => l.trim() !== "");
       const message =
         m.reason === "ambiguous"
           ? `ブロック ${block.index}: SEARCH が ${m.count} 箇所にマッチしました (${STAGE_LABEL[m.stage as MatchStage]})。一意に特定できる範囲を含めてください`
-          : `ブロック ${block.index}: SEARCH が現在のファイル内容に見つかりません`;
+          : `ブロック ${block.index}: SEARCH が現在のファイル内容に見つかりません` +
+            (checkedReplace
+              ? " (REPLACE の内容も見つからないため、changes.md の基準スナップショットが現在のコードベースとずれている可能性があります)"
+              : "");
       failures.push({ path: change.path, kind: m.reason === "ambiguous" ? "block-ambiguous" : "block-not-found", message, block });
       continue;
     }
@@ -167,6 +216,9 @@ function planReplace(
     failures,
     afterBytes,
     appliedBlocks: applied,
+    alreadyAppliedBlocks: already,
+    alreadyApplied:
+      change.blocks.length > 0 && failures.length === 0 && already.length === change.blocks.length,
     totalBlocks: change.blocks.length,
   };
 }
@@ -188,6 +240,17 @@ function planFile(change: FileChange, state: FileState, newFile: NewFileConfig):
   switch (change.op) {
     case "create": {
       if (state.exists) {
+        // 冪等性: 既存ファイルの内容が CONTENT と一致するなら適用済みとしてスキップ
+        if (state.bytes !== null) {
+          try {
+            const doc = decodeFile(state.bytes);
+            if (contentEqualsStage(doc.lines.map((l) => l.text), change.content) !== null) {
+              return fileAlreadyApplied(change);
+            }
+          } catch {
+            // デコード不能なら判定せず従来のエラーへ
+          }
+        }
         return fileFailure(change, "target-exists", "create 指定ですがファイルが既に存在します (全文置き換えなら rewrite を使用)");
       }
       const bad = findUnencodable(change.content.join("\n"), newFile.encoding);
@@ -195,7 +258,15 @@ function planFile(change: FileChange, state: FileState, newFile: NewFileConfig):
         return fileFailure(change, "unencodable", `新規ファイルの既定エンコーディング (${newFile.encoding}) に変換できない文字: ${bad.join(" ")}`);
       }
       const doc = makeDocument(change.content, newFile);
-      return { change, failures: [], afterBytes: encodeDocument(doc), appliedBlocks: [], totalBlocks: 0 };
+      return {
+        change,
+        failures: [],
+        afterBytes: encodeDocument(doc),
+        appliedBlocks: [],
+        alreadyAppliedBlocks: [],
+        alreadyApplied: false,
+        totalBlocks: 0,
+      };
     }
     case "rewrite": {
       if (!state.exists) {
@@ -207,6 +278,10 @@ function planFile(change: FileChange, state: FileState, newFile: NewFileConfig):
       } catch (e) {
         return fileFailure(change, "undecodable", e instanceof EncodingError ? e.message : String(e));
       }
+      // 冪等性: 全文が現在の内容と一致するなら適用済みとしてスキップ
+      if (contentEqualsStage(doc.lines.map((l) => l.text), change.content) !== null) {
+        return fileAlreadyApplied(change);
+      }
       const bad = findUnencodable(change.content.join("\n"), doc.encoding);
       if (bad.length > 0) {
         return fileFailure(change, "unencodable", `Shift_JIS へ変換できない文字が含まれています: ${bad.join(" ")}`);
@@ -214,13 +289,30 @@ function planFile(change: FileChange, state: FileState, newFile: NewFileConfig):
       // 既存のエンコーディング・BOM・支配的 EOL・末尾改行の有無を維持して全文を差し替える (§8)
       const lines: DocLine[] = change.content.map((text) => ({ text, raw: null, eol: null }));
       const afterBytes = encodeDocument({ ...doc, lines });
-      return { change, failures: [], afterBytes, appliedBlocks: [], totalBlocks: 0 };
+      return {
+        change,
+        failures: [],
+        afterBytes,
+        appliedBlocks: [],
+        alreadyAppliedBlocks: [],
+        alreadyApplied: false,
+        totalBlocks: 0,
+      };
     }
     case "delete": {
       if (!state.exists) {
-        return fileFailure(change, "target-missing", "delete 指定ですがファイルが存在しません");
+        // 冪等性: 既に存在しないなら適用済みとしてスキップ
+        return fileAlreadyApplied(change);
       }
-      return { change, failures: [], afterBytes: null, appliedBlocks: [], totalBlocks: 0 };
+      return {
+        change,
+        failures: [],
+        afterBytes: null,
+        appliedBlocks: [],
+        alreadyAppliedBlocks: [],
+        alreadyApplied: false,
+        totalBlocks: 0,
+      };
     }
     case "replace": {
       if (!state.exists) {

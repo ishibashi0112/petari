@@ -13,6 +13,7 @@ import {
   type FileState,
   type Plan,
 } from "../core/applier.ts";
+import { PRESENCE_STAGE_LABEL } from "../core/matcher.ts";
 import { parseChanges } from "../core/parser.ts";
 import { buildFailureReport, buildParseErrorReport } from "../core/report.ts";
 import { readClipboard, writeClipboard } from "../infra/clipboard.ts";
@@ -36,16 +37,25 @@ import {
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
 
-/** --partial 時: このファイルは書き込み対象か */
+/** このファイルは書き込み対象か (適用済みのみのファイルは書き込み不要なので含めない) */
 function isApplicable(o: FileOutcome): boolean {
-  if (o.failures.length === 0) return true;
-  return o.change.op === "replace" && o.appliedBlocks.length > 0;
+  if (o.alreadyApplied) return false;
+  if (o.change.op === "replace") return o.appliedBlocks.length > 0;
+  return o.failures.length === 0;
 }
 
 function opLabel(o: FileOutcome): string {
   const c = o.change;
-  if (c.op === "replace") return `replace ${c.path} — ${o.appliedBlocks.length}/${o.totalBlocks} ブロック`;
-  return `${c.op.padEnd(7)} ${c.path}`;
+  if (c.op === "replace") {
+    const already = o.alreadyAppliedBlocks.length;
+    const detail =
+      already > 0
+        ? `適用 ${o.appliedBlocks.length} / 済み ${already} / 全 ${o.totalBlocks} ブロック`
+        : `${o.appliedBlocks.length}/${o.totalBlocks} ブロック`;
+    return `replace ${c.path} — ${detail}`;
+  }
+  const label = `${c.op.padEnd(7)} ${c.path}`;
+  return o.alreadyApplied ? `${label} — 適用済み (スキップ)` : label;
 }
 
 function printPreview(outcomes: FileOutcome[]): void {
@@ -55,6 +65,25 @@ function printPreview(outcomes: FileOutcome[]): void {
       out(`    @@ ${o.change.path}:${b.start + 1} (${b.stage})`);
       for (const l of b.removed) out(`    - ${l}`);
       for (const l of b.inserted) out(`    + ${l}`);
+    }
+  }
+}
+
+/** 適用済みとしてスキップした内容の一覧 (冪等性)。該当がなければ何も出さない */
+function printAlreadyApplied(outcomes: FileOutcome[]): void {
+  const files = outcomes.filter((o) => o.alreadyApplied || o.alreadyAppliedBlocks.length > 0);
+  if (files.length === 0) return;
+  out("適用済みのためスキップ:");
+  for (const o of files) {
+    if (o.change.op !== "replace") {
+      const why = o.change.op === "delete" ? "既に存在しません" : "現在の内容と一致";
+      out(`  ${o.change.op.padEnd(7)} ${o.change.path} — ${why}`);
+      continue;
+    }
+    for (const b of o.alreadyAppliedBlocks) {
+      out(
+        `  replace ${o.change.path} — ブロック ${b.block.index}: REPLACE が既に存在 (${PRESENCE_STAGE_LABEL[b.stage]})`,
+      );
     }
   }
 }
@@ -120,15 +149,24 @@ export async function applyCommand(argv: string[]): Promise<number> {
     }
     source = { type: "clipboard" };
   } else {
+    // Downloads とプロジェクトルート直下の両方から候補を集め、最新を採用する
     const downloadsDir = await resolveDownloadsDir(config.downloadsDir);
-    const candidates = findRecentChangesFiles(downloadsDir, new Date());
+    const now = new Date();
+    const tagged: (CandidateFile & { origin: "downloads" | "project-root" })[] = [
+      ...findRecentChangesFiles(downloadsDir, now).map((c) => ({ ...c, origin: "downloads" as const })),
+      ...findRecentChangesFiles(root, now).map((c) => ({ ...c, origin: "project-root" as const })),
+    ];
+    const seen = new Set<string>();
+    const candidates = tagged
+      .filter((c) => !seen.has(c.path) && (seen.add(c.path), true))
+      .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
     if (candidates.length === 0) {
-      err(`petari: ${downloadsDir} に直近 30 分以内の changes*.md が見つかりません`);
+      err(`petari: ${downloadsDir} にもプロジェクト直下にも直近 30 分以内の changes*.md が見つかりません`);
       err("  ファイルパスを指定するか、--clip でクリップボードから読み込んでください");
       return 1;
     }
-    const newest = candidates[0] as CandidateFile;
-    out(`Downloads から検出: ${newest.path}`);
+    const newest = candidates[0] as (typeof candidates)[number];
+    out(`${newest.origin === "downloads" ? "Downloads" : "プロジェクト直下"}から検出: ${newest.path}`);
     if (candidates.length > 1) {
       out(`  (他 ${candidates.length - 1} 件の候補があります。最新を使用します)`);
       for (const c of candidates.slice(1)) out(`    - ${c.path}`);
@@ -143,7 +181,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
       err(`petari: ファイルを読めません: ${newest.path}`);
       return 1;
     }
-    source = { type: "downloads", path: newest.path };
+    source = { type: newest.origin, path: newest.path };
   }
 
   // 1. パース (構文エラーは即時失敗・§4.1)
@@ -179,14 +217,20 @@ export async function applyCommand(argv: string[]): Promise<number> {
   }
   const applicable = plan.outcomes.filter(isApplicable);
   if (applicable.length === 0) {
+    // 冪等性: 全変更が適用済みなら成功として終了 (書き込み・履歴なし)
+    if (plan.ok && plan.outcomes.some((o) => o.alreadyApplied)) {
+      out("すべての変更は適用済みです。書き込みは行いませんでした。");
+      for (const o of plan.outcomes) out(`  ${opLabel(o)}`);
+      return 0;
+    }
     err("petari: 適用できる変更がありません。\n");
     await emitReport(buildFailureReport(plan.failures));
     return 1;
   }
-
   if (values["dry-run"]) {
     out(`dry-run: 適用予定 ${applicable.length} ファイル (書き込みなし)`);
     printPreview(applicable);
+    printAlreadyApplied(plan.outcomes);
     if (plan.failures.length > 0) {
       out("");
       await emitReport(buildFailureReport(plan.failures));
@@ -198,6 +242,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
   out(`プロジェクトルート: ${root}`);
   out(`適用予定 ${applicable.length} ファイル:`);
   for (const o of applicable) out(`  ${opLabel(o)}`);
+  printAlreadyApplied(plan.outcomes);
   if (plan.failures.length > 0) {
     out(`  (検証失敗 ${plan.failures.length} 件は --partial によりスキップ)`);
   }
@@ -249,6 +294,10 @@ export async function applyCommand(argv: string[]): Promise<number> {
       afterSha256: afterBytes !== null ? sha256(afterBytes) : null,
     };
     if (skipped.length > 0) entry.skippedBlocks = skipped;
+    if (o.alreadyAppliedBlocks.length > 0) {
+      entry.alreadyAppliedBlocks = o.alreadyAppliedBlocks.map((b) => b.block.index);
+    }
+    if (o.alreadyApplied) entry.alreadyApplied = true;
     return entry;
   });
   const manifest: Manifest = {
@@ -269,17 +318,19 @@ export async function applyCommand(argv: string[]): Promise<number> {
   out("");
   out(`適用しました (履歴 ID: ${id})`);
   for (const o of applicable) out(`  ${opLabel(o)}`);
+  printAlreadyApplied(plan.outcomes);
   if (plan.failures.length > 0) {
     out(`スキップした失敗 ${plan.failures.length} 件のレポート:`);
     out("");
     await emitReport(buildFailureReport(plan.failures));
   }
 
-  // 6. Downloads 由来なら changes.md を履歴へ移動 (原本は history に保存済み・§4.1)
-  if (source.type === "downloads" && source.path !== undefined) {
+  // 6. 自動検出 (Downloads / プロジェクト直下) 由来なら changes.md を履歴へ移動
+  //    (原本は history に保存済み・§4.1)。全件適用済みで履歴を作らなかった場合は削除しない
+  if ((source.type === "downloads" || source.type === "project-root") && source.path !== undefined) {
     try {
       deleteFile(source.path);
-      out(`Downloads の ${source.path} を履歴へ移動しました`);
+      out(`${source.path} を履歴へ移動しました`);
     } catch {
       err(`petari: ${source.path} を削除できませんでした (履歴には保存済み)`);
     }

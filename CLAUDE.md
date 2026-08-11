@@ -70,6 +70,15 @@
   マーカー行の行末空白は許容。開いたブロック内では FILE 行もマーカー以外はすべて本文 (verbatim)
 - マッチング: 段階ごとに一意性判定 (exact で 1 件なら trim 段階の曖昧さは不問)。
   trim-all の再インデントは「非空行の最長共通空白プレフィックス」を基準に置換 (相対インデント維持)
+- 適用済み検出・冪等性 (§6.1, v0.3.0 / 2026-08-11 実運用フィードバック起点):
+  SEARCH 不一致時に REPLACE ブロック全体の存在を追加チェックし、あれば「済み」として成功扱い。
+  比較は既存 3 段 + ws-collapse (行内連続空白の圧縮。スキップ判定専用で SEARCH マッチには不使用)。
+  空・空行のみの REPLACE は判定対象外。rewrite/create は全文一致、delete は対象なしで「済み」。
+  failed が 1 件でもあれば書かない all-or-nothing は維持。全件済みなら履歴を作らず exit 0。
+  真の不一致には「基準スナップショットずれの可能性」ヒントを付す。
+  既知の限界: REPLACE ⊇ SEARCH の追記型ブロックは再実行時に重複適用になり得る
+- 引数なし実行の自動検出は Downloads + プロジェクトルート直下の changes*.md (直近 30 分・最新優先)。
+  自動検出由来は適用成功後に削除 (原本は履歴に保存済み)。全件済みで履歴を作らなかった場合は残す
 - 履歴: before 保存 → 書き換え → after+manifest の 2 段階 (`beginHistory`/`finishHistory`)。
   manifest に `applied` フラグ (undo が --partial 適用を正しく巻き戻すため)
 - undo も all-or-nothing (before 欠損を全件検証してから書き込み)
@@ -97,7 +106,7 @@
 
 ## メモ
 
-- npm へ publish 済み (v0.1.0: 2026-08-08 / v0.2.0: 2026-08-11 規約文 v2)。リポジトリ: https://github.com/ishibashi0112/petari
+- npm へ publish 済み (v0.1.0: 2026-08-08 / v0.2.0: 2026-08-11 規約文 v2 / v0.3.0: 冪等性対応・未 publish)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み)

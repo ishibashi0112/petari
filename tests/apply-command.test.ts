@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -142,5 +142,93 @@ describe("applyCommand (統合・§4.1)", () => {
     const code = await applyCommand([changesPath, "--root", dir, "--yes"]);
     expect(code).toBe(1);
     expect(historyIds(dir)).toHaveLength(0);
+  });
+});
+
+describe("applyCommand: 冪等性 (適用済み検出)", () => {
+  it("同じ changes.md の再実行は全ブロック適用済みとして正常終了する (書き込み・履歴なし)", async () => {
+    const dir = setupProject();
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(changesPath, CHANGES, "utf8");
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    const afterFirst = new Uint8Array(readFileSync(join(dir, "legacy.vb")));
+
+    // 2 回目: replace は REPLACE 済み、create は既存内容一致、delete は既に無い
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(new Uint8Array(readFileSync(join(dir, "legacy.vb")))).toEqual(afterFirst);
+    expect(historyIds(dir)).toHaveLength(1); // 2 回目は履歴を作らない
+  });
+
+  it("適用済みブロックと未適用ブロックの混在: 未適用分だけ適用し全体は成功する", async () => {
+    const dir = setupProject();
+    // ブロック 1 (count = 100) は適用済みの状態にしておく
+    writeFileSync(
+      join(dir, "legacy.vb"),
+      sjis("' コメント\r\nDim count As Integer = 100\r\nEnd Module"),
+    );
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(
+      changesPath,
+      doc(
+        "## CHANGES",
+        "",
+        "混在テスト。",
+        "",
+        "### FILE: legacy.vb (replace)",
+        "<<<<<<< SEARCH",
+        "Dim count As Integer = 1",
+        "=======",
+        "Dim count As Integer = 100",
+        ">>>>>>> REPLACE",
+        "",
+        "<<<<<<< SEARCH",
+        "End Module",
+        "=======",
+        "' done",
+        "End Module",
+        ">>>>>>> REPLACE",
+      ),
+      "utf8",
+    );
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(new Uint8Array(readFileSync(join(dir, "legacy.vb")))).toEqual(
+      sjis("' コメント\r\nDim count As Integer = 100\r\n' done\r\nEnd Module"),
+    );
+    const ids = historyIds(dir);
+    const manifest = JSON.parse(
+      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+    ) as Manifest;
+    const legacy = manifest.files.find((f) => f.path === "legacy.vb");
+    expect(legacy?.appliedBlocks).toBe(1);
+    expect(legacy?.alreadyAppliedBlocks).toEqual([1]);
+  });
+});
+
+describe("applyCommand: プロジェクト直下の changes.md 検出", () => {
+  it("引数なしで直下の changes.md を検出・適用し、履歴へ移動 (削除) する", async () => {
+    const dir = setupProject();
+    const emptyDownloads = mkdtempSync(join(tmpdir(), "petari-dl-"));
+    mkdirSync(join(dir, ".petari"), { recursive: true });
+    writeFileSync(
+      join(dir, ".petari", "config.json"),
+      JSON.stringify({ downloadsDir: emptyDownloads }),
+      "utf8",
+    );
+    writeFileSync(join(dir, "changes.md"), CHANGES, "utf8");
+
+    expect(await applyCommand(["--root", dir, "--yes"])).toBe(0);
+    expect(existsSync(join(dir, "sub", "new.ts"))).toBe(true);
+    expect(existsSync(join(dir, "changes.md"))).toBe(false); // 原本は履歴に保存済み
+
+    const ids = historyIds(dir);
+    const manifest = JSON.parse(
+      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+    ) as Manifest;
+    expect(manifest.source.type).toBe("project-root");
+    expect(
+      readFileSync(join(dir, ".petari", "history", ids[0] as string, "changes.md"), "utf8"),
+    ).toBe(CHANGES);
   });
 });
