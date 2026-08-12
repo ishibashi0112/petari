@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyCommand } from "../src/commands/apply.ts";
-import { generateReportHtml, showCommand } from "../src/commands/show.ts";
+import { cleanupOldReports, generateReportHtml, showCommand } from "../src/commands/show.ts";
 import { listHistoryIds, type Manifest, type ManifestFileEntry } from "../src/infra/history.ts";
 import type { Operation } from "../src/types.ts";
 
@@ -95,6 +95,24 @@ describe("showCommand: manifest 改ざん耐性 (§9)", () => {
     const { root, id } = await setupApplied();
     tamper(root, id, "../evil.txt");
     expect(await showCommand(["--root", root, "--browser", "--no-open"])).toBe(1);
+  });
+});
+
+describe("cleanupOldReports (§4.3)", () => {
+  it("1 時間より古いレポートだけを削除し、直近分と他の接頭辞は残す", () => {
+    const oldDir = mkdtempSync(join(tmpdir(), "petari-report-"));
+    writeFileSync(join(oldDir, "report.html"), "<html>old</html>");
+    const past = new Date(Date.now() - 2 * 60 * 60_000);
+    utimesSync(oldDir, past, past);
+
+    const freshDir = mkdtempSync(join(tmpdir(), "petari-report-"));
+    const otherDir = mkdtempSync(join(tmpdir(), "petari-other-"));
+    utimesSync(otherDir, past, past);
+
+    cleanupOldReports();
+    expect(existsSync(oldDir)).toBe(false);
+    expect(existsSync(freshDir)).toBe(true);
+    expect(existsSync(otherDir)).toBe(true);
   });
 });
 

@@ -12,7 +12,7 @@
  * ブラウザ経路では全ファイルをまとめて表示する。
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -178,6 +178,36 @@ export function generateReportHtml(
   return buildReportPage(title, new Date().toLocaleString("ja-JP"), sections);
 }
 
+const REPORT_DIR_PREFIX = "petari-report-";
+const REPORT_TTL_MS = 60 * 60_000;
+
+/**
+ * 過去の一時レポートを掃除する (§4.3)。レポートはコードの中身を平文で含むため
+ * 残し続けない。ブラウザで閲覧中かもしれない直近 1 時間分は残し、次回実行時に消す。
+ * 対象は tmpdir 直下の petari-report-* ディレクトリのみ (symlink は Dirent 判定で除外)。
+ */
+export function cleanupOldReports(now: number = Date.now()): number {
+  let removed = 0;
+  let entries;
+  try {
+    entries = readdirSync(tmpdir(), { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory() || !ent.name.startsWith(REPORT_DIR_PREFIX)) continue;
+    const dir = join(tmpdir(), ent.name);
+    try {
+      if (now - statSync(dir).mtimeMs < REPORT_TTL_MS) continue;
+      rmSync(dir, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // 使用中・権限エラー等は無視 (次回実行時に再試行される)
+    }
+  }
+  return removed;
+}
+
 /** 静的レポートを一時ファイルへ書き出してブラウザで開く */
 async function runBrowserReport(
   root: string,
@@ -187,8 +217,9 @@ async function runBrowserReport(
   mine: boolean,
   noOpen: boolean,
 ): Promise<number> {
+  cleanupOldReports();
   const html = generateReportHtml(root, hdir, id, entries, mine);
-  const reportPath = join(mkdtempSync(join(tmpdir(), "petari-show-")), "report.html");
+  const reportPath = join(mkdtempSync(join(tmpdir(), REPORT_DIR_PREFIX)), "report.html");
   writeFileSync(reportPath, html);
   out(`差分レポートを書き出しました: ${reportPath}`);
   if (!noOpen) {
