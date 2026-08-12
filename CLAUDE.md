@@ -8,7 +8,8 @@
 - `pnpm typecheck` — tsc --noEmit
 - `pnpm test` — vitest run
 - `pnpm dev -- <args>` — CLI を直接実行 (Node 24 のネイティブ TS 実行)
-- `pnpm build` — dist/ へ tsc ビルド
+- `pnpm build` — dist/ へ tsc ビルド + monaco 同梱 (vendor/)
+- `pnpm gen:monaco` — monaco-editor を vendor/monaco へ同梱 (clone 直後に 1 回必要)
 
 各実装ステップの完了条件: typecheck と test が全パスすること。
 
@@ -22,13 +23,19 @@
 - クリップボード: OS コマンド呼び出し (macOS: pbpaste/pbcopy, Windows: PowerShell Get-/Set-Clipboard)
 - Windows Downloads: `reg query` で Known Folder GUID `{374DE290-123F-4565-9164-39C4925E467B}` を取得 (OneDrive リダイレクト対応)
 - 出力の色付け: ANSI 直書きの小ユーティリティ
-- 開発依存も最小: typescript / vitest / @types/node のみ。tsx 不使用 (Node 24 ネイティブ TS 実行)
+- 開発依存も最小: typescript / vitest / @types/node / monaco-editor (固定バージョン) のみ。
+  tsx 不使用 (Node 24 ネイティブ TS 実行)
+- **monaco-editor はビルド時同梱** (2026-08-12 ユーザー承認): `pnpm gen:monaco` が
+  min/vs を `vendor/monaco/` へ丸ごとコピー (ハッシュ付きチャンクが相互参照するため
+  部分コピー不可)。vendor/ は gitignore・`files` で npm パッケージに含める。
+  `pnpm build` に同梱ステップを含む。clone 直後は `pnpm gen:monaco` の実行が必要
+  (未実行だと `show --edit` のブラウザ経路が 1 行エラーで案内する)
 - pnpm-workspace.yaml の `minimumReleaseAge: 10080` (7日) で新規公開バージョンを遅延取得
 
 ### レイヤ構成
 
-- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report。テスト最厚領域 (§6, §8)
-- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git
+- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit。テスト最厚領域 (§6, §8)
+- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / diff-server
 - `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ
 - `src/assets/protocol.md` — 規約文の同梱原本 (single source)
 
@@ -104,14 +111,62 @@
 - 許容済みの残リスク: 検証と書き込みの間の TOCTOU (単独利用 CLI のため)、
   vscodeCommand の絶対パス指定 (正規ユースのため許可。攻撃には事前のローカル侵害が必要)
 
+### ブラウザ差分ビューのセキュリティ設計 (2026-08-12, show フォールバック + --edit)
+
+- 編集サーバー (infra/diff-server.ts) は 127.0.0.1 + OS 割当ポートのみで待ち受け。
+  URL パス先頭の 128bit 乱数トークンを**長さ検査 → timingSafeEqual** で照合
+  (timingSafeEqual は長さ不一致で throw するため順序が重要。不一致は 404 で統一)。
+  Host ヘッダ完全一致 (DNS rebinding 対策)、POST は Origin 存在時に自 origin 要求。
+  ルートは固定 4 本で、クライアントからパスは受け取らない (整数インデックスのみ)
+- 全応答に CSP `default-src 'none'; style-src 'unsafe-inline'; form-action 'self';
+  frame-ancestors 'none'; base-uri 'none'` + nosniff / no-referrer / no-store。
+  フォーム action とリンクは相対のみ (トークンを HTML 本文に埋めない)。
+  ボディ上限 16 MiB / urlencoded のみ
+- JS の扱い (2026-08-12 ユーザー要望で「JS ゼロ」から段階的に緩和 → 最終形は Monaco 採用):
+  閲覧レポート・一覧・メッセージページは JS ゼロのまま。**編集エディタページのみ**
+  `script-src 'self' 'nonce-<応答ごと乱数>'` — 'self' は同梱 Monaco 資産、nonce は
+  core/editor-html.ts 埋め込みの自前ブートストラップ。外部 CDN・外部リソースは CSP で遮断。
+  style-src 'self' 追加 (editor.main.css)、font-src data: (codicon)、worker-src 'self' blob:。
+  埋め込み JSON データは `<` エスケープで `</script>` 脱出を封止。
+  保存は fetch (`ajax=1` → JSON 応答) とフォーム POST (noscript) の両対応で JS 無効でも動く
+- **Monaco 更新時の注意 (0.56 で実際にハマった点)**: 日本語 NLS は旧
+  `"vs/nls": { availableLanguages }` 設定を使うと `nls/lang/ja.js` (AMD ではなく
+  グローバル `_VSCODE_NLS_MESSAGES` を設定する素のスクリプト) の define を
+  **エラーなしで永遠に待ってハング**する。editor.main より先に素の `<script>` で
+  ja.js を読み込む方式が正 (editor-html.ts の BOOT_JS)。読み込み停止の検知用に
+  20 秒のウォッチドッグあり
+- Monaco 資産の配信は**起動時に vendor/monaco を列挙した許可リストへの完全一致のみ**
+  (".." を含むキーはリストに現れないためトラバーサルは構造的に不成立)。
+  資産にもトークン必須。エディタは monaco.editor.createDiffEditor (view zone の完全整列・
+  シンタックスハイライト込み)。モデルは EOL を正規化するが保存は行テキスト単位の
+  mergeEditedText なので無変更行の raw バイトは保全される (§8)
+- **textarea の値は escapeHtml のみで他の加工禁止**: 制御文字除去をかけると無編集行が
+  「変更」扱いになり保存時に文字が消える。開きタグ直後に \n を必ず挿入 (ブラウザが
+  1 個食うため先頭改行が失われる)。lone CR / NUL を含む行があるファイルは
+  ブラウザ編集不可 (HTML パーサが CR→LF 正規化・NUL→U+FFFD 置換で破壊するため閲覧のみ)
+- 保存は invalidPathReason + isInsideRoot (起動時と保存直前の両方) + symlink 拒否 +
+  sha256 楽観ロック (競合 409、ファイル無傷)。変換不能文字はユーザー入力を保持したまま
+  バナー再表示。マージは core/edit.ts の mergeEditedText (行 diff で整列し無変更行の
+  raw バイト・改行を維持 = §8。diff 品質はマージの正しさに影響しない設計)
+- VS Code 不在判定は ENOENT に加え **EINVAL** (CVE-2024-27980 対応後の Node は
+  .cmd/.bat をシェル非経由で spawn できない)。それ以外の起動失敗は従来通り exit 1
+- 許容済み残リスク: 保存時 TOCTOU (既存方針と同じ) / 無操作タイムアウトによる
+  編集ロスト (textarea 入力はリクエストを発生させないため既定 30 分 + 全ページに明記で
+  緩和。自動リロードは編集内容を消すため禁止) / infra/browser.ts
+  (open / xdg-open / Start-Process) は自動テストなし (clipboard.ts と同じく実機確認)
+
 ## メモ
 
 - npm へ publish 済み (v0.1.0: 2026-08-08 / v0.2.0: 2026-08-11 規約文 v2 / v0.3.0: 2026-08-11 冪等性対応)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
-  (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み)
-- クリップボード実装 (pbcopy/pbpaste, PowerShell) は自動テストなし (実機確認のみ)。
-  Windows 実機での Get-Clipboard / reg query / Known Folder の動作確認が未了
+  (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
+  2026-08-12 ブラウザ差分ビュー追加後: diff-server.ts の writeHead 指摘 (CWE-113) は
+  ヘッダ値がリテラル定数・自前生成乱数 (hex/base64 で CR/LF を含み得ない)・検証済み整数
+  のみのため誤検知と検証済み。JS 解禁後の再実行でも同族のみ)
+- クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
+  自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
+  Known Folder / Start-Process の動作確認が未了
 - slnmix 連携は slnmix v0.7.0 (2026-08-08) で対応済み: 入力と同じディレクトリの
   protocol.md を `<instruction>` タグで囲んで出力末尾に自動連結する。このため
   **規約文に `<instruction>` という文字列を含めない** (protocol.ts の docstring にも明記)。

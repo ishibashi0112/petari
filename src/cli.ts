@@ -17,7 +17,7 @@ const HELP = `petari — paste AI chat patches onto your codebase
 Usage:
   petari [path]         changes.md を適用 (省略時: Downloads から自動検出)
   petari undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
-  petari show <ID>      履歴の差分を VS Code で表示
+  petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正
   petari list           履歴の一覧を表示
   petari protocol       AI への規約文を標準出力に出す
   petari init           プロジェクト初回セットアップ
@@ -28,6 +28,8 @@ Options:
 `;
 
 export async function main(argv: string[]): Promise<number> {
+  // pnpm run は "--" をそのまま渡してくる (npm と異なり消費しない) ため先頭の区切りを除く
+  if (argv[0] === "--") argv = argv.slice(1);
   if (argv.includes("-h") || argv.includes("--help")) {
     process.stdout.write(HELP);
     return 0;

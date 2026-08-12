@@ -1,8 +1,14 @@
 {
   "name": "petari",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "petari — paste AI chat patches onto your codebase",
-  "keywords": ["cli", "ai", "patch", "diff", "apply"],
+  "keywords": [
+    "cli",
+    "ai",
+    "patch",
+    "diff",
+    "apply"
+  ],
   "license": "MIT",
   "author": "Yuki Sakakibara",
   "repository": {
@@ -18,21 +24,24 @@
     "petari": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "vendor"
   ],
   "engines": {
     "node": ">=20.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/vendor-monaco.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node src/cli.ts",
-    "gen:sjis": "node scripts/generate-sjis-table.ts"
+    "gen:sjis": "node scripts/generate-sjis-table.ts",
+    "gen:monaco": "node scripts/vendor-monaco.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "monaco-editor": "0.56.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
