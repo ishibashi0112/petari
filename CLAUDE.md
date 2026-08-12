@@ -157,7 +157,8 @@
 
 ## メモ
 
-- npm へ publish 済み (v0.1.0: 2026-08-08 / v0.2.0: 2026-08-11 規約文 v2 / v0.3.0: 2026-08-11 冪等性対応)。リポジトリ: https://github.com/ishibashi0112/petari
+- npm へ publish 済み (v0.1.0: 2026-08-08 / v0.2.0: 2026-08-11 規約文 v2 / v0.3.0: 2026-08-11 冪等性対応 /
+  v0.4.0: 2026-08-12 ブラウザ差分ビュー — Monaco 同梱で tarball 5.7MB に増加)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
