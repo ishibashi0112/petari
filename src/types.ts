@@ -60,3 +60,9 @@ export interface ParseResult {
   changeSet: ChangeSet;
   issues: ParseIssue[];
 }
+
+/** 寛容パース (§3.5) の結果。repairs が空でなければ lenient 解釈が採用されている */
+export interface RecoveredParseResult extends ParseResult {
+  /** 自動補正した内容 (行番号 + 補正説明)。strict で成功した場合は空 */
+  repairs: ParseIssue[];
+}

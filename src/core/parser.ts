@@ -3,6 +3,7 @@ import type {
   Operation,
   ParseIssue,
   ParseResult,
+  RecoveredParseResult,
   ReplaceBlock,
 } from "../types.ts";
 
@@ -14,6 +15,32 @@ const CONTENT_END = ">>>>>>> END";
 const CHANGES_HEADING = "## CHANGES";
 const FILE_PREFIX = "### FILE:";
 const FILE_RE = /^### FILE:\s*(.+?)\s*\((replace|create|rewrite|delete)\)$/;
+
+type MarkerKind = "search" | "divider" | "replace-end" | "content" | "content-end";
+
+const EXACT_MARKER: Record<MarkerKind, string> = {
+  search: SEARCH,
+  divider: DIVIDER,
+  "replace-end": REPLACE_END,
+  content: CONTENT,
+  "content-end": CONTENT_END,
+};
+
+// 寛容モード (§3.5) の許容パターン。strict パースが失敗したときだけ試す「惜しい」逸脱で、
+// AI チャットの実出力で観測された崩れ (記号の個数ずれ・スペース欠落・見出しレベルずれ・
+// 全体のコードフェンス包み) を対象にする。誤検知しても lenient 結果は issues が 1 件でも
+// あれば破棄して strict のエラーに戻すため、静かな誤解釈は採用されない。
+const LENIENT_MARKER: Record<MarkerKind, RegExp> = {
+  search: /^<{5,16}\s*SEARCH$/,
+  divider: /^={6,10}$/,
+  "replace-end": /^>{5,16}\s*REPLACE$/,
+  content: /^<{5,16}\s*CONTENT$/,
+  "content-end": /^>{5,16}\s*END$/,
+};
+const LENIENT_CHANGES_RE = /^#{1,6}\s*CHANGES$/;
+const LENIENT_FILE_ATTEMPT_RE = /^#{1,6}\s*FILE\s*:/;
+const LENIENT_FILE_RE = /^#{1,6}\s*FILE\s*:\s*(.+?)\s*\((replace|create|rewrite|delete)\)$/;
+const FENCE_RE = /^`{3,}[A-Za-z0-9_-]*$/;
 
 type State = "preamble" | "header" | "fileTop" | "search" | "replace" | "content";
 
@@ -34,6 +61,27 @@ interface CurrentSection {
  * - 構文の問題は issues に集約する。issues が空でなければ適用してはならない。
  */
 export function parseChanges(text: string): ParseResult {
+  return parseCore(text, null);
+}
+
+/**
+ * 寛容パース (§3.5)。strict で成功すればそのまま返し、失敗した場合のみ lenient で
+ * 再パースする。lenient 結果は issues がゼロかつ補正が 1 件以上のときだけ採用し、
+ * それ以外は strict の issues を返す (エラーメッセージの分かりやすさを優先)。
+ * ブロック内部 (SEARCH/REPLACE/CONTENT の本文) ではフェンス行を除去しないため、
+ * Markdown ファイル自体を変更対象にしても本文は壊れない。
+ */
+export function parseChangesRecovering(text: string): RecoveredParseResult {
+  const strict = parseCore(text, null);
+  if (strict.issues.length === 0) return { ...strict, repairs: [] };
+  const repairs: ParseIssue[] = [];
+  const lenient = parseCore(text, repairs);
+  if (lenient.issues.length === 0 && repairs.length > 0) return { ...lenient, repairs };
+  return { ...strict, repairs: [] };
+}
+
+/** repairs が null なら strict、配列なら lenient (補正内容を追記していく) */
+function parseCore(text: string, repairs: ParseIssue[] | null): ParseResult {
   const rawLines = text.split(/\r?\n/);
   const issues: ParseIssue[] = [];
   const files: FileChange[] = [];
@@ -46,6 +94,18 @@ export function parseChanges(text: string): ParseResult {
   let replaceBuf: string[] = [];
   let contentBuf: string[] = [];
   let blockLine = 0;
+
+  // 該当行が指定マーカーか。lenient では許容パターンも試し、一致したら補正として記録する。
+  // 呼び出し側は true を返した分岐で必ずそのマーカーとして処理するため、記録と動作は一致する
+  const isMarker = (line: string, no: number, kind: MarkerKind): boolean => {
+    if (line === EXACT_MARKER[kind]) return true;
+    if (repairs === null || !LENIENT_MARKER[kind].test(line)) return false;
+    repairs.push({
+      line: no,
+      message: `マーカー "${line}" を "${EXACT_MARKER[kind]}" として解釈しました`,
+    });
+    return true;
+  };
 
   // クロージャ経由の代入は TS の narrowing が追えないため、cur へのアクセスはここを通す
   function requireCur(): CurrentSection {
@@ -97,13 +157,29 @@ export function parseChanges(text: string): ParseResult {
     const no = idx + 1;
 
     if (state === "preamble") {
-      if (line === CHANGES_HEADING) state = "header";
+      if (line === CHANGES_HEADING) {
+        state = "header";
+      } else if (repairs !== null && LENIENT_CHANGES_RE.test(line)) {
+        repairs.push({ line: no, message: `見出し "${line}" を "${CHANGES_HEADING}" として解釈しました` });
+        state = "header";
+      }
       continue;
     }
 
     if (state === "header" || state === "fileTop") {
-      if (line.startsWith(FILE_PREFIX)) {
-        const m = FILE_RE.exec(line);
+      const fileAttempt =
+        line.startsWith(FILE_PREFIX) || (repairs !== null && LENIENT_FILE_ATTEMPT_RE.test(line));
+      if (fileAttempt) {
+        let m = FILE_RE.exec(line);
+        if (m === null && repairs !== null) {
+          m = LENIENT_FILE_RE.exec(line);
+          if (m !== null) {
+            repairs.push({
+              line: no,
+              message: `FILE 行 "${line}" を "### FILE: ${m[1]} (${m[2]})" として解釈しました`,
+            });
+          }
+        }
         if (m !== null) {
           startSection(m[1] as string, m[2] as Operation, no);
         } else {
@@ -116,7 +192,12 @@ export function parseChanges(text: string): ParseResult {
       }
 
       if (state === "header") {
-        if (line === SEARCH || line === CONTENT || line === REPLACE_END || line === CONTENT_END) {
+        if (
+          isMarker(line, no, "search") ||
+          isMarker(line, no, "content") ||
+          isMarker(line, no, "replace-end") ||
+          isMarker(line, no, "content-end")
+        ) {
           issues.push({
             line: no,
             message: `${line} が最初の FILE 行より前に現れました (### FILE: 行が壊れている可能性があります)`,
@@ -129,9 +210,13 @@ export function parseChanges(text: string): ParseResult {
 
       // fileTop: FILE セクション内・ブロック外
       if (line === "") continue;
+      if (repairs !== null && FENCE_RE.test(line)) {
+        repairs.push({ line: no, message: `コードフェンス行 "${line}" を無視しました` });
+        continue;
+      }
       const section = requireCur();
       if (section.op === "replace") {
-        if (line === SEARCH) {
+        if (isMarker(line, no, "search")) {
           state = "search";
           searchBuf = [];
           replaceBuf = [];
@@ -143,7 +228,7 @@ export function parseChanges(text: string): ParseResult {
           });
         }
       } else if (section.op === "create" || section.op === "rewrite") {
-        if (line === CONTENT) {
+        if (isMarker(line, no, "content")) {
           if (section.content !== null) {
             issues.push({
               line: no,
@@ -170,15 +255,15 @@ export function parseChanges(text: string): ParseResult {
     }
 
     if (state === "search") {
-      if (line === DIVIDER) {
+      if (isMarker(line, no, "divider")) {
         state = "replace";
-      } else if (line === REPLACE_END) {
+      } else if (isMarker(line, no, "replace-end")) {
         issues.push({
           line: no,
           message: `${requireCur().path}: ======= (区切り) がないまま >>>>>>> REPLACE が現れました`,
         });
         state = "fileTop";
-      } else if (line === SEARCH) {
+      } else if (isMarker(line, no, "search")) {
         issues.push({
           line: no,
           message: `${requireCur().path}: SEARCH ブロックが閉じられないまま次の <<<<<<< SEARCH が現れました`,
@@ -193,7 +278,7 @@ export function parseChanges(text: string): ParseResult {
 
     if (state === "replace") {
       const section = requireCur();
-      if (line === REPLACE_END) {
+      if (isMarker(line, no, "replace-end")) {
         if (searchBuf.length === 0) {
           issues.push({ line: blockLine, message: `${section.path}: SEARCH ブロックが空です` });
         }
@@ -204,13 +289,13 @@ export function parseChanges(text: string): ParseResult {
           index: section.blocks.length + 1,
         });
         state = "fileTop";
-      } else if (line === DIVIDER) {
+      } else if (isMarker(line, no, "divider")) {
         issues.push({
           line: no,
           message: `${section.path}: ======= (区切り) が 1 ブロック内に複数あります`,
         });
         state = "fileTop";
-      } else if (line === SEARCH) {
+      } else if (isMarker(line, no, "search")) {
         issues.push({
           line: no,
           message: `${section.path}: >>>>>>> REPLACE で閉じられないまま次の <<<<<<< SEARCH が現れました`,
@@ -226,7 +311,7 @@ export function parseChanges(text: string): ParseResult {
     }
 
     // state === "content"
-    if (line === CONTENT_END) {
+    if (isMarker(line, no, "content-end")) {
       requireCur().content = contentBuf;
       state = "fileTop";
     } else {

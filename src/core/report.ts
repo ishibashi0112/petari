@@ -37,7 +37,8 @@ export function buildFailureReport(failures: Failure[]): string {
   return parts.join("\n");
 }
 
-/** 構文エラー (パース失敗) のレポート */
+/** 構文エラー (パース失敗) のレポート。規約文がチャット側で失われていても
+ * このレポート単体で再出力を依頼できるよう、フォーマットの要点を再掲する */
 export function buildParseErrorReport(issues: ParseIssue[]): string {
   const parts: string[] = [
     "受け取った changes.md が規約フォーマットとして解釈できませんでした。",
@@ -46,11 +47,22 @@ export function buildParseErrorReport(issues: ParseIssue[]): string {
     "",
     ...issues.map((i) => `- ${i.line} 行目: ${i.message}`),
     "",
+    "## 規約フォーマットの要点 (再掲)",
+    "",
+    "- 出力は必ず行頭の「## CHANGES」の行から始め、変更概要のあとに各ファイルのセクションを置く",
+    "- 各ファイルは「### FILE: 相対パス (replace|create|rewrite|delete)」の見出し行で始める",
+    "- replace は <<<<<<< SEARCH / ======= / >>>>>>> REPLACE のブロックで書き、",
+    "  SEARCH の内容は現在のファイルから一字一句そのままコピーする",
+    "- create / rewrite は <<<<<<< CONTENT / >>>>>>> END のブロックにファイル全文を書く。delete は本文なし",
+    "- マーカー行は必ず行頭から書き、前後に他の文字を付けない (< > = はいずれも 7 個)",
+    "- 出力全体や各ブロックをコードフェンス (```) で包まない",
+    "- FILE セクションの間に説明文を書かない (説明は冒頭の CHANGES セクションへ)",
+    "",
     "## 依頼",
     "",
     "上記の構文エラーを修正し、changes.md 全体を規約フォーマット (## CHANGES から始まり、",
     "### FILE: 行と <<<<<<< SEARCH / ======= / >>>>>>> REPLACE 等のマーカーを行頭に置く形式) で",
-    "再出力してください。",
+    "再出力してください。失敗していないファイル・ブロックも含めた完全な changes.md を出力してください。",
     "",
   ];
   return parts.join("\n");

@@ -6,7 +6,7 @@
  * 制約: slnmix (v0.7.0+) はこのテキストを <instruction>...</instruction> で囲んで
  * 出力へ連結するため、規約文に <instruction> という文字列を含めないこと。
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const PROTOCOL_TEXT = `<!-- petari protocol v${PROTOCOL_VERSION} -->
 # コード変更の出力規約 (changes.md)
@@ -77,4 +77,15 @@ new code
 7. 対象ファイルが日本語 Shift_JIS の場合、絵文字など Shift_JIS で表現できない文字を
    コード中に入れない
 8. changes.md 以外の出力 (前置き・後書き) は最小限にする
+
+## 出力前の自己チェック
+
+出力を確定する前に、次の 4 点を必ず確認してください。
+
+1. 出力は「## CHANGES」の行から始まっているか
+2. すべてのマーカー行が行頭にあり、綴りが正確か
+   (<<<<<<< と >>>>>>> は記号 7 個 + 半角スペース + 語、区切りは = 7 個のみの行)
+3. 各 SEARCH の内容は、提供された現在のファイルからの正確なコピーか
+   (記憶をもとに再構成していないか)
+4. 同じファイルの FILE セクションが重複していないか
 `;

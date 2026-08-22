@@ -14,7 +14,7 @@ import {
   type Plan,
 } from "../core/applier.ts";
 import { PRESENCE_STAGE_LABEL } from "../core/matcher.ts";
-import { parseChanges } from "../core/parser.ts";
+import { parseChangesRecovering } from "../core/parser.ts";
 import { buildFailureReport, buildParseErrorReport } from "../core/report.ts";
 import { readClipboard, writeClipboard } from "../infra/clipboard.ts";
 import { loadConfig } from "../infra/config.ts";
@@ -184,12 +184,17 @@ export async function applyCommand(argv: string[]): Promise<number> {
     source = { type: newest.origin, path: newest.path };
   }
 
-  // 1. パース (構文エラーは即時失敗・§4.1)
-  const { changeSet, issues } = parseChanges(changesText);
+  // 1. パース (構文エラーは即時失敗・§4.1)。strict で失敗したら寛容パースを試す (§3.5)
+  const { changeSet, issues, repairs } = parseChangesRecovering(changesText);
   if (issues.length > 0) {
     err("petari: changes.md の構文エラーです。何も書き込んでいません。\n");
     await emitReport(buildParseErrorReport(issues));
     return 1;
+  }
+  if (repairs.length > 0) {
+    out(`規約からの軽微な逸脱 ${repairs.length} 件を自動補正して解釈しました:`);
+    for (const r of repairs) out(`  ${r.line} 行目: ${r.message}`);
+    out("");
   }
 
   // 2. 全ブロックのドライラン検証

@@ -21,7 +21,7 @@ import { invalidPathReason } from "../core/applier.ts";
 import { diffLines, toSideBySideRows } from "../core/diff.ts";
 import { buildReportPage, type ReportFileSection } from "../core/diff-html.ts";
 import { EncodingError, decodeFile } from "../core/encoding.ts";
-import { parseChanges } from "../core/parser.ts";
+import { parseChangesRecovering } from "../core/parser.ts";
 import { openInBrowser } from "../infra/browser.ts";
 import { loadConfig, type PetariConfig } from "../infra/config.ts";
 import { monacoVendorDir, startDiffServer, type EditEntry } from "../infra/diff-server.ts";
@@ -312,7 +312,8 @@ export async function showCommand(argv: string[]): Promise<number> {
   // --changes: CHANGES セクション (概要・影響一覧・Mermaid) の表示 (§13-4)
   if (values.changes) {
     const text = readFileSync(join(hdir, "changes.md"), "utf8");
-    const { changeSet } = parseChanges(text);
+    // 寛容パースで適用した履歴の changes.md も表示できるようにする (§3.5)
+    const { changeSet } = parseChangesRecovering(text);
     out(changeSet.header !== "" ? changeSet.header : "(CHANGES セクションがありません)");
     return 0;
   }
