@@ -114,7 +114,9 @@
 - パス規則: 絶対パス・UNC・ドライブレター・`..`・`~`・`:` (ADS)・Windows 予約デバイス名を拒否
 - `vscodeCommand` はコマンド名か絶対パスのみ (相対パス拒否 — リポジトリ内スクリプトの実行防止)
 - 端末出力は `src/infra/term.ts` の `out`/`err` を必ず使う (C0/C1 制御文字を除去。
-  ANSI エスケープ注入対策)。`process.stdout.write` 直書きは protocol (信頼済み同梱テキスト) のみ可
+  ANSI エスケープ注入対策)。`process.stdout.write` 直書きは protocol (信頼済み同梱テキスト) のみ可。
+  強調表示は同ファイルの `outEmphasis` (本文サニタイズ後に term.ts 内のリテラル定数の
+  装飾コードだけを付与。非 TTY / NO_COLOR では装飾なし) — 注入対策は保たれる
 - 子プロセスは常に execFile/spawn の配列引数 (シェル非経由)。PowerShell へ渡すパスは
   単一引用符 + `''` エスケープ
 - 再監査 (2 回目) での追加: vscodeCommand の UNC 拒否 / 予約名判定は末尾ドット・空白を

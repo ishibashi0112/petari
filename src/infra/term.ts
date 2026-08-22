@@ -17,3 +17,20 @@ export function sanitizeForTerminal(s: string): string {
 
 export const out = (s: string): void => void process.stdout.write(sanitizeForTerminal(s) + "\n");
 export const err = (s: string): void => void process.stderr.write(sanitizeForTerminal(s) + "\n");
+
+const RESET = "\u001B[0m";
+const BOLD_YELLOW = "\u001B[1;33m";
+const BOLD_REVERSE_YELLOW = "\u001B[1;7;33m";
+
+/**
+ * 目立たせたい行の出力。装飾コードはこのファイルのリテラル定数のみで、
+ * 本文はサニタイズ後に着色するため ANSI 注入対策 (上記) は保たれる。
+ * 非 TTY (パイプ・リダイレクト) と NO_COLOR 指定時は装飾なしで出力する。
+ */
+export const outEmphasis = (s: string, reverse = false): void => {
+  const clean = sanitizeForTerminal(s);
+  const decorate =
+    process.stdout.isTTY === true && process.env["NO_COLOR"] === undefined;
+  const colored = decorate ? `${reverse ? BOLD_REVERSE_YELLOW : BOLD_YELLOW}${clean}${RESET}` : clean;
+  process.stdout.write(colored + "\n");
+};

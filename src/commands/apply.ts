@@ -25,7 +25,7 @@ import {
 } from "../infra/downloads.ts";
 import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
 import { gitDirtyFiles } from "../infra/git.ts";
-import { err, out } from "../infra/term.ts";
+import { err, out, outEmphasis } from "../infra/term.ts";
 import {
   beginHistory,
   createHistoryId,
@@ -115,7 +115,12 @@ export async function applyCommand(argv: string[]): Promise<number> {
     if (values["clip-report"] || config.clipReportOnFailure) {
       try {
         await writeClipboard(report);
-        out("(レポートをクリップボードにコピーしました)");
+        // 貼り返しを忘れないよう、コピー済みであることを最後に強調表示する
+        const rule = "━".repeat(56);
+        outEmphasis(rule);
+        outEmphasis(" 失敗レポートをクリップボードにコピーしました ", true);
+        outEmphasis("   → そのまま AI チャットに貼り付けて再依頼できます (Ctrl+V)");
+        outEmphasis(rule);
       } catch (e) {
         err(`petari: クリップボードへのコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
       }
