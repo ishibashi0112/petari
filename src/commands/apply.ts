@@ -108,10 +108,11 @@ export async function applyCommand(argv: string[]): Promise<number> {
     out("ヒント: 初回は `petari init` を実行すると protocol.md や設定の雛形が整います");
   }
 
-  // レポートを標準出力へ出し、--clip-report ならクリップボードにもコピーする (§7)
+  // レポートを標準出力へ出し、クリップボードにもコピーする (§7)。
+  // 既定 (clipReportOnFailure: true) で自動コピーし、config で無効化できる。--clip-report は常に有効
   const emitReport = async (report: string): Promise<void> => {
     out(report);
-    if (values["clip-report"]) {
+    if (values["clip-report"] || config.clipReportOnFailure) {
       try {
         await writeClipboard(report);
         out("(レポートをクリップボードにコピーしました)");

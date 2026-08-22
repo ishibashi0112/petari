@@ -9,6 +9,8 @@ export interface PetariConfig {
   newFile: NewFileConfig;
   historyLimit: number | null;
   vscodeCommand: string;
+  /** 失敗レポート出力時にクリップボードへ自動コピーする (§7)。--clip-report は常に有効 */
+  clipReportOnFailure: boolean;
 }
 
 export const DEFAULT_CONFIG: PetariConfig = {
@@ -16,6 +18,7 @@ export const DEFAULT_CONFIG: PetariConfig = {
   newFile: { encoding: "utf8", eol: "lf" },
   historyLimit: null,
   vscodeCommand: "code",
+  clipReportOnFailure: true,
 };
 
 /** グローバル設定のパス (§10)。Windows は %APPDATA%、他は XDG (~/.config) */
@@ -57,6 +60,9 @@ function validateConfig(c: PetariConfig): PetariConfig {
   }
   if (c.downloadsDir !== null && typeof c.downloadsDir !== "string") {
     throw new Error("config の downloadsDir が不正です (null または文字列を指定)");
+  }
+  if (typeof c.clipReportOnFailure !== "boolean") {
+    throw new Error("config の clipReportOnFailure が不正です (true | false)");
   }
   return c;
 }

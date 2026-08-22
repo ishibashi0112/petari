@@ -14,7 +14,8 @@ const CONFIG_TEMPLATE = `{
   "downloadsDir": null,
   "newFile": { "encoding": "utf8", "eol": "lf" },
   "historyLimit": null,
-  "vscodeCommand": "code"
+  "vscodeCommand": "code",
+  "clipReportOnFailure": true
 }
 `;
 

@@ -334,6 +334,11 @@ SEARCH がどの段階でも見つからない場合、即失敗にする前に 
 
 `--clip-report` 等でレポートをクリップボードへ直接コピーできると尚良い。
 
+v0.5.0 から、失敗レポート出力時のクリップボード自動コピーを **既定で有効** にする
+(`clipReportOnFailure: true`・§10)。失敗した時点でレポートがクリップボードに入っており、
+AI チャットへの貼り返しが 1 ペーストで済む。config で無効化でき、`--clip-report` は
+設定によらず常に有効。
+
 ---
 
 ## 8. エンコーディングと改行の保全(最重要要件)
@@ -372,7 +377,8 @@ SEARCH がどの段階でも見つからない場合、即失敗にする前に 
   "downloadsDir": null,          // null = OS 既定を自動解決
   "newFile": { "encoding": "utf8", "eol": "lf" },
   "historyLimit": null,          // 履歴の保持件数上限(null = 無制限)
-  "vscodeCommand": "code"        // show で使うコマンド
+  "vscodeCommand": "code",       // show で使うコマンド
+  "clipReportOnFailure": true    // 失敗レポートをクリップボードへ自動コピー(§7)
 }
 ```
 

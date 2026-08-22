@@ -14,6 +14,14 @@ function setupProject(): string {
   const dir = mkdtempSync(join(tmpdir(), "petari-test-"));
   writeFileSync(join(dir, "legacy.vb"), sjis("' コメント\r\nDim count As Integer = 1\r\nEnd Module"));
   writeFileSync(join(dir, "old.txt"), utf8("obsolete\n"));
+  // 失敗レポートの自動コピー (clipReportOnFailure 既定 true) がテスト実行機の
+  // クリップボードを書き換えないよう無効化しておく
+  mkdirSync(join(dir, ".petari"), { recursive: true });
+  writeFileSync(
+    join(dir, ".petari", "config.json"),
+    JSON.stringify({ clipReportOnFailure: false }),
+    "utf8",
+  );
   return dir;
 }
 
@@ -213,7 +221,7 @@ describe("applyCommand: プロジェクト直下の changes.md 検出", () => {
     mkdirSync(join(dir, ".petari"), { recursive: true });
     writeFileSync(
       join(dir, ".petari", "config.json"),
-      JSON.stringify({ downloadsDir: emptyDownloads }),
+      JSON.stringify({ downloadsDir: emptyDownloads, clipReportOnFailure: false }),
       "utf8",
     );
     writeFileSync(join(dir, "changes.md"), CHANGES, "utf8");

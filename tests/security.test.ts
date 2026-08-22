@@ -64,6 +64,13 @@ describe("symlink ディレクトリ経由のルート外書き込み防止 (指
     const outside = mkdtempSync(join(tmpdir(), "petari-sec-b-"));
     writeFileSync(join(outside, "target.txt"), "hello\n");
     symlinkSync(outside, join(root, "linkdir"));
+    // 失敗レポートの自動コピーがテスト実行機のクリップボードを書き換えないよう無効化
+    mkdirSync(join(root, ".petari"), { recursive: true });
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ clipReportOnFailure: false }),
+      "utf8",
+    );
     const changesPath = join(root, "changes.md");
     writeFileSync(changesPath, simpleChanges("linkdir/target.txt"), "utf8");
 
