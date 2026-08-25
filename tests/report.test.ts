@@ -93,4 +93,60 @@ describe("buildFailureReport (§7 拡充)", () => {
     expect(report).toContain("<<<<<<< SEARCH");
     expect(report).not.toContain("検証結果の一覧");
   });
+
+  // 2026-08-25 実運用フィードバック: 空行 1 本の欠落を名指しできず誤誘導になった事例への対策
+  it("空行欠落ケースでは照合仕様に空行の扱いを明記し、修正のヒントで空行を名指しする", () => {
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "m.vb",
+        line: 1,
+        blocks: [
+          block(
+            ["        Recalc_CostAmount(io_Dt)", "    End Sub"],
+            ["        Recalc_CostAmount(io_Dt)", "        Log_Result()", "    End Sub"],
+          ),
+        ],
+      }),
+      new Map([
+        [
+          "m.vb",
+          state(utf8("    Sub Update()\n        Recalc_CostAmount(io_Dt)\n\n    End Sub\nEnd Module\n")),
+        ],
+      ]),
+      NEW_FILE,
+    );
+    const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
+    expect(report).toContain("空行は「内容のある 1 行」として数えます");
+    expect(report).toContain("修正のヒント");
+    expect(report).toContain("空行 1 行");
+    expect(report).toContain("+ = 実ファイルにあるが SEARCH にない行");
+  });
+
+  it("残り 1 ブロックで全通しになることを検証結果の一覧に構造化して示す", () => {
+    const plan = crossFilePlan();
+    const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
+    expect(report).toContain("失敗は全 2 ブロック中この 1 ブロックだけです");
+  });
+
+  it("SEARCH が全滅でも REPLACE 側の内容から近傍領域を推定して示す", () => {
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "r.vb",
+        line: 1,
+        blocks: [
+          block(
+            ["Public Sub Legacy()", "    Call OldImpl()"],
+            ["Public Sub Done()", "    Call NewImpl2()"],
+          ),
+        ],
+      }),
+      new Map([["r.vb", state(utf8("Public Sub Done()\n    Call NewImpl()\nEnd Sub\n"))]]),
+      NEW_FILE,
+    );
+    const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
+    expect(report).toContain("REPLACE 側の内容に近い実ファイル領域");
+    expect(report).toContain("│Public Sub Done()");
+  });
 });

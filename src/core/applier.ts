@@ -57,6 +57,11 @@ export interface Failure {
   block?: ReplaceBlock;
   /** block-not-found のとき: 実ファイル内で最も近い箇所の診断 (§7 レポートに掲載) */
   nearest?: NearestAnalysis;
+  /**
+   * SEARCH がどの行も見つからなかったとき: REPLACE 側の内容で推定した近傍診断。
+   * 「本来当てたかった箇所」の提示と、変更が既に別の形で入っている可能性の診断材料
+   */
+  nearestReplace?: NearestAnalysis;
 }
 
 /** 適用に成功した replace ブロックの記録 (差分プレビューと manifest 用) */
@@ -199,12 +204,23 @@ function planReplace(
         (checkedReplace
           ? " (REPLACE の内容も見つからないため、changes.md の基準スナップショットが現在のコードベースとずれている可能性があります)"
           : "");
+      const nearest = analyzeNearest(textLines, block.search, applied.length > 0);
+      // SEARCH が全滅のときのみ REPLACE 側で近傍を推定する (本来当てたかった箇所のヒント)。
+      // fold 段のみの偶然一致をノイズとして弾くため matchCount >= 1 を要求する
+      let nearestReplace: NearestAnalysis | undefined;
+      if (nearest.window === null && checkedReplace) {
+        const byReplace = analyzeNearest(textLines, block.replace, applied.length > 0, "REPLACE");
+        if (byReplace.window !== null && byReplace.window.matchCount >= 1) {
+          nearestReplace = byReplace;
+        }
+      }
       failures.push({
         path: change.path,
         kind: "block-not-found",
         message,
         block,
-        nearest: analyzeNearest(textLines, block.search, applied.length > 0),
+        nearest,
+        ...(nearestReplace !== undefined ? { nearestReplace } : {}),
       });
       continue;
     }

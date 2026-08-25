@@ -56,6 +56,26 @@ describe("initCommand (§4.6)", () => {
     expect(config.ignore.customPatterns).toEqual(["*.log"]);
   });
 
+  // 空行を落としたスナップショットは SEARCH 不一致 (空行欠落) の定番原因 (2026-08-25 実運用事例)
+  it("既存の repomix.config.json の removeEmptyLines: true は false へ修正する", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "petari-init6-"));
+    writeFileSync(
+      join(dir, "repomix.config.json"),
+      JSON.stringify(
+        { output: { instructionFilePath: "protocol.md", removeEmptyLines: true } },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await initCommand(["--root", dir, "--yes"]);
+    const config = JSON.parse(readFileSync(join(dir, "repomix.config.json"), "utf8")) as {
+      output: { instructionFilePath: string; removeEmptyLines: boolean };
+    };
+    expect(config.output.removeEmptyLines).toBe(false);
+    expect(config.output.instructionFilePath).toBe("protocol.md");
+  });
+
   it("既存 .gitignore には末尾に追記する", async () => {
     const dir = mkdtempSync(join(tmpdir(), "petari-init4-"));
     writeFileSync(join(dir, ".gitignore"), "node_modules/\n", "utf8");

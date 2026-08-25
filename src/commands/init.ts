@@ -61,21 +61,43 @@ export async function initCommand(argv: string[]): Promise<number> {
   // 3. repomix 連携 (§4.6-3)
   const repomixPath = join(root, "repomix.config.json");
   if (existsSync(repomixPath)) {
-    let parsed: { output?: { instructionFilePath?: string } };
+    let parsed: { output?: { instructionFilePath?: string; removeEmptyLines?: boolean } } | null;
     try {
       parsed = JSON.parse(readFileSync(repomixPath, "utf8")) as typeof parsed;
     } catch {
       err(`3. ${repomixPath} を JSON として読めないためスキップします`);
-      parsed = { output: { instructionFilePath: "(parse error)" } };
+      parsed = null;
     }
-    if (parsed.output?.instructionFilePath !== undefined) {
-      out(`3. repomix.config.json は instructionFilePath 設定済みです (変更しません)`);
-    } else if (
-      await ask('3. repomix.config.json に output.instructionFilePath: "protocol.md" を追記しますか?')
-    ) {
-      parsed.output = { ...(parsed.output ?? {}), instructionFilePath: "protocol.md" };
-      writeFileSync(repomixPath, JSON.stringify(parsed, null, 2) + "\n", "utf8");
-      out(`   追記しました: ${repomixPath}`);
+    if (parsed !== null) {
+      let changed = false;
+      if (parsed.output?.instructionFilePath !== undefined) {
+        out(`3. repomix.config.json は instructionFilePath 設定済みです (変更しません)`);
+      } else if (
+        await ask('3. repomix.config.json に output.instructionFilePath: "protocol.md" を追記しますか?')
+      ) {
+        parsed.output = { ...(parsed.output ?? {}), instructionFilePath: "protocol.md" };
+        changed = true;
+      }
+      // 空行を落としたスナップショットは SEARCH 不一致 (空行欠落) の定番原因 (2026-08-25 実運用事例)
+      const output = parsed.output;
+      if (output !== undefined && output.removeEmptyLines === true) {
+        if (
+          await ask(
+            "3. repomix.config.json の output.removeEmptyLines: true は、スナップショットと実ファイルの空行がずれて SEARCH 不一致の原因になります。false に変更しますか?",
+          )
+        ) {
+          output.removeEmptyLines = false;
+          changed = true;
+        } else {
+          err(
+            "   removeEmptyLines: true のままでは AI の SEARCH から空行が欠けやすくなります (petari は失敗レポートの + 印で検出します)",
+          );
+        }
+      }
+      if (changed) {
+        writeFileSync(repomixPath, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+        out(`   更新しました: ${repomixPath}`);
+      }
     }
   } else if (
     await ask("3. repomix 連携用の repomix.config.json (最小構成) を作成しますか?")

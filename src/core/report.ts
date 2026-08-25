@@ -11,7 +11,7 @@
 import type { Failure } from "./applier.ts";
 import type { FileOutcome } from "./applier.ts";
 import { STAGE_LABEL } from "./matcher.ts";
-import { renderNearest } from "./nearest.ts";
+import { renderNearest, renderNearestReplace } from "./nearest.ts";
 import type { ParseIssue } from "../types.ts";
 
 const MATCH_SPEC_NOTE = [
@@ -19,9 +19,12 @@ const MATCH_SPEC_NOTE = [
   "",
   "- petari は行末空白・インデントの深さ (タブ/スペース混在含む)・改行コード・文字コード",
   "  (UTF-8 / Shift_JIS) の違いを自動で吸収して照合しています",
-  "- したがって「SEARCH が見つかりません」は空白・インデント・エンコーディングの問題では",
-  "  ありません。行の文字内容そのものが現在のファイルと異なっています",
-  "- 空白の調整・ASCII 行だけへの縮小・別アンカーへの乗り換えでは解決しません。各失敗に",
+  "- ただし空行は「内容のある 1 行」として数えます。SEARCH と実ファイルで空行の位置・数が",
+  "  違うと一致しません (スナップショット生成ツールやチャット側の表示で空行が落ちる事例が",
+  "  あります。抜粋では実ファイル側にだけある行を + で示します)",
+  "- したがって「SEARCH が見つかりません」は行内の空白・インデント・エンコーディングの問題では",
+  "  ありません。行の文字内容か、行の構成 (空行を含む行の過不足) が現在のファイルと異なっています",
+  "- 行内空白の調整・ASCII 行だけへの縮小・別アンカーへの乗り換えでは解決しません。各失敗に",
   "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
 ];
 
@@ -30,7 +33,8 @@ const RE_REQUEST = `## 依頼
 上記の失敗した各ブロックについて、SEARCH 部分を現在のファイル内容と完全に一致するよう修正し、
 changes.md 全体を元の規約フォーマット (## CHANGES から始まる形式) で再出力してください。
 - SEARCH の修正には「実ファイルの該当箇所」の抜粋を使い、「│」より右側を一字一句そのまま
-  コピーしてください (行頭の「! ~ =」の記号と行番号は含めません)
+  コピーしてください (行頭の「! ~ = +」の記号と行番号は含めません。+ の行 (空行含む) も
+  SEARCH に含めます)
 - SEARCH ブロックにはファイル内で一意に特定できる範囲を含めてください
 - 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください
 - 抜粋にも SEARCH に相当する行が見当たらない場合は、推測で書き換えず、その旨を報告して
@@ -86,7 +90,36 @@ function outcomeSummary(outcomes: FileOutcome[]): string[] {
       lines.push(`    - ブロック ${index}: ${status}`);
     }
   }
+  lines.push(...remainingSummary(outcomes));
   return lines;
+}
+
+/**
+ * 「残り何ブロックを直せば全適用できるか」の構造化サマリ (§7)。
+ * all-or-nothing の設計上、あと 1 ブロックで全通しの状態を明示すると再出力の
+ * 修正ポイントが絞れる (2026-08-25 実運用フィードバック)。
+ */
+function remainingSummary(outcomes: FileOutcome[]): string[] {
+  let totalUnits = 0;
+  let failedUnits = 0;
+  for (const o of outcomes) {
+    if (o.change.op === "replace" && o.totalBlocks > 0) {
+      totalUnits += o.totalBlocks;
+      const fileLevel = o.failures.some((f) => f.block === undefined);
+      failedUnits += fileLevel ? o.totalBlocks : o.failures.length;
+    } else {
+      totalUnits += 1;
+      if (o.failures.length > 0) failedUnits += 1;
+    }
+  }
+  if (failedUnits === 0 || failedUnits >= totalUnits) return [];
+  const passed = totalUnits - failedUnits;
+  return [
+    "",
+    failedUnits === 1
+      ? `→ 失敗は全 ${totalUnits} ブロック中この 1 ブロックだけです。この 1 ブロックの SEARCH を修正すれば全体が適用可能になります。`
+      : `→ 全 ${totalUnits} ブロック中 ${passed} ブロックは検証を通過しています。残る ${failedUnits} ブロックの SEARCH を修正すれば全体が適用可能になります。`,
+  ];
 }
 
 /** 検証失敗 (マッチング・パス・エンコーディング) のレポート */
@@ -121,6 +154,9 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
     }
     if (f.nearest !== undefined) {
       parts.push("", ...renderNearest(f.nearest));
+    }
+    if (f.nearestReplace !== undefined) {
+      parts.push("", ...renderNearestReplace(f.nearestReplace));
     }
   }
   parts.push("", RE_REQUEST, "");
