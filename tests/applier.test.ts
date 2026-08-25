@@ -84,14 +84,35 @@ describe("planChangeSet: replace", () => {
     expect(plan.outcomes[0]?.afterBytes).toBeNull();
   });
 
-  it("複数一致 → block-ambiguous", () => {
+  it("block-not-found には近傍診断 (nearest) が付く", () => {
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "a.ts",
+        line: 1,
+        blocks: [block(["hello", "world"], ["hello", "world!"])],
+      }),
+      states({ "a.ts": state(utf8("hello\nthere\n")) }),
+      NEW_FILE,
+    );
+    const f = plan.failures[0];
+    expect(f?.kind).toBe("block-not-found");
+    expect(f?.nearest?.window?.matchCount).toBe(1);
+    expect(f?.nearest?.lineHits).toEqual([
+      { index: 1, text: "hello", count: 1 },
+      { index: 2, text: "world", count: 0 },
+    ]);
+  });
+
+  it("複数一致 → block-ambiguous (マッチ位置の行番号付き)", () => {
     const plan = planChangeSet(
       cs({ op: "replace", path: "a.ts", line: 1, blocks: [block(["dup"], ["y"])] }),
-      states({ "a.ts": state(utf8("dup\ndup\n")) }),
+      states({ "a.ts": state(utf8("dup\nmid\ndup\n")) }),
       NEW_FILE,
     );
     expect(plan.failures[0]?.kind).toBe("block-ambiguous");
     expect(plan.failures[0]?.message).toContain("2 箇所");
+    expect(plan.failures[0]?.message).toContain("1, 3 行目");
   });
 
   it("Shift_JIS ファイルへ変換不能文字を書く REPLACE → unencodable (検証段階・§8)", () => {

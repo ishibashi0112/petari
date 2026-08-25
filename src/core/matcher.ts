@@ -32,6 +32,8 @@ export type BlockResult =
       /** ambiguous のとき: どの段階で複数一致したか・その件数 */
       stage?: MatchStage;
       count?: number;
+      /** ambiguous のとき: 各マッチの開始位置 (0-based 行番号)。レポートの位置表示用 */
+      positions?: number[];
     };
 
 export interface ApplyBlocksResult {
@@ -160,7 +162,7 @@ export function matchBlock(
       return { ok: true, block, stage, start, end, replacement };
     }
     if (found.length > 1) {
-      return { ok: false, block, reason: "ambiguous", stage, count: found.length };
+      return { ok: false, block, reason: "ambiguous", stage, count: found.length, positions: found };
     }
   }
   return { ok: false, block, reason: "not-found" };

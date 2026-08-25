@@ -22,6 +22,7 @@ import {
   type MatchStage,
   type PresenceStage,
 } from "./matcher.ts";
+import { analyzeNearest, type NearestAnalysis } from "./nearest.ts";
 
 export interface NewFileConfig {
   encoding: FileEncoding;
@@ -54,6 +55,8 @@ export interface Failure {
   message: string;
   /** ブロック起因の失敗のとき、そのブロック */
   block?: ReplaceBlock;
+  /** block-not-found のとき: 実ファイル内で最も近い箇所の診断 (§7 レポートに掲載) */
+  nearest?: NearestAnalysis;
 }
 
 /** 適用に成功した replace ブロックの記録 (差分プレビューと manifest 用) */
@@ -175,15 +178,34 @@ function planReplace(
           continue;
         }
       }
+      if (m.reason === "ambiguous") {
+        // 位置は同一ファイル内の先行ブロック適用後の行配列に対する行番号 (通常は実ファイルと一致)
+        const positions = (m.positions ?? []).map((p) => `${p + 1}`);
+        const shown =
+          positions.length > 5
+            ? `${positions.slice(0, 5).join(", ")} 行目 他 ${positions.length - 5} 箇所`
+            : `${positions.join(", ")} 行目`;
+        failures.push({
+          path: change.path,
+          kind: "block-ambiguous",
+          message: `ブロック ${block.index}: SEARCH が ${m.count} 箇所にマッチしました (${STAGE_LABEL[m.stage as MatchStage]}: ${shown})。前後の行を追加して一意に特定できる範囲にしてください`,
+          block,
+        });
+        continue;
+      }
       const checkedReplace = block.replace.some((l) => l.trim() !== "");
       const message =
-        m.reason === "ambiguous"
-          ? `ブロック ${block.index}: SEARCH が ${m.count} 箇所にマッチしました (${STAGE_LABEL[m.stage as MatchStage]})。一意に特定できる範囲を含めてください`
-          : `ブロック ${block.index}: SEARCH が現在のファイル内容に見つかりません` +
-            (checkedReplace
-              ? " (REPLACE の内容も見つからないため、changes.md の基準スナップショットが現在のコードベースとずれている可能性があります)"
-              : "");
-      failures.push({ path: change.path, kind: m.reason === "ambiguous" ? "block-ambiguous" : "block-not-found", message, block });
+        `ブロック ${block.index}: SEARCH が現在のファイル内容に見つかりません` +
+        (checkedReplace
+          ? " (REPLACE の内容も見つからないため、changes.md の基準スナップショットが現在のコードベースとずれている可能性があります)"
+          : "");
+      failures.push({
+        path: change.path,
+        kind: "block-not-found",
+        message,
+        block,
+        nearest: analyzeNearest(textLines, block.search, applied.length > 0),
+      });
       continue;
     }
     const replacement = m.replacement as string[];

@@ -223,7 +223,9 @@ export async function applyCommand(argv: string[]): Promise<number> {
   // 3. 失敗があれば何も書き込まずレポート (§4.1, §7)
   if (!plan.ok && !values.partial) {
     err(`petari: 検証に失敗しました (${plan.failures.length} 件)。何も書き込んでいません。\n`);
-    await emitReport(buildFailureReport(plan.failures));
+    await emitReport(
+      buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
+    );
     return 1;
   }
   const applicable = plan.outcomes.filter(isApplicable);
@@ -235,7 +237,9 @@ export async function applyCommand(argv: string[]): Promise<number> {
       return 0;
     }
     err("petari: 適用できる変更がありません。\n");
-    await emitReport(buildFailureReport(plan.failures));
+    await emitReport(
+      buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
+    );
     return 1;
   }
   if (values["dry-run"]) {
@@ -244,7 +248,9 @@ export async function applyCommand(argv: string[]): Promise<number> {
     printAlreadyApplied(plan.outcomes);
     if (plan.failures.length > 0) {
       out("");
-      await emitReport(buildFailureReport(plan.failures));
+      await emitReport(
+        buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
+      );
     }
     return 0;
   }
@@ -333,7 +339,8 @@ export async function applyCommand(argv: string[]): Promise<number> {
   if (plan.failures.length > 0) {
     out(`スキップした失敗 ${plan.failures.length} 件のレポート:`);
     out("");
-    await emitReport(buildFailureReport(plan.failures));
+    // --partial で成功分は書き込み済みのため nothingWritten は付けない
+    await emitReport(buildFailureReport(plan.failures, { outcomes: plan.outcomes }));
   }
 
   // 6. 自動検出 (Downloads / プロジェクト直下) 由来なら changes.md を履歴へ移動

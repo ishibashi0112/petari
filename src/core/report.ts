@@ -1,23 +1,110 @@
 /**
  * 失敗レポート (§7)。そのまま AI チャットに貼り返せる形式で出力する。
+ *
+ * 2026-08-25 の実運用事例 (AI が失敗原因を空白/エンコーディング差と誤診し、SEARCH の
+ * 空白調整や ASCII 化に 4 往復を浪費) を受けて、レポートに次を含める:
+ * - petari の照合仕様 (空白・エンコーディング差は吸収済み = 失敗は文字内容の差) の明記
+ * - 全ファイル・全ブロックの検証結果一覧 (どこが通りどこが落ちたかの対比が診断の鍵)
+ * - all-or-nothing で未書き込みであることの明記 (端末表示はチャットに貼られないため)
+ * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)
  */
 import type { Failure } from "./applier.ts";
+import type { FileOutcome } from "./applier.ts";
+import { STAGE_LABEL } from "./matcher.ts";
+import { renderNearest } from "./nearest.ts";
 import type { ParseIssue } from "../types.ts";
+
+const MATCH_SPEC_NOTE = [
+  "## petari の照合仕様 (SEARCH を修正する前に必ず読んでください)",
+  "",
+  "- petari は行末空白・インデントの深さ (タブ/スペース混在含む)・改行コード・文字コード",
+  "  (UTF-8 / Shift_JIS) の違いを自動で吸収して照合しています",
+  "- したがって「SEARCH が見つかりません」は空白・インデント・エンコーディングの問題では",
+  "  ありません。行の文字内容そのものが現在のファイルと異なっています",
+  "- 空白の調整・ASCII 行だけへの縮小・別アンカーへの乗り換えでは解決しません。各失敗に",
+  "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
+];
 
 const RE_REQUEST = `## 依頼
 
 上記の失敗した各ブロックについて、SEARCH 部分を現在のファイル内容と完全に一致するよう修正し、
 changes.md 全体を元の規約フォーマット (## CHANGES から始まる形式) で再出力してください。
+- SEARCH の修正には「実ファイルの該当箇所」の抜粋を使い、「│」より右側を一字一句そのまま
+  コピーしてください (行頭の「! ~ =」の記号と行番号は含めません)
 - SEARCH ブロックにはファイル内で一意に特定できる範囲を含めてください
-- 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください`;
+- 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください
+- 抜粋にも SEARCH に相当する行が見当たらない場合は、推測で書き換えず、その旨を報告して
+  最新のファイル内容の共有を依頼してください`;
+
+export interface FailureReportContext {
+  /** 全ファイル・全ブロックの検証結果一覧を載せる (成功/失敗の対比が原因切り分けの鍵) */
+  outcomes?: FileOutcome[];
+  /** all-or-nothing により何も書き込んでいないことを明記する */
+  nothingWritten?: boolean;
+}
+
+/** 検証結果の一覧 (成功したブロックも含めて全て)。ファイル間の対比が診断材料になる */
+function outcomeSummary(outcomes: FileOutcome[]): string[] {
+  const lines: string[] = ["## 検証結果の一覧 (全ファイル・全ブロック)", ""];
+  for (const o of outcomes) {
+    const c = o.change;
+    if (c.op !== "replace") {
+      const status =
+        o.failures.length > 0
+          ? `NG (${o.failures[0]?.message})`
+          : o.alreadyApplied
+            ? "OK (適用済みのためスキップ)"
+            : "OK (検証通過)";
+      lines.push(`- ${c.path} (${c.op}): ${status}`);
+      continue;
+    }
+    const fileLevel = o.failures.find((f) => f.block === undefined);
+    if (fileLevel !== undefined) {
+      lines.push(`- ${c.path} (replace): NG (${fileLevel.message})`);
+      continue;
+    }
+    const okCount = o.appliedBlocks.length + o.alreadyAppliedBlocks.length;
+    lines.push(`- ${c.path} (replace): ${okCount}/${o.totalBlocks} ブロック一致`);
+    const byIndex = new Map<number, string>();
+    for (const b of o.appliedBlocks) {
+      byIndex.set(b.block.index, `OK 一致 (${STAGE_LABEL[b.stage]})`);
+    }
+    for (const b of o.alreadyAppliedBlocks) {
+      byIndex.set(b.block.index, "OK 適用済み (REPLACE が既に存在)");
+    }
+    for (const f of o.failures) {
+      if (f.block === undefined) continue;
+      const label =
+        f.kind === "block-ambiguous"
+          ? "NG 複数箇所に一致 (一意でない)"
+          : f.kind === "unencodable"
+            ? "NG 変換できない文字を含む"
+            : "NG SEARCH 不一致 (詳細は下記)";
+      byIndex.set(f.block.index, label);
+    }
+    for (const [index, status] of [...byIndex.entries()].sort((a, b) => a[0] - b[0])) {
+      lines.push(`    - ブロック ${index}: ${status}`);
+    }
+  }
+  return lines;
+}
 
 /** 検証失敗 (マッチング・パス・エンコーディング) のレポート */
-export function buildFailureReport(failures: Failure[]): string {
-  const parts: string[] = [
-    "以下の変更ブロックが現在のコードベースに適用できませんでした。",
-    "",
-    "## 適用失敗の詳細",
-  ];
+export function buildFailureReport(failures: Failure[], ctx: FailureReportContext = {}): string {
+  const parts: string[] = ["以下の変更ブロックが現在のコードベースに適用できませんでした。"];
+  if (ctx.nothingWritten === true) {
+    parts.push(
+      "",
+      "※ この失敗により petari は何も書き込んでいません (all-or-nothing)。下の一覧で「一致」と",
+      "表示されたブロックもまだファイルには適用されていないため、再出力には失敗していない",
+      "ブロックもすべて含めてください。",
+    );
+  }
+  parts.push("", ...MATCH_SPEC_NOTE);
+  if (ctx.outcomes !== undefined) {
+    parts.push("", ...outcomeSummary(ctx.outcomes));
+  }
+  parts.push("", "## 適用失敗の詳細");
   for (const f of failures) {
     parts.push("", `### ${f.path}`, `失敗理由: ${f.message}`);
     if (f.block !== undefined) {
@@ -31,6 +118,9 @@ export function buildFailureReport(failures: Failure[]): string {
         ">>>>>>> REPLACE",
         "```",
       );
+    }
+    if (f.nearest !== undefined) {
+      parts.push("", ...renderNearest(f.nearest));
     }
   }
   parts.push("", RE_REQUEST, "");
