@@ -234,7 +234,8 @@
   v0.4.1: 2026-08-12 一時レポートの自動掃除 /
   v0.5.0: 2026-08-22 寛容パース + 規約文 v3 + 失敗レポート自動コピー /
   v0.6.0: 2026-08-25 失敗レポートの診断拡充 /
-  v0.7.0: 2026-08-25 空行診断 — ギャップ許容アラインメント + 修正ヒント + init の removeEmptyLines 検知)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.7.0: 2026-08-25 空行診断 — ギャップ許容アラインメント + 修正ヒント + init の removeEmptyLines 検知 /
+  v0.8.0: 2026-08-30 空行差無視マッチ — SEARCH マッチング 4 段目 blank-insensitive + 結果表示の注記 + レポート文言の追従)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
