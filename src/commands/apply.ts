@@ -15,7 +15,11 @@ import {
 } from "../core/applier.ts";
 import { PRESENCE_STAGE_LABEL } from "../core/matcher.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
-import { buildFailureReport, buildParseErrorReport } from "../core/report.ts";
+import {
+  buildBlankInsensitiveNote,
+  buildFailureReport,
+  buildParseErrorReport,
+} from "../core/report.ts";
 import { readClipboard, writeClipboard } from "../infra/clipboard.ts";
 import { loadConfig } from "../infra/config.ts";
 import {
@@ -246,6 +250,8 @@ export async function applyCommand(argv: string[]): Promise<number> {
     out(`dry-run: 適用予定 ${applicable.length} ファイル (書き込みなし)`);
     printPreview(applicable);
     printAlreadyApplied(plan.outcomes);
+    const dryRunNote = buildBlankInsensitiveNote(plan.outcomes);
+    if (dryRunNote !== null) out(dryRunNote);
     if (plan.failures.length > 0) {
       out("");
       await emitReport(
@@ -336,6 +342,8 @@ export async function applyCommand(argv: string[]): Promise<number> {
   out(`適用しました (履歴 ID: ${id})`);
   for (const o of applicable) out(`  ${opLabel(o)}`);
   printAlreadyApplied(plan.outcomes);
+  const appliedNote = buildBlankInsensitiveNote(plan.outcomes);
+  if (appliedNote !== null) out(appliedNote);
   if (plan.failures.length > 0) {
     out(`スキップした失敗 ${plan.failures.length} 件のレポート:`);
     out("");

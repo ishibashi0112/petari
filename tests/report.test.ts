@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planChangeSet, type FileState, type NewFileConfig } from "../src/core/applier.ts";
-import { buildFailureReport } from "../src/core/report.ts";
+import { buildBlankInsensitiveNote, buildFailureReport } from "../src/core/report.ts";
 import type { ChangeSet, FileChange, ReplaceBlock } from "../src/types.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -43,11 +43,12 @@ function crossFilePlan() {
 }
 
 describe("buildFailureReport (§7 拡充)", () => {
-  it("照合仕様 (空白・エンコーディング差は吸収済み) を必ず明記する", () => {
+  it("照合仕様 (空白・空行・エンコーディング差は吸収済み) を必ず明記する", () => {
     const plan = crossFilePlan();
     const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
     expect(report).toContain("petari の照合仕様");
-    expect(report).toContain("空白・インデント・エンコーディングの問題では");
+    expect(report).toContain("空白・空行・インデント・エンコーディングの問題では");
+    expect(report).toContain("空行の差は双方から空行を除いた照合で吸収されます");
   });
 
   it("nothingWritten で all-or-nothing の未書き込みをレポート本文に明記する", () => {
@@ -94,8 +95,39 @@ describe("buildFailureReport (§7 拡充)", () => {
     expect(report).not.toContain("検証結果の一覧");
   });
 
-  // 2026-08-25 実運用フィードバック: 空行 1 本の欠落を名指しできず誤誘導になった事例への対策
-  it("空行欠落ケースでは照合仕様に空行の扱いを明記し、修正のヒントで空行を名指しする", () => {
+  // 2026-08-30: 空行だけの差は blank-insensitive で自動吸収されるため、このレポートが出るのは
+  // 空行以外にも差があるケースのみ。空行が原因と誤読させない文言になっていることを検証する
+  it("空行差と内容差が併発したケースでは、空行は原因でないと明記し内容の差へ誘導する", () => {
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "m.vb",
+        line: 1,
+        blocks: [
+          block(
+            // AI が実在しない行 (Log_Result) を混ぜ、かつ空行を落としたケース
+            ["        Recalc_CostAmount(io_Dt)", "        Log_Result()", "    End Sub"],
+            ["        Recalc_CostAmount(io_Dt)", "    End Sub"],
+          ),
+        ],
+      }),
+      new Map([
+        [
+          "m.vb",
+          state(utf8("    Sub Update()\n        Recalc_CostAmount(io_Dt)\n\n    End Sub\nEnd Module\n")),
+        ],
+      ]),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(false);
+    const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
+    expect(report).toContain("空行の位置と数");
+    expect(report).toContain("失敗の原因は空行ではなく他の行の差にあります");
+    expect(report).toContain("SEARCH 2 行目: Log_Result()");
+  });
+
+  // 2026-08-25 実運用事例 (空行 1 本の欠落で不一致) の再現形は blank-insensitive で成功するようになった
+  it("空行だけの差なら失敗レポートに至らず適用できる (blank-insensitive)", () => {
     const plan = planChangeSet(
       cs({
         op: "replace",
@@ -116,17 +148,37 @@ describe("buildFailureReport (§7 拡充)", () => {
       ]),
       NEW_FILE,
     );
-    const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
-    expect(report).toContain("空行は「内容のある 1 行」として数えます");
-    expect(report).toContain("修正のヒント");
-    expect(report).toContain("空行 1 行");
-    expect(report).toContain("+ = 実ファイルにあるが SEARCH にない行");
+    expect(plan.ok).toBe(true);
+    expect(plan.failures).toEqual([]);
+    expect(plan.outcomes[0]!.appliedBlocks[0]!.stage).toBe("blank-insensitive");
   });
 
   it("残り 1 ブロックで全通しになることを検証結果の一覧に構造化して示す", () => {
     const plan = crossFilePlan();
     const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
     expect(report).toContain("失敗は全 2 ブロック中この 1 ブロックだけです");
+  });
+
+  it("blank-insensitive で一致したブロックがあれば件数入りの注記を返す (§3.5)", () => {
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "n.vb",
+        line: 1,
+        blocks: [block(["Sub A()", "End Sub"], ["Sub A(x As Integer)", "End Sub"])],
+      }),
+      new Map([["n.vb", state(utf8("Sub A()\n\nEnd Sub\n"))]]),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(buildBlankInsensitiveNote(plan.outcomes)).toBe(
+      "注: 1 件のブロックは空行の差を吸収して適用しました (git diff で空行の並びを確認してください)",
+    );
+  });
+
+  it("blank-insensitive のブロックが無ければ注記は null", () => {
+    const plan = crossFilePlan();
+    expect(buildBlankInsensitiveNote(plan.outcomes)).toBeNull();
   });
 
   it("SEARCH が全滅でも REPLACE 側の内容から近傍領域を推定して示す", () => {

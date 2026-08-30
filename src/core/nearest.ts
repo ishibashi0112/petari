@@ -12,6 +12,10 @@
  * 1 行の過不足で位置合わせ全体がずれ、別の類似箇所 (End Sub 等) を抜粋してしまうため、
  * ギャップ (行の挿入・欠落) を許容するアラインメント (fit alignment) へ変更した。
  * 実ファイル側にだけある行は "+" として抜粋に含め、空行なら専用の注記と修正ヒントを出す。
+ *
+ * 2026-08-30 追記: matcher に 4 段目 blank-insensitive が入り、空行の差だけなら SEARCH
+ * マッチングの段階で自動吸収されるようになった。この診断に空行差が現れるのは「空行以外にも
+ * 差がある」ケースだけなので、注記は空行が原因と読めない文言にする (誤誘導防止)。
  */
 
 /** ウィンドウ内の 1 行と SEARCH 対応行の照合結果。extra = 実ファイル側にだけある行 */
@@ -139,10 +143,10 @@ function noteFor(
     const ft = fileLine.trim();
     const st = searchLine.trim();
     if (ft === "" && st !== "") {
-      return `実ファイル側のこの行は空行です。空行も 1 行として照合されるため、${subject} 側の空行の過不足を確認してください`;
+      return `実ファイル側のこの行は空行です (空行の位置・数の差は自動で吸収されるため、失敗の原因は空行ではなく他の行の差にあります)`;
     }
     if (st === "" && ft !== "") {
-      return `${subject} 側の対応行は空行ですが、実ファイルのこの行は空行ではありません (${subject} 側の空行の位置を確認してください)`;
+      return `${subject} 側の対応行は空行ですが、実ファイルのこの行は空行ではありません (実ファイル側の行をそのままコピーしてください。空行の差は自動で吸収されます)`;
     }
     if (collapseWs(foldConfusable(ft)) === collapseWs(foldConfusable(st))) {
       return `見た目で区別しづらい文字の差です。${describeFirstDiff(fileLine, searchLine)}`;
@@ -314,7 +318,7 @@ export function analyzeNearest(
       const blank = fTrim[step.fileIdx] === "";
       if (blank) extraBlankCount++;
       const note = blank
-        ? `実ファイル側にある空行です。${subject} にこの空行が欠けているため一致しませんでした (空行も 1 行として照合されます)`
+        ? `実ファイル側にある空行です (空行の位置・数の差は自動で吸収されるため、この空行自体は失敗の原因ではありません)`
         : `${subject} に含まれていない行です。この行も含めてコピーしてください`;
       lines.push({
         lineNo: step.fileIdx + 1,
@@ -383,7 +387,7 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
   for (const u of w.unmatchedSearch) {
     out.push(
       u.blank
-        ? `- ${subject} ${u.index} 行目の空行に対応する行がこの領域にありません (${subject} 側の空行が余分の可能性)`
+        ? `- ${subject} ${u.index} 行目の空行に対応する行がこの領域にありません (${subject} 側だけの空行は自動で吸収されるため、失敗の原因は他の行にあります)`
         : `- ${subject} ${u.index} 行目 (${u.text.trim()}) に対応する行がこの領域にありません`,
     );
   }
@@ -393,15 +397,19 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
 /**
  * 修正のヒント (near-miss 自動サジェスト)。SEARCH の全行が順序どおり実ファイルに存在し、
  * 間に SEARCH 側に無い行が挟まっているだけなら「抜粋のコピーで一致する」と機械的に言える。
- * 全部が空行なら空行欠落を名指しする (2026-08-25 の実運用事例の直接対策)。
+ * 空行だけの過不足は blank-insensitive 段階で自動吸収されるため、このヒントが空行のみを
+ * 指すのは行内空白差 (~) が併発しているときだけ — 原因を空行と誤読させない文言にする。
  */
 function buildHint(w: NearestWindow): string[] {
   if (w.extraCount === 0 || w.unmatchedSearch.length > 0) return [];
   if (w.lines.some((l) => l.verdict === "differ")) return [];
+  const hasWsOnly = w.lines.some((l) => l.verdict === "ws-only");
   const head =
     w.extraBlankCount === w.extraCount
-      ? `▶ 修正のヒント: SEARCH の全行はこの順で実ファイルに存在しますが、間に空行 ${w.extraCount} 行が挟まっています。空行も 1 行として照合されるため一致しませんでした。`
-      : `▶ 修正のヒント: SEARCH の全行はこの順で実ファイルに存在しますが、間に SEARCH にない行が ${w.extraCount} 行 (うち空行 ${w.extraBlankCount} 行) 挟まっています。`;
+      ? hasWsOnly
+        ? `▶ 修正のヒント: 間に挟まる空行 ${w.extraCount} 行の差は自動で吸収されます。この失敗の原因は空行ではなく、空白の個数のみ異なる行 (~) です。`
+        : `▶ 修正のヒント: SEARCH の全行はこの順で実ファイルに存在しますが、間に空行 ${w.extraCount} 行が挟まっています。`
+      : `▶ 修正のヒント: SEARCH の全行はこの順で実ファイルに存在しますが、間に SEARCH にない行が ${w.extraCount} 行 (うち空行 ${w.extraBlankCount} 行) 挟まっています。空行の差は自動で吸収されますが、内容のある行の欠落は吸収されません。`;
   return [
     "",
     head,

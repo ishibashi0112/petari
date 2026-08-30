@@ -138,6 +138,92 @@ describe("matchBlock: インデント無視 (trim-all)", () => {
   });
 });
 
+describe("matchBlock: 空行差無視 (blank-insensitive)", () => {
+  it("実ファイルにある空行が SEARCH に無くてもマッチする (範囲は非空行で囲まれた範囲)", () => {
+    const file = ["before", "a();", "", "b();", "after"];
+    const m = matchBlock(file, block(["a();", "b();"], ["X"]));
+    expect(m).toMatchObject({ ok: true, stage: "blank-insensitive", start: 1, end: 4 });
+    expect(m.ok && m.replacement).toEqual(["X"]);
+  });
+
+  it("空行の数の差 (SEARCH 1 行 vs 実ファイル 2 行) を吸収する", () => {
+    const file = ["a();", "", "", "b();"];
+    const m = matchBlock(file, block(["a();", "", "b();"], ["X"]));
+    expect(m).toMatchObject({ ok: true, stage: "blank-insensitive", start: 0, end: 4 });
+  });
+
+  it("SEARCH に空行があり実ファイルに無くてもマッチする", () => {
+    const m = matchBlock(["a();", "b();"], block(["a();", "", "b();"], ["X"]));
+    expect(m).toMatchObject({ ok: true, stage: "blank-insensitive", start: 0, end: 2 });
+  });
+
+  it("SEARCH の先頭・末尾の余分な空行は照合範囲に含めず、実ファイル側の外側の空行は保持する", () => {
+    // SEARCH は先頭 2 行・末尾 1 行が空行 (実ファイルの空行は前後 1 行ずつ) → exact では落ち、
+    // 4 段目で非空行 a(); だけが照合範囲になる
+    const file = ["keep", "", "a();", "", "tail"];
+    const { lines, results } = applyBlocks(file, [block(["", "", "a();", ""], ["X"])]);
+    expect(results[0]).toMatchObject({ ok: true, stage: "blank-insensitive", start: 2, end: 3 });
+    expect(lines).toEqual(["keep", "", "X", "", "tail"]);
+  });
+
+  it("内部の空行を含む範囲が置換され、REPLACE の空行はそのまま挿入される", () => {
+    const file = ["a();", "", "b();"];
+    const { lines } = applyBlocks(file, [block(["a();", "b();"], ["x();", "", "", "y();"])]);
+    expect(lines).toEqual(["x();", "", "", "y();"]);
+  });
+
+  it("インデント差 (trim-all 相当) と空行差が併発しても reindent が効く", () => {
+    const file = ["    a();", "", "    b();"];
+    const m = matchBlock(file, block(["a();", "b();"], ["a();", "c();", "b();"]));
+    expect(m).toMatchObject({ ok: true, stage: "blank-insensitive", start: 0, end: 3 });
+    expect(m.ok && m.replacement).toEqual(["    a();", "    c();", "    b();"]);
+  });
+
+  it("空行除去後に 2 箇所一致 → ambiguous (positions は元行番号)", () => {
+    const file = ["a();", "", "b();", "x", "a();", "", "b();"];
+    const m = matchBlock(file, block(["a();", "b();"], ["X"]));
+    expect(m).toMatchObject({
+      ok: false,
+      reason: "ambiguous",
+      stage: "blank-insensitive",
+      count: 2,
+      positions: [0, 4],
+    });
+  });
+
+  it("SEARCH が空行のみなら 4 段目は試行せず not-found", () => {
+    const m = matchBlock(["a", "", "b"], block(["", ""], ["X"]));
+    expect(m).toMatchObject({ ok: false, reason: "not-found" });
+  });
+
+  it("空行以外の文字差があれば救われない (fuzzy はしない)", () => {
+    const m = matchBlock(["a();", "", "b();"], block(["a();", "zzz();"], ["X"]));
+    expect(m).toMatchObject({ ok: false, reason: "not-found" });
+  });
+
+  it("既存 3 段で一意一致するケースは stage が変わらない (回帰確認)", () => {
+    expect(matchBlock(["a", "", "b"], block(["a", "", "b"], ["X"]))).toMatchObject({
+      ok: true,
+      stage: "exact",
+    });
+    expect(matchBlock(["  a();"], block(["a();"], ["b();"]))).toMatchObject({
+      ok: true,
+      stage: "trim-all",
+    });
+  });
+
+  it("applyBlocks: 先行ブロックが blank-insensitive で適用された後、後続ブロックも正しく照合される", () => {
+    const file = ["a();", "", "b();", "c();"];
+    const { lines, results } = applyBlocks(file, [
+      block(["a();", "b();"], ["A();", "B();"], 1),
+      block(["c();"], ["C();"], 2),
+    ]);
+    expect(results[0]).toMatchObject({ ok: true, stage: "blank-insensitive" });
+    expect(results[1]).toMatchObject({ ok: true, stage: "exact" });
+    expect(lines).toEqual(["A();", "B();", "C();"]);
+  });
+});
+
 describe("reindent", () => {
   it("基準インデントを付け替える", () => {
     expect(reindent(["  a", "    b"], "  ", "\t")).toEqual(["\ta", "\t  b"]);

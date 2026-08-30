@@ -1,17 +1,21 @@
 import type { ReplaceBlock } from "../types.ts";
 
 /**
- * マッチした段階 (§6)。fuzzy マッチは事故のもとなので実装しない。
+ * マッチした段階 (§6)。fuzzy マッチ (編集距離・類似度) は事故のもとなので実装しない。
  * - exact:    完全一致
  * - trim-end: 各行の行末空白を無視して一致
  * - trim-all: 各行の前後空白を無視して一致 (REPLACE 側のインデントを元ファイルに合わせて補正)
+ * - blank-insensitive: SEARCH と実ファイルの双方から空行を除いた上で trim-all 比較で一致
+ *   (チャットサービスの添付・長文処理で空行が落ちたスナップショットを AI が読む事例への対策。
+ *   空行の有無・数という決定論的でコードの意味を変えない差だけを吸収する)
  */
-export type MatchStage = "exact" | "trim-end" | "trim-all";
+export type MatchStage = "exact" | "trim-end" | "trim-all" | "blank-insensitive";
 
 export const STAGE_LABEL: Record<MatchStage, string> = {
   "exact": "完全一致",
   "trim-end": "行末空白無視",
   "trim-all": "インデント無視",
+  "blank-insensitive": "空行差無視",
 };
 
 export type BlockFailureReason = "not-found" | "ambiguous";
@@ -141,7 +145,53 @@ export function reindent(replaceLines: string[], searchBase: string, fileBase: s
   });
 }
 
-/** 1 ブロックを 2 段フォールバックでマッチさせ、適用後の置換行も算出する */
+/**
+ * 4 段目 blank-insensitive (§6): SEARCH と実ファイルの双方から空行を除いた行列を
+ * trim-all 比較 (a.trim() === b.trim()) で連続一致探索する。マッチ範囲は最初と最後の
+ * 非空行で囲まれた元ファイル範囲 (内部の空行は含む、外側の空行は含まない)。
+ * SEARCH の先頭・末尾の空行は照合範囲に含めず、実ファイル側の外側の空行はそのまま残る。
+ * REPLACE 側の空行はそのまま挿入する (意図的な空行挿入を潰さないため、勝手に削らない)。
+ * 見つからないときは null (呼び出し元が not-found にする)。
+ */
+function matchBlankInsensitive(
+  lines: string[],
+  block: ReplaceBlock,
+): (BlockResult & { replacement?: string[] }) | null {
+  const searchNonBlank = block.search.filter((l) => l.trim() !== "");
+  // SEARCH が空行のみなら試行しない (どこにでも一致し得るため)
+  if (searchNonBlank.length === 0) return null;
+  const fileNonBlank: string[] = [];
+  const origIdx: number[] = [];
+  lines.forEach((line, i) => {
+    if (line.trim() !== "") {
+      fileNonBlank.push(line);
+      origIdx.push(i);
+    }
+  });
+  const found = findMatches(fileNonBlank, searchNonBlank, (a, b) => a.trim() === b.trim());
+  if (found.length === 0) return null;
+  if (found.length > 1) {
+    return {
+      ok: false,
+      block,
+      reason: "ambiguous",
+      stage: "blank-insensitive",
+      count: found.length,
+      positions: found.map((h) => origIdx[h] as number),
+    };
+  }
+  const hit = found[0] as number;
+  const start = origIdx[hit] as number;
+  const end = (origIdx[hit + searchNonBlank.length - 1] as number) + 1;
+  const replacement = reindent(
+    block.replace,
+    baseIndent(block.search),
+    baseIndent(lines.slice(start, end)),
+  );
+  return { ok: true, block, stage: "blank-insensitive", start, end, replacement };
+}
+
+/** 1 ブロックを段階フォールバック (STAGES → blank-insensitive) でマッチさせ、適用後の置換行も算出する */
 export function matchBlock(
   lines: string[],
   block: ReplaceBlock,
@@ -165,6 +215,8 @@ export function matchBlock(
       return { ok: false, block, reason: "ambiguous", stage, count: found.length, positions: found };
     }
   }
+  const blankInsensitive = matchBlankInsensitive(lines, block);
+  if (blankInsensitive !== null) return blankInsensitive;
   return { ok: false, block, reason: "not-found" };
 }
 
