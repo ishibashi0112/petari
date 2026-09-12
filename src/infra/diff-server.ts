@@ -32,7 +32,7 @@ import {
   renderTextareaValue,
 } from "../core/edit.ts";
 import { decodeFile, encodeDocument, type Eol, type FileDocument } from "../core/encoding.ts";
-import type { Operation } from "../types.ts";
+import type { ManifestOp } from "./history.ts";
 import { isInsideRoot, readFileState, sha256, writeBytes } from "./files.ts";
 
 const BODY_LIMIT = 16 * 1024 * 1024;
@@ -83,7 +83,7 @@ export interface EditEntry {
   absPath: string;
   /** 比較の左側 (before / --mine 時は after)。null = 比較なし (create 等 → 空) */
   snapshotPath: string | null;
-  op: Operation;
+  op: ManifestOp;
 }
 
 export interface DiffServerOptions {

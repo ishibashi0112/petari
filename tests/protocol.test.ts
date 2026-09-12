@@ -24,6 +24,8 @@ describe("規約文 (§4.5)", () => {
       "一意",
       "Shift_JIS",
       "Mermaid",
+      // v4: SEARCH は一意な範囲のうち最小にする (設計書 §11.4)
+      "最小",
     ]) {
       expect(PROTOCOL_TEXT).toContain(marker);
     }

@@ -22,6 +22,7 @@ import { diffLines, toSideBySideRows } from "../core/diff.ts";
 import { buildReportPage, type ReportFileSection } from "../core/diff-html.ts";
 import { EncodingError, decodeFile } from "../core/encoding.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
+import { fixedNewFile } from "../core/new-file-style.ts";
 import { openInBrowser } from "../infra/browser.ts";
 import { loadConfig, type PetariConfig } from "../infra/config.ts";
 import { monacoVendorDir, startDiffServer, type EditEntry } from "../infra/diff-server.ts";
@@ -262,7 +263,7 @@ async function runEditServer(
     entries: editEntries,
     root,
     leftLabel: mine ? "適用直後 (after)" : "適用前 (before)",
-    fallbackEol: config.newFile.eol,
+    fallbackEol: fixedNewFile(config.newFile).eol,
   });
   out(`ブラウザ編集サーバーを起動しました: ${handle.url}`);
   out("  終了はページ内の「サーバーを終了」ボタンか Ctrl+C (無操作 30 分で自動終了)");

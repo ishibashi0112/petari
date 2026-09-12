@@ -104,7 +104,28 @@ new code
 
 - rename は delete + create で表現(専用操作なし)。
 - 規約文には「ファイルの過半が変わる場合は rewrite を使うこと」
-  「search ブロックはファイル内で一意に特定できる範囲を含めること」を明記する。
+  「search ブロックはファイル内で一意に特定できる範囲を含めること」
+  「一意に特定できる範囲のうち最小(目安 3〜8 行)にすること」(v0.9.0 / 規約文 v4)を明記する。
+
+#### 3.2.1 create した `.vb` の `.vbproj` 自動登録(v0.9.0)
+
+旧スタイル `.vbproj` は `<Compile Include>` に載っていないファイルをコンパイルしない。
+AI に登録させるとパックに `.vbproj` 本体がなく SEARCH が一致しないため、
+**petari が機械的に登録する**(設計書 `slnmix/docs/HANDOFF-slnmix-petari-2026-09.md` §11.1)。
+
+- `create` の対象が `.vb` のとき、作成先ディレクトリから上へ辿り、プロジェクトルートまでの間で
+  最寄りの `*.vbproj` を探す。見つからない / 同じディレクトリに複数ある / SDK スタイル
+  (`<Project Sdk=...>` / `Sdk.props` Import)/ 登録できない形式(1 行複数要素・CDATA 等)の
+  場合は登録せず、理由を結果表示に出す(**create 自体は成功扱い**)
+- 旧スタイルで未登録なら、`Compile` 項目を含む最初の(無条件の)`<ItemGroup>` の末尾に追加。
+  なければ最後の `<ItemGroup>` の後に新しい `<ItemGroup>` を作る。`Include` は `.vbproj` からの
+  相対パス・`\` 区切り。インデントは既存項目に合わせる
+- 内容に `Inherits Form` / `UserControl` があれば `<SubType>`、`X.vb` と `X.Designer.vb` の
+  両方が create される(または `X.vb` が既存)なら Designer に `<DependentUpon>` を付ける
+- 追加行のみ挿入し、他の行は元バイト列を書き戻す(§8)。history / undo の対象に含める
+  (manifest の `op: "vbproj"`)。同じ changes.md が `.vbproj` 自体を変更する場合は変更後の内容に登録を重ねる
+- `delete` 時の `.vbproj` からの除去は**行わない**(削除の誤りは影響が大きい)
+- 無効化: config `"vbproj": { "register": false }` または `--no-vbproj`
 
 ### 3.3 マーカー構文
 
@@ -168,6 +189,7 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 - `--partial` : 検証失敗ブロックをスキップし、成功分のみ適用(既定は all-or-nothing)
 - `--root <dir>` : プロジェクトルートの明示指定
 - `--yes` : 確認プロンプトをスキップ
+- `--no-vbproj` : create した `.vb` の `.vbproj` 自動登録(§3.2.1)を今回だけ無効化
 
 ### 4.2 `petari undo [ID]`
 
@@ -369,6 +391,14 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
 - Shift_JIS に変換不能な文字が REPLACE 側に含まれる場合は検証段階でエラーにする。
 - 新規ファイル(create)の既定は UTF-8 / LF。config で上書き可
   (例: `"newFile": { "encoding": "shift_jis", "eol": "crlf" }`)。
+- `"newFile": { "encoding": "auto" }`(v0.9.0。`petari init` の雛形の既定)は作成先と同じ
+  ディレクトリの既存テキストファイル(同じ拡張子を優先、なければ任意のテキスト。なければ上位
+  ディレクトリを 1 段ずつルートまで)の多数決でエンコーディング / BOM / 改行を決める。
+  手本がなければ `.vb` → UTF-8 + BOM + CRLF、それ以外 → UTF-8 / BOM なし / LF。
+  `.vb` で UTF-8 かつ BOM なしになった場合は BOM を付ける(BOM なし UTF-8 の日本語は
+  vbc / VS がシステムコードページとみなして化ける。ASCII のみの Shift_JIS が UTF-8 判定される
+  既知の限界への対処でもある)。採用した設定と根拠を結果表示に 1 行出す。
+  `eol` / `bom` を明示していればその項目は推定より優先する。
 - **テストを最も厚くする領域。** Shift_JIS + CRLF + 末尾改行なし、BOM 付き UTF-8 等の
   組み合わせでラウンドトリップテストを必ず用意する。
 
@@ -391,10 +421,11 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
 ```jsonc
 {
   "downloadsDir": null,          // null = OS 既定を自動解決
-  "newFile": { "encoding": "utf8", "eol": "lf" },
+  "newFile": { "encoding": "auto" },  // "utf8" | "shift_jis" | "auto"(§8)。eol / bom は任意
   "historyLimit": null,          // 履歴の保持件数上限(null = 無制限)
   "vscodeCommand": "code",       // show で使うコマンド
-  "clipReportOnFailure": true    // 失敗レポートをクリップボードへ自動コピー(§7)
+  "clipReportOnFailure": true,   // 失敗レポートをクリップボードへ自動コピー(§7)
+  "vbproj": { "register": true } // create した .vb の .vbproj 自動登録(§3.2.1)
 }
 ```
 

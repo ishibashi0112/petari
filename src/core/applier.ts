@@ -361,15 +361,19 @@ function planFile(change: FileChange, state: FileState, newFile: NewFileConfig):
   }
 }
 
+/** 新規ファイルの形式をパスごとに決める (newFile.encoding "auto" の推定結果を commands 層が渡す) */
+export type NewFileResolver = (change: FileChange) => NewFileConfig;
+
 /** 全ファイルをドライラン検証し適用計画を立てる (§4.1 手順 2)。書き込みは行わない */
 export function planChangeSet(
   changeSet: ChangeSet,
   states: Map<string, FileState>,
-  newFile: NewFileConfig,
+  newFile: NewFileConfig | NewFileResolver,
 ): Plan {
+  const resolve: NewFileResolver = typeof newFile === "function" ? newFile : () => newFile;
   const outcomes = changeSet.files.map((change) => {
     const state = states.get(change.path) ?? { exists: false, symlink: false, bytes: null };
-    return planFile(change, state, newFile);
+    return planFile(change, state, resolve(change));
   });
   const failures = outcomes.flatMap((o) => o.failures);
   return { outcomes, failures, ok: failures.length === 0 };

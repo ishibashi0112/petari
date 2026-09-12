@@ -22,6 +22,13 @@ describe("initCommand (§4.6)", () => {
     expect(await initCommand(["--root", dir, "--yes"])).toBe(0);
 
     expect(existsSync(join(dir, ".petari", "config.json"))).toBe(true);
+    // 雛形の既定は newFile.encoding "auto" と vbproj 登録あり (設計書 §11)
+    const config = JSON.parse(readFileSync(join(dir, ".petari", "config.json"), "utf8")) as {
+      newFile: { encoding: string };
+      vbproj: { register: boolean };
+    };
+    expect(config.newFile).toEqual({ encoding: "auto" });
+    expect(config.vbproj).toEqual({ register: true });
     expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
     expect(JSON.parse(readFileSync(join(dir, "repomix.config.json"), "utf8"))).toEqual({
       output: { instructionFilePath: "protocol.md" },

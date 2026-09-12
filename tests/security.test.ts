@@ -168,5 +168,32 @@ describe("config の実行時検証 (指摘 5 追補)", () => {
       "utf8",
     );
     expect(() => loadConfig(root)).toThrow(/historyLimit/);
+
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ vbproj: { register: "yes" } }),
+      "utf8",
+    );
+    expect(() => loadConfig(root)).toThrow(/vbproj/);
+  });
+
+  it('newFile.encoding "auto" は eol / bom を省略でき、既定の lf を混ぜない (設計書 §11.2)', async () => {
+    const { loadConfig } = await import("../src/infra/config.ts");
+    const root = mkdtempSync(join(tmpdir(), "petari-sec-cfg2-"));
+    mkdirSync(join(root, ".petari"));
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ newFile: { encoding: "auto" } }),
+      "utf8",
+    );
+    expect(loadConfig(root).newFile).toEqual({ encoding: "auto" });
+    expect(loadConfig(root).vbproj).toEqual({ register: true });
+    // 従来形式 (eol のみ指定) は既定とマージされる
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ newFile: { eol: "crlf" } }),
+      "utf8",
+    );
+    expect(loadConfig(root).newFile).toEqual({ encoding: "utf8", eol: "crlf" });
   });
 });
