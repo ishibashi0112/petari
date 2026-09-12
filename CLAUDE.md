@@ -34,9 +34,9 @@
 
 ### レイヤ構成
 
-- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit。テスト最厚領域 (§6, §8)
-- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / diff-server
-- `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ
+- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit / vbproj / new-file-style。テスト最厚領域 (§6, §8)
+- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / diff-server / vbproj (最寄り .vbproj 探索) / new-file-style (手本収集)
+- `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ (apply の .vbproj 登録結線は vbproj-register.ts に分離)
 - `src/assets/protocol.md` — 規約文の同梱原本 (single source)
 
 ### エンコーディング保全 (§8) の実装方式
@@ -159,6 +159,46 @@
 - Downloads 由来の適用成功後は元ファイルを削除 (原本は history に保存済み)
 - 失敗レポートは SEARCH と REPLACE の両方を引用 (単体で AI に貼り返せるように)
 
+### slnmix 設計書 §11 の実装 (2026-09-12, v0.9.0)
+
+設計正本は slnmix リポジトリの `docs/HANDOFF-slnmix-petari-2026-09.md` §11 (petari の改修)。
+決定事項は同書 §17 決定ログに追記済み。実装した範囲: §11.1 (P1-a) / §11.2 (P1-b) / §11.4。
+§11.3 (P2 目録警告) は slnmix フェーズ 4 (`--manifest`) 後の任意項目のため未着手。
+
+- **P1-a: create した .vb の旧スタイル .vbproj 自動登録** (core/vbproj.ts + infra/vbproj.ts +
+  commands/vbproj-register.ts)。XML パーサは入れず行単位の正規表現処理。純粋関数は
+  「行配列 in → 挿入位置 + 挿入行 out」(設計書のテキスト in/out から変更: 挿入行だけを
+  DocLine (raw: null) として差し込めば §8 の行単位保全がそのまま効くため)。
+  判定順: SDK スタイル → 登録済み (区切り・大文字小文字を同一視、XML エスケープ解除) →
+  形式検査 (1 行複数要素 / CDATA / 入れ子 / 閉じタグ欠落 / </Project> なしは unsupported) →
+  挿入位置。対象は Compile を含む最初の **Condition なし** ItemGroup の末尾 (Condition 付きに
+  入れると条件付きコンパイルになるため除外)。新 ItemGroup は最後の ItemGroup の直後
+  (皆無なら </Project> 直前)、インデントは最後の ItemGroup に合わせ子は +2 (既存の複数行
+  Compile から増分を推定、なければ 2 スペース = VS 既定の 4 スペース)。
+  SubType は `Inherits [System.][Windows.Forms.](Form|UserControl)` を内容から検出。
+  Designer.vb には SubType を付けない (VS の生成物と同じ)。DependentUpon は親 X.vb が同じ
+  changes.md で create されるか **既にディスクにある** とき (設計書は前者のみだが後者も
+  VS の意味論どおりで推測ではない)。登録順は X.vb → X.Designer.vb (安定ソート)。
+  同じ changes.md が .vbproj 自体を変更する場合は変更後の内容に登録を重ね、manifest は
+  AI 側の op のまま `registered` を付ける (エントリは 1 つ)。純登録は `op: "vbproj"`
+  (ManifestOp = Operation | "vbproj"。undo は replace と同じ before 復元)。
+  Include の Shift_JIS 変換不能文字 / symlink / ルート外 / decode 不能は未登録として理由表示。
+  登録の失敗は create の成否に影響しない (plan.ok 不変)。無効化は config `vbproj.register`
+  と `--no-vbproj`
+- **P1-b: newFile.encoding "auto"** (core/new-file-style.ts + infra/new-file-style.ts)。
+  作成先ディレクトリの手本 (同拡張子優先 → 任意のテキスト → 上位へ 1 段ずつ) の多数決。
+  手本の条件: 通常ファイル・非ドットファイル・空でない・NUL を含まない・decodeFile 可能・
+  1 MiB 以下・1 ディレクトリ 100 件まで。同点は utf8 / BOM あり / crlf 側。
+  手本なしは .vb → utf8+BOM+crlf、他 → utf8/lf。.vb で utf8 かつ BOM なしなら BOM 付与
+  (ユーザーが bom を明示していれば付けない)。planChangeSet の第 3 引数は
+  `NewFileConfig | (change) => NewFileConfig` (auto の解決は commands 層。core は I/O なし)。
+  config の合成: encoding "auto" のときは既定の eol: "lf" を混ぜない (mergeNewFile)。
+  従来形式 (eol のみ指定等) は従来どおり既定とマージ。init の雛形は `{ "encoding": "auto" }`
+  + `"vbproj": { "register": true }`。ルート直下の changes.md も手本に数えられる
+  (テストでは changes.md をルートの外に置く)
+- **§11.4 規約文 v4**: 厳守事項 3 に「一意に特定できる範囲のうち最小 (目安 3〜8 行)」を追記
+  (PROTOCOL_VERSION=4、利用者は init 再実行)
+
 ### セキュリティ設計 (2026-08-08 レビューで確定)
 
 - 信頼境界: changes.md (AI/クリップボード由来) と、リポジトリ同梱され得る
@@ -235,7 +275,8 @@
   v0.5.0: 2026-08-22 寛容パース + 規約文 v3 + 失敗レポート自動コピー /
   v0.6.0: 2026-08-25 失敗レポートの診断拡充 /
   v0.7.0: 2026-08-25 空行診断 — ギャップ許容アラインメント + 修正ヒント + init の removeEmptyLines 検知 /
-  v0.8.0: 2026-08-30 空行差無視マッチ — SEARCH マッチング 4 段目 blank-insensitive + 結果表示の注記 + レポート文言の追従)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.8.0: 2026-08-30 空行差無視マッチ — SEARCH マッチング 4 段目 blank-insensitive + 結果表示の注記 + レポート文言の追従 /
+  v0.9.0: 2026-09-12 slnmix 設計書 §11 — create した .vb の .vbproj 自動登録 + newFile.encoding "auto" + 規約文 v4 (publish はユーザー))。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
@@ -245,7 +286,9 @@
   2026-08-25 失敗レポート診断拡充後の再実行: 既知の誤検知 2 族 (clipboard spawn /
   diff-server writeHead) のみで、新規コード (nearest/report/applier) への指摘なし。
   同日の空行診断 (アラインメント化) + init の removeEmptyLines 検知追加後の再実行も同結果。
-  2026-08-30 blank-insensitive マッチ追加後の再実行も既知の誤検知 2 族のみで同結果)
+  2026-08-30 blank-insensitive マッチ追加後の再実行も既知の誤検知 2 族のみで同結果。
+  2026-09-12 .vbproj 自動登録 + newFile auto 追加後の再実行: diff-server writeHead の既知
+  誤検知のみで、新規コード (vbproj / new-file-style / vbproj-register) への指摘なし)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
   自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
   Known Folder / Start-Process の動作確認が未了

@@ -11,9 +11,11 @@ import {
   planChangeSet,
   type FileOutcome,
   type FileState,
+  type NewFileResolver,
   type Plan,
 } from "../core/applier.ts";
 import { PRESENCE_STAGE_LABEL } from "../core/matcher.ts";
+import { fixedNewFile, resolveNewFileStyle } from "../core/new-file-style.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
 import {
   buildBlankInsensitiveNote,
@@ -29,6 +31,7 @@ import {
 } from "../infra/downloads.ts";
 import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
 import { gitDirtyFiles } from "../infra/git.ts";
+import { collectStyleSampleGroups } from "../infra/new-file-style.ts";
 import { err, out, outEmphasis } from "../infra/term.ts";
 import {
   beginHistory,
@@ -40,6 +43,7 @@ import {
 } from "../infra/history.ts";
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
+import { formatVbprojPlan, planVbprojRegistrations, type VbprojPlan } from "./vbproj-register.ts";
 
 /** このファイルは書き込み対象か (適用済みのみのファイルは書き込み不要なので含めない) */
 function isApplicable(o: FileOutcome): boolean {
@@ -102,6 +106,8 @@ export async function applyCommand(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       clip: { type: "boolean", default: false },
       "clip-report": { type: "boolean", default: false },
+      // create した .vb の .vbproj 自動登録を今回だけ無効化 (config vbproj.register の一時上書き)
+      "no-vbproj": { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -222,7 +228,25 @@ export async function applyCommand(argv: string[]): Promise<number> {
     }
     states.set(f.path, readFileState(abs));
   }
-  const plan: Plan = planChangeSet(changeSet, states, config.newFile);
+  // 新規ファイルの形式: encoding "auto" なら作成先の既存ファイルから推定する (設計書 §11.2)
+  const newFileBasis = new Map<string, string>();
+  const resolveNewFile: NewFileResolver = (change) => {
+    if (config.newFile.encoding !== "auto" || change.op !== "create") {
+      return fixedNewFile(config.newFile);
+    }
+    // 不正パス・symlink 経由でルート外を指すパスは手本を探さない (検証段階で失敗する)
+    if (invalidPathReason(change.path) !== null || states.get(change.path)?.escapesRoot === true) {
+      return fixedNewFile(config.newFile);
+    }
+    const r = resolveNewFileStyle(
+      change.path,
+      config.newFile,
+      collectStyleSampleGroups(root, change.path),
+    );
+    if (r.basis !== null) newFileBasis.set(change.path, r.basis);
+    return r.config;
+  };
+  const plan: Plan = planChangeSet(changeSet, states, resolveNewFile);
 
   // 3. 失敗があれば何も書き込まずレポート (§4.1, §7)
   if (!plan.ok && !values.partial) {
@@ -233,6 +257,18 @@ export async function applyCommand(argv: string[]): Promise<number> {
     return 1;
   }
   const applicable = plan.outcomes.filter(isApplicable);
+  // create した .vb の旧スタイル .vbproj への登録計画 (設計書 §11.1)。失敗しても create は成功扱い
+  const vbprojEnabled = config.vbproj.register && !values["no-vbproj"];
+  const vbprojPlan: VbprojPlan = vbprojEnabled
+    ? planVbprojRegistrations(root, applicable)
+    : { writes: new Map(), registrations: [], notes: [] };
+  const printExtras = (): void => {
+    for (const o of applicable) {
+      const basis = newFileBasis.get(o.change.path);
+      if (basis !== undefined) out(`  新規ファイルの形式: ${o.change.path} → ${basis}`);
+    }
+    for (const line of formatVbprojPlan(vbprojPlan)) out(line);
+  };
   if (applicable.length === 0) {
     // 冪等性: 全変更が適用済みなら成功として終了 (書き込み・履歴なし)
     if (plan.ok && plan.outcomes.some((o) => o.alreadyApplied)) {
@@ -249,6 +285,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
   if (values["dry-run"]) {
     out(`dry-run: 適用予定 ${applicable.length} ファイル (書き込みなし)`);
     printPreview(applicable);
+    printExtras();
     printAlreadyApplied(plan.outcomes);
     const dryRunNote = buildBlankInsensitiveNote(plan.outcomes);
     if (dryRunNote !== null) out(dryRunNote);
@@ -265,6 +302,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
   out(`プロジェクトルート: ${root}`);
   out(`適用予定 ${applicable.length} ファイル:`);
   for (const o of applicable) out(`  ${opLabel(o)}`);
+  printExtras();
   printAlreadyApplied(plan.outcomes);
   if (plan.failures.length > 0) {
     out(`  (検証失敗 ${plan.failures.length} 件は --partial によりスキップ)`);
@@ -286,6 +324,10 @@ export async function applyCommand(argv: string[]): Promise<number> {
   for (const o of applicable) {
     before.set(o.change.path, states.get(o.change.path)?.bytes ?? null);
   }
+  // .vbproj 登録も履歴・undo の対象。changes.md の変更対象でもある .vbproj は元の before を保つ
+  for (const [path, w] of vbprojPlan.writes) {
+    if (!before.has(path)) before.set(path, w.before);
+  }
   beginHistory(root, id, changesText, before);
 
   const after = new Map<string, Uint8Array | null>();
@@ -295,9 +337,16 @@ export async function applyCommand(argv: string[]): Promise<number> {
       deleteFile(abs);
       after.set(o.change.path, null);
     } else {
-      writeBytes(abs, o.afterBytes as Uint8Array);
-      after.set(o.change.path, o.afterBytes);
+      // 同じ .vbproj への登録があれば登録後の内容 (変更後に登録を重ねたもの) を書く
+      const bytes = vbprojPlan.writes.get(o.change.path)?.after ?? (o.afterBytes as Uint8Array);
+      writeBytes(abs, bytes);
+      after.set(o.change.path, bytes);
     }
+  }
+  for (const [path, w] of vbprojPlan.writes) {
+    if (after.has(path)) continue;
+    writeBytes(join(root, path), w.after);
+    after.set(path, w.after);
   }
 
   const entries: ManifestFileEntry[] = plan.outcomes.map((o) => {
@@ -321,8 +370,23 @@ export async function applyCommand(argv: string[]): Promise<number> {
       entry.alreadyAppliedBlocks = o.alreadyAppliedBlocks.map((b) => b.block.index);
     }
     if (o.alreadyApplied) entry.alreadyApplied = true;
+    const registered = vbprojPlan.writes.get(o.change.path)?.registered;
+    if (registered !== undefined) entry.registered = registered;
     return entry;
   });
+  for (const [path, w] of vbprojPlan.writes) {
+    if (entries.some((e) => e.path === path)) continue;
+    entries.push({
+      path,
+      op: "vbproj",
+      applied: true,
+      blocks: 0,
+      appliedBlocks: 0,
+      registered: w.registered,
+      beforeSha256: w.before !== null ? sha256(w.before) : null,
+      afterSha256: sha256(w.after),
+    });
+  }
   const manifest: Manifest = {
     id,
     appliedAt: new Date().toISOString(),
@@ -341,6 +405,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
   out("");
   out(`適用しました (履歴 ID: ${id})`);
   for (const o of applicable) out(`  ${opLabel(o)}`);
+  printExtras();
   printAlreadyApplied(plan.outcomes);
   const appliedNote = buildBlankInsensitiveNote(plan.outcomes);
   if (appliedNote !== null) out(appliedNote);

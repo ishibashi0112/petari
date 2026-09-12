@@ -48,6 +48,25 @@ petari               # 返答 (changes.md) を適用
 petari の更新で規約文が変わった場合は、`petari init` を再実行すると protocol.md の
 差分を検出して更新を提案します (slnmix 側の更新は不要)。
 
+#### 新規 .vb ファイルの作成 (v0.9.0)
+
+AI が `create` で `.vb` を新規作成すると、petari が次を自動で行います (Visual Studio での
+手作業をなくすため)。いずれも失敗しても create 自体は成功し、理由を結果表示に出します。
+
+- **旧スタイル .vbproj への登録**: 作成先から上へ辿って最寄りの `.vbproj` を探し、
+  `<Compile Include="...">` を追加します (`Inherits Form` なら `<SubType>Form</SubType>`、
+  `X.Designer.vb` なら `<DependentUpon>X.vb</DependentUpon>` 付き)。追加行以外のバイト列は
+  変えません (Shift_JIS / CRLF / BOM そのまま)。SDK スタイルの `.vbproj` は登録不要のため
+  触りません。登録は履歴に含まれ `petari undo` で戻ります。無効化は `--no-vbproj` か
+  `.petari/config.json` の `"vbproj": { "register": false }`
+- **エンコーディングの推定**: `.petari/config.json` の `"newFile": { "encoding": "auto" }`
+  (`petari init` の雛形の既定) で、同じディレクトリの既存ファイルの多数決で
+  文字コード / BOM / 改行を決めます。`.vb` を BOM なし UTF-8 で作ることはありません
+  (vbc / VS で日本語が化けるため)。従来どおり `"utf8"` / `"shift_jis"` の明示指定も使えます
+
+規約文 v4 では「SEARCH は一意に特定できる範囲のうち最小 (目安 3〜8 行)」を追加しました。
+`petari init` の再実行で protocol.md を更新してください。
+
 ### 適用が繰り返し失敗するとき
 
 失敗レポート (自動でクリップボードにコピーされます) をそのまま AI に貼り返すのが
@@ -74,7 +93,8 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
 | `petari init` | プロジェクト初回セットアップ (`--yes` で全提案に同意) |
 
 主なオプション: `--dry-run` (検証と差分プレビューのみ) / `--partial` (成功分のみ適用) /
-`--root <dir>` / `--yes` / `--clip-report` (失敗レポートをクリップボードへ。v0.5.0 から既定で自動コピーされるため、config で無効化した場合の個別指定用)
+`--root <dir>` / `--yes` / `--clip-report` (失敗レポートをクリップボードへ。v0.5.0 から既定で自動コピーされるため、config で無効化した場合の個別指定用) /
+`--no-vbproj` (create した .vb の .vbproj 自動登録を今回だけ無効化)
 
 ## 特徴
 

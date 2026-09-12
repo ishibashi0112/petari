@@ -12,10 +12,11 @@ import { err, out } from "../infra/term.ts";
 
 const CONFIG_TEMPLATE = `{
   "downloadsDir": null,
-  "newFile": { "encoding": "utf8", "eol": "lf" },
+  "newFile": { "encoding": "auto" },
   "historyLimit": null,
   "vscodeCommand": "code",
-  "clipReportOnFailure": true
+  "clipReportOnFailure": true,
+  "vbproj": { "register": true }
 }
 `;
 

@@ -12,7 +12,7 @@
  * - フォームの action とリンクは相対パスのみ (URL のトークンを HTML 本文に埋めない)
  */
 import { intralineRanges, type CharRange, type DiffRow } from "./diff.ts";
-import type { Operation } from "../types.ts";
+import type { ManifestOp } from "../infra/history.ts";
 
 /** 1 ファイルの diff 表示上限行数 (巨大ファイルでのメモリ・描画保護) */
 export const MAX_SECTION_ROWS = 20_000;
@@ -81,6 +81,7 @@ section.file{border:1px solid var(--border);border-radius:var(--radius);margin:1
 .op-create{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
 .op-delete{color:var(--err);background:color-mix(in srgb,var(--err) 14%,transparent)}
 .op-rewrite{color:var(--rewrite);background:color-mix(in srgb,var(--rewrite) 14%,transparent)}
+.op-vbproj{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
 .dlabels{display:grid;grid-template-columns:1fr 1fr;font-size:.74rem;color:var(--muted);
   background:var(--surface);border-bottom:1px solid var(--border)}
 .dlabels div{padding:.28rem .7rem}
@@ -155,7 +156,7 @@ ${bodyHtml}
 `;
 }
 
-function opBadge(op: Operation): string {
+function opBadge(op: ManifestOp): string {
   return `<span class="op op-${op}">${op}</span>`;
 }
 
@@ -246,7 +247,7 @@ function renderDiffBlocks(rows: DiffRow[], leftLabel: string, rightLabel: string
 
 export interface ReportFileSection {
   path: string;
-  op: Operation;
+  op: ManifestOp;
   body:
     | { kind: "rows"; rows: DiffRow[]; leftLabel: string; rightLabel: string }
     | { kind: "note"; note: string };
@@ -288,7 +289,7 @@ ${body}`,
 
 export interface IndexItem {
   path: string;
-  op: Operation;
+  op: ManifestOp;
   /** null = 編集可。文字列 = 編集不可の理由 (リンクは張るが編集フォームは出ない) */
   note: string | null;
 }
