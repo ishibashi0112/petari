@@ -276,8 +276,18 @@
   v0.6.0: 2026-08-25 失敗レポートの診断拡充 /
   v0.7.0: 2026-08-25 空行診断 — ギャップ許容アラインメント + 修正ヒント + init の removeEmptyLines 検知 /
   v0.8.0: 2026-08-30 空行差無視マッチ — SEARCH マッチング 4 段目 blank-insensitive + 結果表示の注記 + レポート文言の追従 /
-  v0.9.0: 2026-09-12 slnmix 設計書 §11 — create した .vb の .vbproj 自動登録 + newFile.encoding "auto" + 規約文 v4 (publish はユーザー))。リポジトリ: https://github.com/ishibashi0112/petari
-  リリース手順: version を上げて `pnpm typecheck && pnpm test && pnpm build && pnpm publish` (認証はユーザー)
+  v0.9.0: 2026-09-12 slnmix 設計書 §11 — create した .vb の .vbproj 自動登録 + newFile.encoding "auto" + 規約文 v4。
+  **ただし v0.9.0 の tarball は dist/ が v0.8.0 のままの不良パッケージ** (下記) /
+  v0.9.1: 2026-09-14 v0.9.0 の再公開 + prepublishOnly 追加)。リポジトリ: https://github.com/ishibashi0112/petari
+  リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
+- **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
+  同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
+  だった。原因は petari に `prepublishOnly` がなく、`pnpm publish` が**ディスク上の dist/ を
+  そのまま**固めたこと (slnmix には元からあり無事だった)。対策として
+  `"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"` を追加。
+  npm は同一バージョンの上書きを許さないため v0.9.1 として再公開し、v0.9.0 は
+  `npm deprecate` で使わないよう案内する。**publish 後は必ず
+  `npm pack <name>@<version>` で中身 (版数・新規ファイルの有無) を検証すること**
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
   2026-08-12 ブラウザ差分ビュー追加後: diff-server.ts の writeHead 指摘 (CWE-113) は

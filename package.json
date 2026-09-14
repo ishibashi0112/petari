@@ -1,6 +1,6 @@
 {
   "name": "petari",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "petari — paste AI chat patches onto your codebase",
   "keywords": [
     "cli",
@@ -36,6 +36,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node src/cli.ts",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "gen:sjis": "node scripts/generate-sjis-table.ts",
     "gen:monaco": "node scripts/vendor-monaco.ts"
   },
