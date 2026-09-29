@@ -14,6 +14,7 @@ import {
   type NewFileResolver,
   type Plan,
 } from "../core/applier.ts";
+import { changeSetFingerprint } from "../core/fingerprint.ts";
 import { PRESENCE_STAGE_LABEL } from "../core/matcher.ts";
 import { fixedNewFile, resolveNewFileStyle } from "../core/new-file-style.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
@@ -36,6 +37,7 @@ import { err, out, outEmphasis } from "../infra/term.ts";
 import {
   beginHistory,
   createHistoryId,
+  findAppliedHistory,
   finishHistory,
   pruneHistory,
   type Manifest,
@@ -89,8 +91,9 @@ function printAlreadyApplied(outcomes: FileOutcome[]): void {
       continue;
     }
     for (const b of o.alreadyAppliedBlocks) {
+      const what = b.insertion === true ? "追記する行が SEARCH の前後に既に存在" : "REPLACE が既に存在";
       out(
-        `  replace ${o.change.path} — ブロック ${b.block.index}: REPLACE が既に存在 (${PRESENCE_STAGE_LABEL[b.stage]})`,
+        `  replace ${o.change.path} — ブロック ${b.block.index}: ${what} (${PRESENCE_STAGE_LABEL[b.stage]})`,
       );
     }
   }
@@ -108,6 +111,8 @@ export async function applyCommand(argv: string[]): Promise<number> {
       "clip-report": { type: "boolean", default: false },
       // create した .vb の .vbproj 自動登録を今回だけ無効化 (config vbproj.register の一時上書き)
       "no-vbproj": { type: "boolean", default: false },
+      // 履歴で適用済みの changes.md でも再適用する (二重適用防止の解除・§6.1)
+      force: { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -213,6 +218,16 @@ export async function applyCommand(argv: string[]): Promise<number> {
     out("");
   }
 
+  // 同じ changes.md を以前に適用していないか (取り違え・二重実行の検出・§6.1)。
+  // 旧形式の履歴は保存済みの changes.md 原本をパースして指紋を算出する
+  const fingerprint = changeSetFingerprint(changeSet);
+  const previousId = findAppliedHistory(root, fingerprint, (text) => {
+    const r = parseChangesRecovering(stripBom(text));
+    return r.issues.length > 0 ? null : changeSetFingerprint(r.changeSet);
+  });
+  const previousNote =
+    previousId !== null ? `この changes.md は適用済みです (履歴 ID: ${previousId})` : null;
+
   // 2. 全ブロックのドライラン検証
   const states = new Map<string, FileState>();
   for (const f of changeSet.files) {
@@ -251,6 +266,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
   // 3. 失敗があれば何も書き込まずレポート (§4.1, §7)
   if (!plan.ok && !values.partial) {
     err(`petari: 検証に失敗しました (${plan.failures.length} 件)。何も書き込んでいません。\n`);
+    if (previousNote !== null) err(`注: ${previousNote}。取り違えていないか確認してください\n`);
     await emitReport(
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
     );
@@ -273,6 +289,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
     // 冪等性: 全変更が適用済みなら成功として終了 (書き込み・履歴なし)
     if (plan.ok && plan.outcomes.some((o) => o.alreadyApplied)) {
       out("すべての変更は適用済みです。書き込みは行いませんでした。");
+      if (previousNote !== null) out(`  (${previousNote})`);
       for (const o of plan.outcomes) out(`  ${opLabel(o)}`);
       return 0;
     }
@@ -281,6 +298,21 @@ export async function applyCommand(argv: string[]): Promise<number> {
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
     );
     return 1;
+  }
+  // 適用済みの changes.md で、なお書き込みが発生する = 二重適用のおそれ。--force なしでは止める
+  if (previousNote !== null) {
+    if (values.force) {
+      out(`--force: ${previousNote}。再適用します`);
+    } else if (values["dry-run"]) {
+      out(`警告: ${previousNote}。実際の適用は --force を付けない限り止まります`);
+    } else {
+      err(`petari: ${previousNote}。何も書き込んでいません。`);
+      err("  このまま適用すると次のファイルに書き込みが発生します (二重適用のおそれ):");
+      for (const o of applicable) err(`    ${opLabel(o)}`);
+      err("  取り違えでなければ --force を付けて再実行してください");
+      err("  (petari undo で巻き戻した履歴は対象外です。git 等で手動で戻した場合は --force が必要です)");
+      return 1;
+    }
   }
   if (values["dry-run"]) {
     out(`dry-run: 適用予定 ${applicable.length} ファイル (書き込みなし)`);
@@ -393,6 +425,7 @@ export async function applyCommand(argv: string[]): Promise<number> {
     success: plan.ok,
     partial: values.partial,
     source,
+    changesFingerprint: fingerprint,
     files: entries,
   };
   finishHistory(root, id, manifest, after);

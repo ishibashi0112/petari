@@ -351,3 +351,94 @@ describe("planChangeSet: 適用済み検出 (冪等性)", () => {
     expect(diff.failures[0]?.kind).toBe("target-exists");
   });
 });
+
+describe("planChangeSet: 追記型ブロックの適用済み検出 (§6.1)", () => {
+  const SEARCH = ["    Me.Close()", "End Sub"];
+  const REPLACE = [...SEARCH, "", "Private Sub Foo()", "    Bar()", "End Sub"];
+  const change = (search = SEARCH, replace = REPLACE): FileChange => ({
+    op: "replace",
+    path: "Form1.vb",
+    line: 1,
+    blocks: [block(search, replace)],
+  });
+
+  it("初回は通常どおり適用し、その結果への再計画は「済み」で書き込みなし (重複追記しない)", () => {
+    const original = sjis("Sub A()\r\n    Me.Close()\r\nEnd Sub\r\nEnd Class\r\n");
+    const first = planChangeSet(cs(change()), states({ "Form1.vb": state(original) }), NEW_FILE);
+    expect(first.ok).toBe(true);
+    const after = first.outcomes[0]?.afterBytes as Uint8Array;
+    expect(after).toEqual(
+      sjis("Sub A()\r\n    Me.Close()\r\nEnd Sub\r\n\r\nPrivate Sub Foo()\r\n    Bar()\r\nEnd Sub\r\nEnd Class\r\n"),
+    );
+
+    const second = planChangeSet(cs(change()), states({ "Form1.vb": state(after) }), NEW_FILE);
+    expect(second.ok).toBe(true);
+    const o = second.outcomes[0];
+    expect(o?.afterBytes).toBeNull();
+    expect(o?.appliedBlocks).toHaveLength(0);
+    expect(o?.alreadyApplied).toBe(true);
+    expect(o?.alreadyAppliedBlocks[0]?.insertion).toBe(true);
+    expect(o?.alreadyAppliedBlocks[0]?.stage).toBe("exact");
+  });
+
+  it("trim-all で一致して REPLACE のインデントを補正した場合も、再計画は「済み」", () => {
+    // 実ファイルは 4 スペース深い。SEARCH/REPLACE は浅いインデントで書かれている
+    const original = utf8("Class C\n        Me.Close()\n    End Sub\nEnd Class\n");
+    const first = planChangeSet(cs(change()), states({ "Form1.vb": state(original) }), NEW_FILE);
+    expect(first.outcomes[0]?.appliedBlocks[0]?.stage).toBe("trim-all");
+    const after = first.outcomes[0]?.afterBytes as Uint8Array;
+
+    const second = planChangeSet(cs(change()), states({ "Form1.vb": state(after) }), NEW_FILE);
+    expect(second.outcomes[0]?.afterBytes).toBeNull();
+    expect(second.outcomes[0]?.alreadyApplied).toBe(true);
+  });
+
+  it("前後を包む型 (Try で囲む) も再計画は「済み」", () => {
+    const search = ["x = 1"];
+    const replace = ["Try", "    x = 1", "Catch", "End Try"];
+    const original = utf8("Sub A()\nx = 1\nEnd Sub\n");
+    const first = planChangeSet(
+      cs(change(search, replace)),
+      states({ "Form1.vb": state(original) }),
+      NEW_FILE,
+    );
+    const after = first.outcomes[0]?.afterBytes as Uint8Array;
+    expect(after).toEqual(utf8("Sub A()\nTry\n    x = 1\nCatch\nEnd Try\nEnd Sub\n"));
+
+    const second = planChangeSet(
+      cs(change(search, replace)),
+      states({ "Form1.vb": state(after) }),
+      NEW_FILE,
+    );
+    expect(second.outcomes[0]?.afterBytes).toBeNull();
+    expect(second.outcomes[0]?.alreadyApplied).toBe(true);
+  });
+
+  it("適用後に追記部分を手修正していると検出できず、従来どおり適用される (--force 前提の限界)", () => {
+    const edited = utf8(
+      "Sub A()\n    Me.Close()\nEnd Sub\n\nPrivate Sub Foo()\n    Bar(1)\nEnd Sub\n",
+    );
+    const plan = planChangeSet(cs(change()), states({ "Form1.vb": state(edited) }), NEW_FILE);
+    expect(plan.outcomes[0]?.appliedBlocks).toHaveLength(1);
+  });
+
+  it("追記済みブロックと未適用ブロックの混在: 未適用分だけ書き込む", () => {
+    const original = utf8("Sub A()\n    Me.Close()\nEnd Sub\n\nPrivate Sub Foo()\n    Bar()\nEnd Sub\nDim b = 1\n");
+    const plan = planChangeSet(
+      cs({
+        op: "replace",
+        path: "Form1.vb",
+        line: 1,
+        blocks: [block(SEARCH, REPLACE, 1), block(["Dim b = 1"], ["Dim b = 2"], 2)],
+      }),
+      states({ "Form1.vb": state(original) }),
+      NEW_FILE,
+    );
+    expect(plan.ok).toBe(true);
+    expect(plan.outcomes[0]?.alreadyAppliedBlocks.map((b) => b.block.index)).toEqual([1]);
+    expect(plan.outcomes[0]?.appliedBlocks.map((b) => b.block.index)).toEqual([2]);
+    expect(plan.outcomes[0]?.afterBytes).toEqual(
+      utf8("Sub A()\n    Me.Close()\nEnd Sub\n\nPrivate Sub Foo()\n    Bar()\nEnd Sub\nDim b = 2\n"),
+    );
+  });
+});

@@ -150,7 +150,26 @@
   空・空行のみの REPLACE は判定対象外。rewrite/create は全文一致、delete は対象なしで「済み」。
   failed が 1 件でもあれば書かない all-or-nothing は維持。全件済みなら履歴を作らず exit 0。
   真の不一致には「基準スナップショットずれの可能性」ヒントを付す。
-  既知の限界: REPLACE ⊇ SEARCH の追記型ブロックは再実行時に重複適用になり得る
+  (旧・既知の限界だった REPLACE ⊇ SEARCH の追記型ブロックの重複適用は v0.10.0 で対処 — 下記)
+- 二重適用の防止 (v0.10.0 / 2026-09-29 実運用事例起点 — RDP 越しに changes.md を受け渡す
+  運用で、適用済みの changes.md を取り違えてもう一度当て、追記型ブロックの Sub が重複して
+  ビルドエラーになった):
+  ①**追記型ブロックの適用済み判定** (matcher.ts の findInsertionPresenceStage):
+  SEARCH が一意に一致しても、挿入しようとしている行が一致範囲を内側に含む形で既にあれば
+  「済み」(AlreadyAppliedBlock.insertion)。一致範囲の外に内容のある行を足すものだけが対象
+  (書き換え・空行追加のみは対象外)。比較は空行を除いた行列 × exact / trim-end のみ —
+  インデント違いを同一視すると入れ子の End If 補完を外側の End If で「済み」と誤判定するため。
+  候補は reindent 済み置換行と REPLACE 原文の両方 (前回 trim-all 補正で入った場合と
+  原文のまま入った場合)。ambiguous 時の判定は入れない (失敗のままで安全側。R が別の場所に
+  あるだけで「済み」にすると正当な修正を黙って落とし得る)
+  ②**指紋による再適用防止** (core/fingerprint.ts + history.ts の findAppliedHistory):
+  パース後の変更内容の SHA-256 を manifest の changesFingerprint に記録し、同じ指紋の
+  未 undo 履歴があって**なお書き込みが発生する**ときだけ止める (exit 1、--force で解除、
+  --dry-run は警告のみ)。全件済みで書き込みなしの再実行は従来どおり exit 0 (既存の冪等性
+  テストの挙動を維持)。undo は manifest に undoneAt を追記して対象外にする。旧形式の
+  manifest は保存済み changes.md を再パースして算出 (過去分にも効く)。指紋は前置き・概要・
+  改行コード・寛容パースの補正に依存しない。ファイル名の `(1)` 等は自動検出の
+  `changes*.md` がもともと許容している
 - 引数なし実行の自動検出は Downloads + プロジェクトルート直下の changes*.md (直近 30 分・最新優先)。
   自動検出由来は適用成功後に削除 (原本は履歴に保存済み)。全件済みで履歴を作らなかった場合は残す
 - 履歴: before 保存 → 書き換え → after+manifest の 2 段階 (`beginHistory`/`finishHistory`)。

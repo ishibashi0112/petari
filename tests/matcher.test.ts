@@ -3,6 +3,7 @@ import {
   applyBlocks,
   contentEqualsStage,
   findContentStage,
+  findInsertionPresenceStage,
   matchBlock,
   reindent,
 } from "../src/core/matcher.ts";
@@ -355,5 +356,67 @@ describe("contentEqualsStage: 全文一致の適用済み判定 (rewrite/create)
 
   it("内容が違えば null", () => {
     expect(contentEqualsStage(["a"], ["b"])).toBeNull();
+  });
+});
+
+describe("findInsertionPresenceStage: 追記型ブロックの適用済み判定 (§6.1)", () => {
+  // SEARCH = ["    Me.Close()", "End Sub"] の後ろに新しい Sub を足す REPLACE
+  const SEARCH = ["    Me.Close()", "End Sub"];
+  const ADDED = ["", "Private Sub Foo()", "    Bar()", "End Sub"];
+  const REPLACE = [...SEARCH, ...ADDED];
+
+  it("SEARCH の直後に追記分が既にあれば exact", () => {
+    const lines = ["Sub A()", ...REPLACE, "End Class"];
+    expect(findInsertionPresenceStage(lines, 1, 3, [REPLACE])).toBe("exact");
+  });
+
+  it("追記前 (初回適用) は null", () => {
+    const lines = ["Sub A()", ...SEARCH, "End Class"];
+    expect(findInsertionPresenceStage(lines, 1, 3, [REPLACE])).toBeNull();
+  });
+
+  it("前に足す型・前後を包む型も拾う", () => {
+    const pre = ["' 説明コメント", "Dim x = 1"];
+    expect(findInsertionPresenceStage(["a", ...pre, "b"], 2, 3, [pre])).toBe("exact");
+    const wrap = ["Try", "    x = 1", "Catch", "End Try"];
+    expect(findInsertionPresenceStage(["a", ...wrap, "b"], 2, 3, [wrap])).toBe("exact");
+  });
+
+  it("行末空白だけの差は trim-end", () => {
+    const lines = ["Sub A()", "    Me.Close()  ", "End Sub", "", "Private Sub Foo()  ", "    Bar()", "End Sub"];
+    expect(findInsertionPresenceStage(lines, 1, 3, [REPLACE])).toBe("trim-end");
+  });
+
+  it("空行の並びだけ違えば blank-insensitive", () => {
+    const lines = ["Sub A()", "    Me.Close()", "End Sub", "Private Sub Foo()", "", "    Bar()", "End Sub"];
+    expect(findInsertionPresenceStage(lines, 1, 3, [REPLACE])).toBe("blank-insensitive");
+  });
+
+  it("追記分のインデントが違えば別物 (入れ子の End If 補完を誤って「済み」にしない)", () => {
+    // 内側の If を閉じる "    End If" を足したいが、直後にあるのは外側の "End If"
+    const lines = ["If a Then", "    If b Then", "        x = 1", "End If"];
+    const replace = ["    If b Then", "        x = 1", "    End If"];
+    expect(findInsertionPresenceStage(lines, 1, 3, [replace])).toBeNull();
+  });
+
+  it("一致範囲の外に内容のある行を足さないもの (書き換え・空行の追加のみ) は null", () => {
+    // インデント修正: 行数が同じ
+    expect(findInsertionPresenceStage(["  foo()"], 0, 1, [["    foo()"]])).toBeNull();
+    expect(findInsertionPresenceStage(["foo()"], 0, 1, [["foo()"]])).toBeNull();
+    // 空行の追加のみ
+    expect(findInsertionPresenceStage(["foo()", ""], 0, 1, [["foo()", ""]])).toBeNull();
+  });
+
+  it("候補のいずれかで一致すればよい (reindent 済みの行 / REPLACE 原文)", () => {
+    const lines = ["Try", "  x = 1", "Catch", "End Try"];
+    const reindented = ["  Try", "    x = 1", "  Catch", "  End Try"];
+    const original = ["Try", "  x = 1", "Catch", "End Try"];
+    expect(findInsertionPresenceStage(lines, 1, 2, [reindented])).toBeNull();
+    expect(findInsertionPresenceStage(lines, 1, 2, [reindented, original])).toBe("exact");
+  });
+
+  it("追記分がファイル先頭・末尾をはみ出す位置では一致しない", () => {
+    expect(findInsertionPresenceStage(["a", "b"], 1, 2, [["b", "c"]])).toBeNull();
+    expect(findInsertionPresenceStage(["a", "b"], 0, 1, [["z", "a"]])).toBeNull();
   });
 });

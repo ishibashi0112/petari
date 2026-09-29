@@ -36,6 +36,10 @@ export interface Manifest {
   success: boolean;
   partial: boolean;
   source: { type: "file" | "clipboard" | "downloads" | "project-root"; path?: string };
+  /** changes.md の指紋 (core/fingerprint.ts)。同じ changes.md の再適用検出に使う (v0.10.0〜) */
+  changesFingerprint?: string;
+  /** petari undo で巻き戻した日時 (ISO 8601)。巻き戻し済みの履歴は再適用検出の対象外 */
+  undoneAt?: string;
   files: ManifestFileEntry[];
 }
 
@@ -115,6 +119,51 @@ export function readManifest(root: string, id: string): Manifest | null {
   const p = join(historyRoot(root), id, "manifest.json");
   if (!existsSync(p)) return null;
   return JSON.parse(readFileSync(p, "utf8")) as Manifest;
+}
+
+/** undo の完了を manifest に記録する (再適用検出で「巻き戻し済み」を区別するため) */
+export function markUndone(root: string, id: string, at: Date): void {
+  const p = join(historyRoot(root), id, "manifest.json");
+  const manifest = JSON.parse(readFileSync(p, "utf8")) as Manifest;
+  manifest.undoneAt = at.toISOString();
+  writeFileSync(p, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+}
+
+/**
+ * 同じ指紋の changes.md を適用した履歴 (巻き戻し済み・書き込みなしを除く) を新しい順に
+ * 探し、最初に見つかった履歴 ID を返す。指紋を持たない旧形式の manifest は、保存済みの
+ * changes.md 原本から fallback で算出する (null = 算出不能として対象外)。
+ * manifest は非信頼入力のため、読めない・形が違うものは黙って対象外にする。
+ */
+export function findAppliedHistory(
+  root: string,
+  fingerprint: string,
+  fallback: (changesText: string) => string | null,
+): string | null {
+  for (const id of listHistoryIds(root).reverse()) {
+    let manifest: Manifest | null;
+    try {
+      manifest = readManifest(root, id);
+    } catch {
+      continue;
+    }
+    if (manifest === null || typeof manifest !== "object") continue;
+    if (manifest.undoneAt !== undefined) continue;
+    if (!Array.isArray(manifest.files) || !manifest.files.some((f) => f?.applied === true)) continue;
+    let fp: string | null = null;
+    if (typeof manifest.changesFingerprint === "string") {
+      fp = manifest.changesFingerprint;
+    } else {
+      const p = join(historyRoot(root), id, "changes.md");
+      try {
+        fp = fallback(readFileSync(p, "utf8"));
+      } catch {
+        fp = null;
+      }
+    }
+    if (fp === fingerprint) return id;
+  }
+  return null;
 }
 
 export { sha256 };

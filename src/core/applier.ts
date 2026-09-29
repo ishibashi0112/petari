@@ -18,6 +18,7 @@ import {
   STAGE_LABEL,
   contentEqualsStage,
   findContentStage,
+  findInsertionPresenceStage,
   matchBlock,
   type MatchStage,
   type PresenceStage,
@@ -78,6 +79,8 @@ export interface AppliedBlockInfo {
 export interface AlreadyAppliedBlock {
   block: ReplaceBlock;
   stage: PresenceStage;
+  /** 追記型: SEARCH は一致したが、追記する行がその前後に既にあった (§6.1) */
+  insertion?: true;
 }
 
 export interface FileOutcome {
@@ -225,6 +228,18 @@ function planReplace(
       continue;
     }
     const replacement = m.replacement as string[];
+    // 冪等性 (§6.1): 追記型ブロックは適用後も SEARCH が一致し続けるため、追記する行が
+    // 一致範囲の前後に既にあれば「適用済み」としてスキップする (再実行での重複追記を防ぐ)
+    const insertionStage = findInsertionPresenceStage(
+      textLines,
+      m.start,
+      m.end,
+      replacement === block.replace ? [replacement] : [replacement, block.replace],
+    );
+    if (insertionStage !== null) {
+      already.push({ block, stage: insertionStage, insertion: true });
+      continue;
+    }
     const bad = findUnencodable(replacement.join("\n"), doc.encoding);
     if (bad.length > 0) {
       failures.push({

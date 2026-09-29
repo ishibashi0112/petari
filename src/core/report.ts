@@ -74,7 +74,12 @@ function outcomeSummary(outcomes: FileOutcome[]): string[] {
       byIndex.set(b.block.index, `OK 一致 (${STAGE_LABEL[b.stage]})`);
     }
     for (const b of o.alreadyAppliedBlocks) {
-      byIndex.set(b.block.index, "OK 適用済み (REPLACE が既に存在)");
+      byIndex.set(
+        b.block.index,
+        b.insertion === true
+          ? "OK 適用済み (追記する行が SEARCH の前後に既に存在)"
+          : "OK 適用済み (REPLACE が既に存在)",
+      );
     }
     for (const f of o.failures) {
       if (f.block === undefined) continue;
