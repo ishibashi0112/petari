@@ -10,7 +10,13 @@ import { parseArgs } from "node:util";
 import { invalidPathReason } from "../core/applier.ts";
 import { loadConfig } from "../infra/config.ts";
 import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
-import { historyRoot, listHistoryIds, readManifest, type ManifestFileEntry } from "../infra/history.ts";
+import {
+  historyRoot,
+  listHistoryIds,
+  markUndone,
+  readManifest,
+  type ManifestFileEntry,
+} from "../infra/history.ts";
 import { confirm } from "../infra/prompt.ts";
 import { findProjectRoot } from "../infra/root.ts";
 import { err, out } from "../infra/term.ts";
@@ -115,5 +121,14 @@ export async function undoCommand(argv: string[]): Promise<number> {
     }
   }
   out(`巻き戻しました (履歴 ID: ${id})`);
+  // 巻き戻した changes.md は再適用できるよう、二重適用検出の対象から外す (§6.1)
+  try {
+    markUndone(root, id, new Date());
+  } catch (e) {
+    err(
+      `petari: 履歴 ${id} に巻き戻し済みの印を付けられませんでした (${e instanceof Error ? e.message : String(e)})。` +
+        "同じ changes.md を再適用するには --force が必要です",
+    );
+  }
   return 0;
 }

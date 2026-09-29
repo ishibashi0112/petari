@@ -61,7 +61,9 @@ export async function listCommand(argv: string[]): Promise<number> {
       continue;
     }
     const appliedCount = m.files.filter((f) => f.applied).length;
-    const status = m.success ? "成功" : m.partial ? "部分適用" : "失敗";
+    const status =
+      (m.success ? "成功" : m.partial ? "部分適用" : "失敗") +
+      (m.undoneAt !== undefined ? " (巻き戻し済み)" : "");
     const summary = summaryLine(dir);
     out(`${id}  ${status}  ${appliedCount} ファイル  ${summary}`);
   }

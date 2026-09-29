@@ -85,6 +85,66 @@ export function findContentStage(lines: string[], content: string[]): PresenceSt
   return null;
 }
 
+/**
+ * 追記型ブロックの適用済み判定 (§6.1)。SEARCH が [start, end) に一意に一致したうえで、
+ * 挿入しようとしている行 (candidates のいずれか) が「一致範囲を内側に含む形で」既に
+ * ファイルにあるかを調べる。REPLACE が SEARCH を包含する追記型 (SEARCH `A` → REPLACE
+ * `A` + `B`) は適用後も SEARCH が一致し続けるため、SEARCH 不一致を起点とする
+ * findContentStage では拾えず、再実行で `B` が重複していた。
+ *
+ * - 比較は空行を除いた行列で行う (空行の欠落・追加だけの差は同一視)。空行まで含めて
+ *   一致すれば exact / trim-end、空行の並びだけ異なれば blank-insensitive を返す
+ * - 各行の比較は exact → trim-end のみ。インデント違いは別物として扱う
+ *   (入れ子の End If を補う変更を、隣の外側の End If を根拠に「済み」と誤判定しないため)
+ * - 一致範囲の外に内容のある行を 1 行以上足すものだけが対象。SEARCH と同数以下
+ *   (インデント修正などの書き換え) は null
+ *
+ * candidates には reindent 済みの置換行と REPLACE の原文を渡す (前回 trim-all で一致して
+ * 補正後の行が入っている場合と、原文のまま入っている場合の両方を拾うため)。
+ */
+export function findInsertionPresenceStage(
+  lines: string[],
+  start: number,
+  end: number,
+  candidates: string[][],
+): PresenceStage | null {
+  const nonBlank: number[] = [];
+  lines.forEach((line, i) => {
+    if (line.trim() !== "") nonBlank.push(i);
+  });
+  const first = nonBlank.findIndex((i) => i >= start);
+  const matched = nonBlank.filter((i) => i >= start && i < end).length;
+  if (first < 0 || matched === 0) return null;
+  for (const { stage, eq } of STAGES.slice(0, 2)) {
+    for (const rep of candidates) {
+      const repIdx: number[] = [];
+      rep.forEach((line, i) => {
+        if (line.trim() !== "") repIdx.push(i);
+      });
+      if (repIdx.length <= matched) continue;
+      // q = REPLACE 内で一致範囲 (の最初の非空行) が始まる位置 (非空行単位)
+      for (let q = 0; q + matched <= repIdx.length; q++) {
+        const from = first - q;
+        if (from < 0 || from + repIdx.length > nonBlank.length) continue;
+        const all = repIdx.every((r, j) =>
+          eq(lines[nonBlank[from + j] as number] as string, rep[r] as string),
+        );
+        if (!all) continue;
+        // 空行の並びまで同じか (ラベル用)
+        const lo = nonBlank[from] as number;
+        const hi = (nonBlank[from + repIdx.length - 1] as number) + 1;
+        const repLo = repIdx[0] as number;
+        const repHi = (repIdx[repIdx.length - 1] as number) + 1;
+        const sameLayout =
+          hi - lo === repHi - repLo &&
+          lines.slice(lo, hi).every((line, k) => eq(line, rep[repLo + k] as string));
+        return sameLayout ? stage : "blank-insensitive";
+      }
+    }
+  }
+  return null;
+}
+
 /** 適用済み判定 (rewrite/create): content がファイル全行と一致するか */
 export function contentEqualsStage(lines: string[], content: string[]): PresenceStage | null {
   if (lines.length !== content.length) return null;

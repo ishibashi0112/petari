@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { applyCommand } from "../src/commands/apply.ts";
+import { undoCommand } from "../src/commands/undo.ts";
 import { sjisEncode } from "../src/core/sjis.ts";
 import type { Manifest } from "../src/infra/history.ts";
 
@@ -238,5 +239,135 @@ describe("applyCommand: プロジェクト直下の changes.md 検出", () => {
     expect(
       readFileSync(join(dir, ".petari", "history", ids[0] as string, "changes.md"), "utf8"),
     ).toBe(CHANGES);
+  });
+});
+
+describe("applyCommand: 二重適用の防止 (§6.1)", () => {
+  const FORM = "Sub A()\n    Me.Close()\nEnd Sub\nEnd Class\n";
+  const APPENDED = "Sub A()\n    Me.Close()\nEnd Sub\n\nPrivate Sub Foo()\n    Bar()\nEnd Sub\nEnd Class\n";
+  // 追記型: SEARCH の後ろに新しい Sub を足す (適用後も SEARCH が一致し続ける)
+  const APPEND_CHANGES = doc(
+    "## CHANGES",
+    "",
+    "Foo を追加。",
+    "",
+    "### FILE: Form1.vb (replace)",
+    "<<<<<<< SEARCH",
+    "    Me.Close()",
+    "End Sub",
+    "=======",
+    "    Me.Close()",
+    "End Sub",
+    "",
+    "Private Sub Foo()",
+    "    Bar()",
+    "End Sub",
+    ">>>>>>> REPLACE",
+  );
+
+  function setup(): { dir: string; changesPath: string } {
+    const dir = setupProject();
+    writeFileSync(join(dir, "Form1.vb"), FORM, "utf8");
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(changesPath, APPEND_CHANGES, "utf8");
+    return { dir, changesPath };
+  }
+
+  const form = (dir: string): string => readFileSync(join(dir, "Form1.vb"), "utf8");
+
+  /** 実行中の stderr を捕まえる (メッセージ検証用) */
+  async function captureErr(run: () => Promise<number>): Promise<{ code: number; text: string }> {
+    const chunks: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+    try {
+      return { code: await run(), text: chunks.join("") };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("追記型ブロックの再実行は重複追記せず「済み」で正常終了する", async () => {
+    const { dir, changesPath } = setup();
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(form(dir)).toBe(APPENDED);
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(form(dir)).toBe(APPENDED);
+    expect(historyIds(dir)).toHaveLength(1);
+  });
+
+  it("適用後に手修正していて書き込みが発生する再実行は、履歴の指紋で止める", async () => {
+    const { dir, changesPath } = setup();
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    const edited = APPENDED.replace("Bar()", "Bar(1)");
+    writeFileSync(join(dir, "Form1.vb"), edited, "utf8");
+
+    // 前置き・改行コードが違っても同じ変更なら検出する (チャットから取り直した場合)
+    const again = join(dir, "changes (1).md");
+    writeFileSync(again, ("了解です。\n\n" + APPEND_CHANGES).replace(/\n/g, "\r\n"), "utf8");
+    const { code, text } = await captureErr(() => applyCommand([again, "--root", dir, "--yes"]));
+    expect(code).toBe(1);
+    expect(text).toContain(`適用済みです (履歴 ID: ${historyIds(dir)[0]})`);
+    expect(text).toContain("replace Form1.vb");
+    expect(text).toContain("--force");
+    expect(form(dir)).toBe(edited);
+    expect(historyIds(dir)).toHaveLength(1);
+  });
+
+  it("--dry-run は警告のみで書き込まず exit 0、--force なら再適用する", async () => {
+    const { dir, changesPath } = setup();
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    const edited = APPENDED.replace("Bar()", "Bar(1)");
+    writeFileSync(join(dir, "Form1.vb"), edited, "utf8");
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes", "--dry-run"])).toBe(0);
+    expect(form(dir)).toBe(edited);
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes", "--force"])).toBe(0);
+    expect(form(dir)).not.toBe(edited);
+    expect(historyIds(dir)).toHaveLength(2);
+  });
+
+  it("petari undo で巻き戻した changes.md は --force なしで再適用できる", async () => {
+    const { dir, changesPath } = setup();
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(await undoCommand(["--root", dir, "--yes"])).toBe(0);
+    expect(form(dir)).toBe(FORM);
+    const [first] = historyIds(dir);
+    const manifest = JSON.parse(
+      readFileSync(join(dir, ".petari", "history", first as string, "manifest.json"), "utf8"),
+    ) as Manifest;
+    expect(typeof manifest.undoneAt).toBe("string");
+
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(form(dir)).toBe(APPENDED);
+    expect(historyIds(dir)).toHaveLength(2);
+  });
+
+  it("指紋を持たない旧形式の履歴も、保存済みの changes.md 原本から検出する", async () => {
+    const { dir, changesPath } = setup();
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    const [id] = historyIds(dir);
+    const manifestPath = join(dir, ".petari", "history", id as string, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest;
+    expect(typeof manifest.changesFingerprint).toBe("string");
+    delete manifest.changesFingerprint;
+    writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+
+    writeFileSync(join(dir, "Form1.vb"), APPENDED.replace("Bar()", "Bar(1)"), "utf8");
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(1);
+    expect(historyIds(dir)).toHaveLength(1);
+  });
+
+  it("壊れた manifest は検出の対象外として無視する (適用は妨げない)", async () => {
+    const { dir, changesPath } = setup();
+    const broken = join(dir, ".petari", "history", "2000-01-01_0000");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "manifest.json"), "{ not json", "utf8");
+    expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
+    expect(form(dir)).toBe(APPENDED);
   });
 });
