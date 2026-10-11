@@ -267,6 +267,8 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 
 - slnmix を使うプロジェクトでは手順 3 は不要(規約文の取り込みは slnmix 本体に組み込むため)。
   slnmix 側の対応が済むまでの暫定として、slnmix 出力に protocol.md を手動で連結する運用も可。
+- `--no-repomix` で手順 3 を丸ごと省く(v0.11.0)。slnmix v0.18.0 の `slnmix init` が
+  `--yes --no-repomix` で呼び、slnmix 側のセットアップと 1 コマンドにまとめる。
 - `--yes` で全提案に自動同意。
 - 規約文がバージョンアップされた場合の再生成は `petari protocol > protocol.md` の再実行、
   または `petari init` の再実行(差分があれば更新を提案)で対応する。

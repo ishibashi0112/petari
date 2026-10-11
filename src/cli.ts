@@ -20,7 +20,8 @@ Usage:
   petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正
   petari list           履歴の一覧を表示
   petari protocol       AI への規約文を標準出力に出す
-  petari init           プロジェクト初回セットアップ
+  petari init           プロジェクト初回セットアップ (--yes で全提案に同意、
+                        --no-repomix で repomix 連携を省く)
 
 Options:
   -h, --help            ヘルプを表示

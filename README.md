@@ -32,11 +32,14 @@ petari undo              # 直近の適用を巻き戻す
 `instructionFilePath` 相当。別の場所に置く場合は `--instruction-file <path>`)。
 
 ```sh
-npx petari init      # protocol.md を生成 (.sln と同じプロジェクト直下に)
+npx slnmix init      # 初回だけ。protocol.md / .petari/ / docs/ / .gitignore をまとめて準備
+                     # (slnmix v0.18.0 以降。内部で petari init --yes --no-repomix を実行)
 npx slnmix           # .sln を解析。出力末尾に規約文が自動で付く
                      # → 出力を M365 Copilot Chat に貼る
 petari               # 返答 (changes.md) を適用
 ```
+
+slnmix v0.17.0 以前では `npx petari init` で protocol.md を作ります (.sln と同じプロジェクト直下に)。
 
 **変更を依頼するメッセージには、必ず次の 1 行を添えてください。**
 貼り付け本文に埋め込まれた規約文は、チャットサービス側の要約・検索処理で
@@ -90,7 +93,7 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
 | `petari show [ID]` | 履歴の差分を表示 (VS Code、なければブラウザにフォールバック)。`--edit` で現在のファイルを差分を見ながら手修正、`--mine` で適用後の手修正分、`--changes` で変更概要、`--browser` でブラウザ強制 |
 | `petari list` | 履歴の一覧と合計サイズ |
 | `petari protocol` | AI への規約文を標準出力に出す (slnmix / repomix 連携用) |
-| `petari init` | プロジェクト初回セットアップ (`--yes` で全提案に同意) |
+| `petari init` | プロジェクト初回セットアップ (`--yes` で全提案に同意。`--no-repomix` で repomix 連携を省く。slnmix 利用者は `npx slnmix init` が代わりに呼ぶ) |
 
 主なオプション: `--dry-run` (検証と差分プレビューのみ) / `--partial` (成功分のみ適用) /
 `--root <dir>` / `--yes` / `--clip-report` (失敗レポートをクリップボードへ。v0.5.0 から既定で自動コピーされるため、config で無効化した場合の個別指定用) /
