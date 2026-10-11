@@ -25,6 +25,12 @@ git diff                 # VS Code で差分レビュー・手修正
 petari undo              # 直近の適用を巻き戻す
 ```
 
+往復が続くときは、別の端末で `petari watch` を起動しておくと、ダウンロードした
+changes.md が届くたびに確認なしで適用されます (毎回 `petari` を打たなくてよくなります。
+v0.12.0)。失敗したときはレポートがクリップボードに入るので、そのまま AI に貼り返します。
+止めるときは Ctrl+C です。ブラウザのダウンロード先とコードが同じ PC にあることが前提で、
+RDP 越しに受け渡す運用では従来どおり `petari` / `petari --clip` を使います。
+
 ### slnmix 連携 (レガシー VB.NET プロジェクト)
 
 [slnmix](https://www.npmjs.com/package/slnmix) v0.7.0 以降は、入力 (.sln / .vbproj) と
@@ -89,6 +95,7 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
 | コマンド | 説明 |
 |---|---|
 | `petari [path]` | changes.md を適用。省略時は Downloads とプロジェクト直下から自動検出 (直近 30 分)。`--clip` でクリップボードから |
+| `petari watch` | Downloads とプロジェクト直下を見張り、起動後に届いた changes*.md を確認なしで適用し続ける (Ctrl+C で終了)。`--dry-run` で検証とプレビューだけ |
 | `petari undo [ID]` | 履歴を巻き戻す (手修正がある場合は警告) |
 | `petari show [ID]` | 履歴の差分を表示 (VS Code、なければブラウザにフォールバック)。`--edit` で現在のファイルを差分を見ながら手修正、`--mine` で適用後の手修正分、`--changes` で変更概要、`--browser` でブラウザ強制 |
 | `petari list` | 履歴の一覧と合計サイズ |

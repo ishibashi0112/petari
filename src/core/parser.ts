@@ -53,6 +53,19 @@ interface CurrentSection {
 }
 
 /**
+ * CHANGES 見出し (寛容パースが受け付けるレベル違いを含む) があるか。
+ * petari watch が changes.md 以外の CHANGES.md 等 (変更履歴) を当てに行かないための判定
+ */
+export function hasChangesHeading(text: string): boolean {
+  return text
+    .split(/\r?\n/)
+    .some((raw) => {
+      const line = raw.trimEnd();
+      return line === CHANGES_HEADING || LENIENT_CHANGES_RE.test(line);
+    });
+}
+
+/**
  * changes.md をパースする (§3)。
  *
  * - マーカーは行頭から完全一致した行のみ (行末の空白と CR は無視)。

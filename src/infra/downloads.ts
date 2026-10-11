@@ -8,6 +8,7 @@ import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { WatchedFile } from "../core/watch.ts";
 
 const execFileP = promisify(execFile);
 
@@ -52,6 +53,9 @@ export async function resolveDownloadsDir(configured: string | null): Promise<st
   return join(homedir(), "Downloads");
 }
 
+/** 自動検出・監視の対象になるファイル名 (§4.1)。ブラウザが付ける "changes (1).md" 等も含む */
+const CHANGES_FILE_NAME = /^changes.*\.md$/i;
+
 export interface CandidateFile {
   path: string;
   mtime: Date;
@@ -74,7 +78,7 @@ export function findRecentChangesFiles(
   }
   const found: CandidateFile[] = [];
   for (const name of names) {
-    if (!/^changes.*\.md$/i.test(name)) continue;
+    if (!CHANGES_FILE_NAME.test(name)) continue;
     const path = join(dir, name);
     try {
       const st = statSync(path);
@@ -87,4 +91,26 @@ export function findRecentChangesFiles(
     }
   }
   return found.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+}
+
+/** petari watch 用: changes*.md を時刻・サイズ付きで列挙する (時刻での絞り込みはしない・§4.7) */
+export function listChangesFiles(dir: string): WatchedFile[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const found: WatchedFile[] = [];
+  for (const name of names) {
+    if (!CHANGES_FILE_NAME.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      const st = statSync(path);
+      if (st.isFile()) found.push({ path, mtimeMs: st.mtimeMs, size: st.size });
+    } catch {
+      // ダウンロード直後の一時的なロック等で読めないファイルは次回に回す
+    }
+  }
+  return found;
 }
