@@ -36,6 +36,21 @@ describe("initCommand (§4.6)", () => {
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".petari/\n");
   });
 
+  // slnmix init が --yes --no-repomix で呼ぶ (slnmix 利用者に repomix.config.json は要らない)
+  it("--no-repomix は repomix.config.json を作らず、既存のものにも触れない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "petari-init-norepomix-"));
+    expect(await initCommand(["--root", dir, "--yes", "--no-repomix"])).toBe(0);
+    expect(existsSync(join(dir, ".petari", "config.json"))).toBe(true);
+    expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
+    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".petari/\n");
+    expect(existsSync(join(dir, "repomix.config.json"))).toBe(false);
+
+    const existing = JSON.stringify({ output: { removeEmptyLines: true } }, null, 2);
+    writeFileSync(join(dir, "repomix.config.json"), existing, "utf8");
+    expect(await initCommand(["--root", dir, "--yes", "--no-repomix"])).toBe(0);
+    expect(readFileSync(join(dir, "repomix.config.json"), "utf8")).toBe(existing);
+  });
+
   it("再実行しても既存ファイルを壊さない (冪等)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "petari-init2-"));
     await initCommand(["--root", dir, "--yes"]);

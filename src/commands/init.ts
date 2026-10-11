@@ -1,6 +1,8 @@
 /**
  * petari init — プロジェクト初回セットアップの一括実行 (§4.6)。
  * 対話形式 (--yes で全提案に自動同意)。既存ファイルは上書きせず確認する。
+ * --no-repomix は repomix 連携 (手順 3) を丸ごと省く。slnmix の `slnmix init` が
+ * `--yes --no-repomix` で呼ぶ (slnmix 利用者に repomix.config.json は要らないため)。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,6 +28,7 @@ export async function initCommand(argv: string[]): Promise<number> {
     options: {
       root: { type: "string" },
       yes: { type: "boolean", short: "y", default: false },
+      "no-repomix": { type: "boolean", default: false },
     },
   });
   const root = findProjectRoot(process.cwd(), values.root);
@@ -61,7 +64,9 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   // 3. repomix 連携 (§4.6-3)
   const repomixPath = join(root, "repomix.config.json");
-  if (existsSync(repomixPath)) {
+  if (values["no-repomix"]) {
+    out("3. repomix 連携は省略します (--no-repomix)");
+  } else if (existsSync(repomixPath)) {
     let parsed: { output?: { instructionFilePath?: string; removeEmptyLines?: boolean } } | null;
     try {
       parsed = JSON.parse(readFileSync(repomixPath, "utf8")) as typeof parsed;
@@ -128,6 +133,10 @@ export async function initCommand(argv: string[]): Promise<number> {
   }
 
   out("");
+  if (values["no-repomix"]) {
+    out("セットアップ完了。");
+    return 0;
+  }
   out("セットアップ完了。repomix 実行で規約文入りのコンテキストが生成されます。");
   out("slnmix (v0.7.0+) は同じディレクトリの protocol.md を出力末尾に自動連結します。");
   return 0;
