@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { err as errLine } from "./infra/term.ts";
 
-const SUBCOMMANDS = ["undo", "show", "list", "protocol", "init"] as const;
+const SUBCOMMANDS = ["undo", "show", "list", "protocol", "init", "watch"] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number] | "apply";
 
 function version(): string {
@@ -16,6 +16,8 @@ const HELP = `petari — paste AI chat patches onto your codebase
 
 Usage:
   petari [path]         changes.md を適用 (省略時: Downloads から自動検出)
+  petari watch          Downloads を見張り、届いた changes.md を確認なしで適用
+                        (Ctrl+C で終了)
   petari undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
   petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正
   petari list           履歴の一覧を表示
@@ -71,6 +73,10 @@ export async function main(argv: string[]): Promise<number> {
     case "init": {
       const { initCommand } = await import("./commands/init.ts");
       return initCommand(rest);
+    }
+    case "watch": {
+      const { watchCommand } = await import("./commands/watch.ts");
+      return watchCommand(rest);
     }
     default:
       process.stderr.write(`petari: "${sub}" は未実装です\n`);

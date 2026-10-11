@@ -34,7 +34,7 @@
 
 ### レイヤ構成
 
-- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit / vbproj / new-file-style。テスト最厚領域 (§6, §8)
+- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit / vbproj / new-file-style / watch。テスト最厚領域 (§6, §8)
 - `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / diff-server / vbproj (最寄り .vbproj 探索) / new-file-style (手本収集)
 - `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ (apply の .vbproj 登録結線は vbproj-register.ts に分離)
 - `src/assets/protocol.md` — 規約文の同梱原本 (single source)
@@ -177,6 +177,16 @@
 - undo も all-or-nothing (before 欠損を全件検証してから書き込み)
 - Downloads 由来の適用成功後は元ファイルを削除 (原本は history に保存済み)
 - 失敗レポートは SEARCH と REPLACE の両方を引用 (単体で AI に貼り返せるように)
+- `petari watch` (v0.12.0 / 2026-10-11、往復の手作業削減): 新着検出は core/watch.ts の
+  純粋な状態機械 (開始時の一覧は対象外 / 同じ mtime・size を 2 回観測で確定 / 0 バイトは待つ /
+  渡したものは印が変わるまで再度渡さない / 消えたら忘れる)。I/O は 1 秒間隔のポーリング
+  (fs.watch はプラットフォーム差があり、ネットワークドライブ上の Downloads では通知が来ない
+  ことがあるため不採用。ディレクトリ 2 つの readdir + stat なので負荷は無視できる)。適用は
+  applyCommand の第 2 引数 `detected` (自動検出と同じ source 種別 = 成功後に履歴へ移動) に
+  `--yes` で渡すだけで、検証・レポート・指紋の二重適用防止は apply と共通。`## CHANGES`
+  見出しの無いファイル (直下の変更履歴 CHANGES.md 等) は当てない (hasChangesHeading)。
+  `--partial` / `--force` は受け付けない (確認なしの部分適用・再適用をしない)。
+  SIGINT は once で受けて現在の適用の完了後に抜ける (2 回目の Ctrl+C は即終了)
 
 ### slnmix 設計書 §11 の実装 (2026-09-12, v0.9.0)
 
@@ -297,7 +307,9 @@
   v0.8.0: 2026-08-30 空行差無視マッチ — SEARCH マッチング 4 段目 blank-insensitive + 結果表示の注記 + レポート文言の追従 /
   v0.9.0: 2026-09-12 slnmix 設計書 §11 — create した .vb の .vbproj 自動登録 + newFile.encoding "auto" + 規約文 v4。
   **ただし v0.9.0 の tarball は dist/ が v0.8.0 のままの不良パッケージ** (下記) /
-  v0.9.1: 2026-09-14 v0.9.0 の再公開 + prepublishOnly 追加)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.9.1: 2026-09-14 v0.9.0 の再公開 + prepublishOnly 追加 /
+  v0.10.0: 2026-09-29 二重適用の防止 / v0.11.0: 2026-10-11 init --no-repomix (slnmix init 用) /
+  v0.12.0: 2026-10-11 petari watch)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)

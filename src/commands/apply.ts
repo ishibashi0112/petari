@@ -99,7 +99,13 @@ function printAlreadyApplied(outcomes: FileOutcome[]): void {
   }
 }
 
-export async function applyCommand(argv: string[]): Promise<number> {
+/** petari watch が検出したファイル (自動検出と同じ扱いで、成功後に履歴へ移動する・§4.7) */
+export interface DetectedChanges {
+  path: string;
+  origin: "downloads" | "project-root";
+}
+
+export async function applyCommand(argv: string[], detected?: DetectedChanges): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
@@ -148,7 +154,15 @@ export async function applyCommand(argv: string[]): Promise<number> {
   let changesText: string;
   let source: Manifest["source"];
   const inputPath = positionals[0];
-  if (inputPath !== undefined) {
+  if (detected !== undefined) {
+    try {
+      changesText = stripBom(readFileSync(detected.path, "utf8"));
+    } catch {
+      err(`petari: ファイルを読めません: ${detected.path}`);
+      return 1;
+    }
+    source = { type: detected.origin, path: detected.path };
+  } else if (inputPath !== undefined) {
     const abs = resolve(process.cwd(), inputPath);
     try {
       changesText = stripBom(readFileSync(abs, "utf8"));
