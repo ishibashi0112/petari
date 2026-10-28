@@ -7,9 +7,6 @@ import { cleanupOldReports, generateReportHtml, showCommand } from "../src/comma
 import { listHistoryIds, type Manifest, type ManifestFileEntry } from "../src/infra/history.ts";
 import type { Operation } from "../src/types.ts";
 
-// 注: --edit --browser の正常系サーバー経路は closed を await してブロックするため
-// showCommand 経由では検証しない (tests/diff-server.test.ts が全経路をカバーする)
-
 const doc = (...lines: string[]): string => lines.join("\n");
 
 const simpleChanges = (path: string): string =>
@@ -77,6 +74,30 @@ describe("showCommand: ブラウザ経路 (§4.3)", () => {
   });
 });
 
+describe("showCommand: --edit は VS Code 専用 (v0.13.0)", () => {
+  it("--edit --browser はブラウザ編集の廃止を案内して 1", async () => {
+    const { root } = await setupApplied();
+    expect(await showCommand(["--root", root, "--edit", "--browser", "--no-open"])).toBe(1);
+  });
+
+  it("--edit で vscodeCommand が見つからない場合はブラウザにフォールバックせず 1", async () => {
+    const { root } = await setupApplied();
+    writeFileSync(
+      join(root, ".petari", "config.json"),
+      JSON.stringify({ vscodeCommand: "petari-test-no-such-cmd" }),
+      "utf8",
+    );
+    expect(await showCommand(["--root", root, "--edit", "--no-open"])).toBe(1);
+  });
+
+  it("--edit は VS Code があれば差分を開いて 0", async () => {
+    const { root } = await setupApplied();
+    // POSIX の true は引数を無視して終了コード 0 (VS Code の代わり)
+    writeFileSync(join(root, ".petari", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
+    expect(await showCommand(["--root", root, "--edit"])).toBe(0);
+  });
+});
+
 describe("showCommand: manifest 改ざん耐性 (§9)", () => {
   const tamper = (root: string, id: string, path: string): void => {
     const mpath = join(root, ".petari", "history", id, "manifest.json");
@@ -88,7 +109,9 @@ describe("showCommand: manifest 改ざん耐性 (§9)", () => {
   it("パス改ざん (../) は --edit で拒否する", async () => {
     const { root, id } = await setupApplied();
     tamper(root, id, "../evil.txt");
-    expect(await showCommand(["--root", root, "--edit", "--browser", "--no-open"])).toBe(1);
+    // 検証が無ければ true が 0 で終わるため、1 は改ざんの拒否による
+    writeFileSync(join(root, ".petari", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
+    expect(await showCommand(["--root", root, "--edit"])).toBe(1);
   });
 
   it("パス改ざん (../) は閲覧レポートでも拒否する (読み取りにも適用)", async () => {

@@ -1,15 +1,12 @@
 /**
- * ブラウザ差分ビューの HTML 生成 (§4.3)。純粋な文字列生成のみ (I/O なし)。
+ * 閲覧用の静的差分レポートの HTML 生成 (§4.3)。純粋な文字列生成のみ (I/O なし)。
  *
  * セキュリティ方針:
  * - 補間箇所は全て escapeHtml を通す。ファイル内容は非信頼入力 (AI 出力) として扱い、
- *   </textarea> や <script> の注入を無効化する
- * - JS は一切使わない (フォーム POST のみ)。外部リソース参照ゼロ・インライン CSS のみ。
+ *   <script> 等の注入を無効化する
+ * - JS は一切使わない。外部リソース参照ゼロ・インライン CSS のみ。
  *   未変更範囲の折りたたみも <details> (JS 不要) で行う
- * - textarea の値はエスケープ以外の加工禁止。制御文字を除去すると無編集行が
- *   「変更」扱いになり、保存時にユーザーが触っていない行の文字が消えるため。
- *   読み取り専用の diff ペインのみ表示用に双方向制御文字等を除去する
- * - フォームの action とリンクは相対パスのみ (URL のトークンを HTML 本文に埋めない)
+ * - 表示テキストからは双方向制御文字等を除去する (Trojan Source 対策)
  */
 import { intralineRanges, type CharRange, type DiffRow } from "./diff.ts";
 import type { ManifestOp } from "../infra/history.ts";
@@ -30,8 +27,7 @@ export function escapeHtml(s: string): string {
     .replaceAll("'", "&#39;");
 }
 
-// 表示専用の無害化 (term.ts と同じ集合: C0/C1 制御と Trojan Source 双方向制御)。
-// textarea には適用しないこと (上記セキュリティ方針)
+// 表示専用の無害化 (term.ts と同じ集合: C0/C1 制御と Trojan Source 双方向制御)
 const DISPLAY_CONTROL_CHARS = new RegExp(
   "[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F\\u061C\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]",
   "g",
@@ -40,10 +36,8 @@ function displayText(s: string): string {
   return escapeHtml(s.replace(DISPLAY_CONTROL_CHARS, ""));
 }
 
-/** 全ページ共通の CSP。サーバー応答ヘッダにも同じ値を使う (meta の form-action 等は
- *  無視されるブラウザがあるため、サーバー配信時はヘッダ側が正) */
-export const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+/** レポートの meta CSP (スクリプト・外部リソース・フォーム送信を一切許可しない) */
+const CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'";
 
 const STYLE = `
 :root{
@@ -107,34 +101,6 @@ details.fold summary::-webkit-details-marker{display:none}
 details.fold summary:hover{text-decoration:underline}
 details.fold[open] summary{border-bottom-style:dashed}
 p.note{color:var(--muted);font-size:.84rem;margin:.6rem .8rem}
-.banner{border-radius:6px;padding:.55rem .9rem;margin:.7rem 0;font-size:.88rem;border:1px solid}
-.banner.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);
-  background:color-mix(in srgb,var(--ok) 10%,transparent)}
-.banner.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 45%,transparent);
-  background:color-mix(in srgb,var(--err) 10%,transparent)}
-section.editor{margin:1rem 0}
-textarea{width:100%;min-height:24rem;padding:.8rem;resize:vertical;
-  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;
-  color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)}
-textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-button{font-size:.88rem;font-weight:600;padding:.45em 1.4em;border-radius:6px;cursor:pointer;
-  border:1px solid transparent;background:var(--accent);color:#fff}
-button:hover{filter:brightness(1.1)}
-button.secondary{background:var(--surface);color:var(--muted);border-color:var(--border)}
-.actions{display:flex;align-items:center;gap:.8rem;margin:.7rem 0}
-.footer-actions{display:flex;align-items:center;gap:1rem;margin:1.6rem 0 0;
-  padding-top:.9rem;border-top:1px solid var(--border)}
-.footer-actions form{margin:0}
-a.back{color:var(--accent);text-decoration:none;font-size:.88rem}
-a.back:hover{text-decoration:underline}
-ul.list{list-style:none;margin:.8rem 0;padding:0;border:1px solid var(--border);
-  border-radius:var(--radius);overflow:hidden}
-ul.list li{display:flex;align-items:center;gap:.7em;padding:.6rem .9rem;background:var(--bg)}
-ul.list li+li{border-top:1px solid var(--border)}
-ul.list a{color:var(--accent);text-decoration:none;font-family:ui-monospace,Menlo,monospace;
-  font-size:.9rem;word-break:break-all}
-ul.list a:hover{text-decoration:underline}
-ul.list .note{color:var(--muted);font-size:.78rem;margin-left:auto;flex-shrink:0}
 `.trim();
 
 function page(title: string, bodyHtml: string): string {
@@ -284,41 +250,5 @@ export function buildReportPage(
 <p class="meta">${escapeHtml(generatedAt)} ・ ${sections.length} ファイル</p></header>
 ${nav}
 ${body}`,
-  );
-}
-
-export interface IndexItem {
-  path: string;
-  op: ManifestOp;
-  /** null = 編集可。文字列 = 編集不可の理由 (リンクは張るが編集フォームは出ない) */
-  note: string | null;
-}
-
-/** 編集サーバーのファイル一覧ページ */
-export function buildIndexPage(title: string, items: IndexItem[], idleMinutes: number): string {
-  const list = items
-    .map((item, i) => {
-      const note = item.note === null ? "" : `<span class="note">${escapeHtml(item.note)}</span>`;
-      return `<li>${opBadge(item.op)}<a href="f/${i}">${escapeHtml(item.path)}</a>${note}</li>`;
-    })
-    .join("\n");
-  const body = `<header class="page"><h1>${escapeHtml(title)}</h1>
-<p class="meta">無操作 ${idleMinutes} 分でサーバーは自動終了します。編集途中の内容は保存されません。</p></header>
-<ul class="list">
-${list}
-</ul>
-<div class="footer-actions"><form method="post" action="quit"><button class="secondary">サーバーを終了</button></form></div>`;
-  return page(title, body);
-}
-
-/** エラー・終了などの単文ページ (409 / 404 / 終了しました 等) */
-export function buildMessagePage(title: string, message: string, backHref: string | null): string {
-  const back =
-    backHref === null
-      ? ""
-      : `\n<div class="footer-actions"><a class="back" href="${escapeHtml(backHref)}">← 戻る</a></div>`;
-  return page(
-    title,
-    `<header class="page"><h1>${escapeHtml(title)}</h1></header>\n<p>${escapeHtml(message)}</p>${back}`,
   );
 }

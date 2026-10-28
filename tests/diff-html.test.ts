@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toSideBySideRows, diffLines, type DiffRow } from "../src/core/diff.ts";
-import {
-  MAX_SECTION_ROWS,
-  buildIndexPage,
-  buildMessagePage,
-  buildReportPage,
-  escapeHtml,
-} from "../src/core/diff-html.ts";
+import { MAX_SECTION_ROWS, buildReportPage, escapeHtml } from "../src/core/diff-html.ts";
 
 describe("escapeHtml (§9)", () => {
   it("HTML 特殊文字 5 種を全てエスケープする", () => {
@@ -98,28 +92,5 @@ describe("buildReportPage (§4.3)", () => {
       { path: "a.txt", op: "replace", body: { kind: "rows", rows, leftLabel: "l", rightLabel: "r" } },
     ]);
     expect(html).toContain("変更はありません (全 2 行一致)");
-  });
-});
-
-describe("buildIndexPage / buildMessagePage (§4.3)", () => {
-  it("一覧は相対リンク f/<n> と終了フォームを持つ", () => {
-    const html = buildIndexPage("履歴 X", [
-      { path: "a.ts", op: "replace", note: null },
-      { path: "b.bin", op: "rewrite", note: "バイナリのため編集不可" },
-    ], 30);
-    expect(html).toContain(`href="f/0"`);
-    expect(html).toContain(`href="f/1"`);
-    expect(html).toContain("バイナリのため編集不可");
-    expect(html).toContain(`action="quit"`);
-    // トークンを含む絶対パスは埋め込まない
-    expect(html).not.toMatch(/href="\//);
-    expect(html).not.toMatch(/action="\//);
-  });
-
-  it("メッセージページはタイトル・本文・戻るリンクを持つ", () => {
-    const html = buildMessagePage("競合", "外部で変更されています", "../");
-    expect(html).toContain("競合");
-    expect(html).toContain("外部で変更されています");
-    expect(html).toContain(`href="../"`);
   });
 });

@@ -19,7 +19,7 @@ Usage:
   petari watch          Downloads を見張り、届いた changes.md を確認なしで適用
                         (Ctrl+C で終了)
   petari undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
-  petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正
+  petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正 (VS Code)
   petari list           履歴の一覧を表示
   petari protocol       AI への規約文を標準出力に出す
   petari init           プロジェクト初回セットアップ (--yes で全提案に同意、
