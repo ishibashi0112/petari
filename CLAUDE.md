@@ -304,7 +304,8 @@
   2026-08-30 blank-insensitive マッチ追加後の再実行も既知の誤検知 2 族のみで同結果。
   2026-09-12 .vbproj 自動登録 + newFile auto 追加後の再実行: diff-server writeHead の既知
   誤検知のみで、新規コード (vbproj / new-file-style / vbproj-register) への指摘なし。
-  diff-server.ts は v0.13.0 で削除したため、writeHead の誤検知族も無くなる)
+  2026-10-28 v0.13.0 (ブラウザ編集の削除) 後の再実行: diff-server.ts の削除で writeHead の
+  誤検知族は消え、clipboard spawn の既知誤検知のみ)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
   自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
   Known Folder / Start-Process の動作確認が未了

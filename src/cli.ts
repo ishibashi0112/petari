@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { err as errLine } from "./infra/term.ts";
@@ -84,11 +84,19 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href;
+// npx や npm の global インストールは macOS / Linux では node_modules/.bin の symlink 経由で
+// 起動するため、argv[1] (symlink のパス) を実体に解決してから自分自身と比べる
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
 
-if (invokedDirectly || process.argv[1]?.endsWith("cli.js") || process.argv[1]?.endsWith("cli.ts")) {
+if (invokedDirectly() || process.argv[1]?.endsWith("cli.js") || process.argv[1]?.endsWith("cli.ts")) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;
