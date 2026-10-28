@@ -283,7 +283,8 @@
   v0.9.1: 2026-09-14 v0.9.0 の再公開 + prepublishOnly 追加 /
   v0.10.0: 2026-09-29 二重適用の防止 / v0.11.0: 2026-10-11 init --no-repomix (slnmix init 用) /
   v0.12.0: 2026-10-11 petari watch /
-  v0.13.0: 2026-10-28 ブラウザ編集 (Monaco 同梱) を削除 — パッケージ展開後 24.8MB → 約 0.3MB)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.13.0: 2026-10-28 ブラウザ編集 (Monaco 同梱) を削除 — パッケージ展開後 24.8MB → 約 0.3MB。
+  あわせて macOS / Linux で npx petari が何もせず終わる不具合 (bin の symlink 起動) を修正)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
