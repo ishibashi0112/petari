@@ -3,9 +3,10 @@
  * - 既定: before vs after。VS Code の差分ビューで開き、VS Code が見つからない
  *   場合 (ENOENT/EINVAL) は自己完結 HTML レポートを生成してブラウザで開く
  * - --mine: after vs 現在のファイル = 適用後の手修正分だけを可視化
- * - --edit: スナップショット vs 現在の実ファイル。VS Code では右ペインが実ファイル
- *   (そのまま編集可)。VS Code がなければ 127.0.0.1 限定の一時サーバーでブラウザ編集
- * - --browser: VS Code を試さずブラウザ表示を強制
+ * - --edit: スナップショット vs 現在の実ファイル。VS Code の右ペインが実ファイル
+ *   (そのまま編集可)。VS Code 専用 (v0.13.0 でブラウザ編集を廃止。VS Code が無い
+ *   端末では git の差分を見ながらエディタで直接直す)
+ * - --browser: VS Code を試さず閲覧レポートを強制
  * - --no-open: ブラウザを開かずパス/URL の表示のみ (SSH・テスト用)
  * - --changes: 保存済み changes.md の CHANGES セクションを表示
  * 複数ファイルの履歴は VS Code 経路では一覧から選択させ (--file で直接指定も可)、
@@ -14,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { invalidPathReason } from "../core/applier.ts";
@@ -22,10 +23,8 @@ import { diffLines, toSideBySideRows } from "../core/diff.ts";
 import { buildReportPage, type ReportFileSection } from "../core/diff-html.ts";
 import { EncodingError, decodeFile } from "../core/encoding.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
-import { fixedNewFile } from "../core/new-file-style.ts";
 import { openInBrowser } from "../infra/browser.ts";
-import { loadConfig, type PetariConfig } from "../infra/config.ts";
-import { monacoVendorDir, startDiffServer, type EditEntry } from "../infra/diff-server.ts";
+import { loadConfig } from "../infra/config.ts";
 import { isInsideRoot } from "../infra/files.ts";
 import { historyRoot, listHistoryIds, readManifest, type ManifestFileEntry } from "../infra/history.ts";
 import { createInterface } from "node:readline/promises";
@@ -57,6 +56,16 @@ export function invalidVscodeCommandReason(cmd: string): string | null {
 function isCommandMissing(e: unknown): boolean {
   const code = (e as { code?: unknown } | null)?.code;
   return code === "ENOENT" || code === "EINVAL";
+}
+
+/**
+ * VS Code が見つからないときの Windows 向け案内。VS Code が PATH に置く code.cmd は
+ * シェル非経由では起動できない (ENOENT / EINVAL) ため、既定の "code" では常に不在扱いになる。
+ * Code.exe の絶対パスなら --diff を渡して起動できる
+ */
+export function vscodeMissingHint(cmd: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== "win32" || win32.isAbsolute(cmd)) return null;
+  return '  VS Code で開くには .petari/config.json に "vscodeCommand": "C:/Users/<ユーザー名>/AppData/Local/Programs/Microsoft VS Code/Code.exe" のように Code.exe の絶対パスを書いてください';
 }
 
 let emptyFileCache: string | null = null;
@@ -233,52 +242,6 @@ async function runBrowserReport(
   return 0;
 }
 
-/** ブラウザ編集サーバーを起動し、終了 (quit ボタン / 無操作 / Ctrl+C) まで待つ */
-async function runEditServer(
-  root: string,
-  hdir: string,
-  id: string,
-  entries: ManifestFileEntry[],
-  mine: boolean,
-  config: PetariConfig,
-  noOpen: boolean,
-): Promise<number> {
-  if (!existsSync(join(monacoVendorDir(), "vs", "loader.js"))) {
-    err("petari: ブラウザ編集用の同梱エディタ (Monaco) が見つかりません");
-    err("  開発環境では pnpm gen:monaco を実行してください");
-    return 1;
-  }
-  const sub = mine ? "after" : "before";
-  const editEntries: EditEntry[] = entries.map((e) => {
-    const snap = join(hdir, sub, e.path);
-    return {
-      path: e.path,
-      absPath: join(root, e.path),
-      snapshotPath: existsSync(snap) ? snap : null,
-      op: e.op,
-    };
-  });
-  const handle = await startDiffServer({
-    title: `petari 履歴 ${id} の編集`,
-    entries: editEntries,
-    root,
-    leftLabel: mine ? "適用直後 (after)" : "適用前 (before)",
-    fallbackEol: fixedNewFile(config.newFile).eol,
-  });
-  out(`ブラウザ編集サーバーを起動しました: ${handle.url}`);
-  out("  終了はページ内の「サーバーを終了」ボタンか Ctrl+C (無操作 30 分で自動終了)");
-  if (!noOpen) {
-    try {
-      await openInBrowser(handle.url);
-    } catch {
-      out("ブラウザを開けませんでした。上記の URL を直接開いてください");
-    }
-  }
-  const reason = await handle.closed;
-  out(reason === "quit" ? "petari: 編集サーバーを終了しました" : "petari: 無操作のため編集サーバーを自動終了しました");
-  return 0;
-}
-
 export async function showCommand(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -293,6 +256,11 @@ export async function showCommand(argv: string[]): Promise<number> {
     },
     allowPositionals: true,
   });
+  if (values.edit && values.browser) {
+    err("petari: --edit は VS Code 専用です (ブラウザでの編集は v0.13.0 で廃止しました)");
+    err("  差分は git (VS Code のソース管理など) で確認し、ファイルはエディタで直接修正してください");
+    return 1;
+  }
   const root = findProjectRoot(process.cwd(), values.root);
   const config = loadConfig(root);
   const noOpen = values["no-open"];
@@ -333,7 +301,7 @@ export async function showCommand(argv: string[]): Promise<number> {
       return 1;
     }
   }
-  // --edit は実ファイルへ書き込むため、undo と同じく symlink 経由のルート外も拒否する
+  // --edit は実ファイルを編集用に開くため、undo と同じく symlink 経由のルート外も拒否する
   if (values.edit) {
     for (const e of applied) {
       if (!isInsideRoot(root, join(root, e.path))) {
@@ -392,14 +360,19 @@ export async function showCommand(argv: string[]): Promise<number> {
         err("  .petari/config.json の vscodeCommand を確認してください");
         return 1;
       }
+      const hint = vscodeMissingHint(config.vscodeCommand);
+      if (values.edit) {
+        err(`petari: ${config.vscodeCommand} が見つからないため --edit は使えません`);
+        if (hint !== null) err(hint);
+        err("  差分は git で確認し、ファイルはエディタで直接修正してください");
+        return 1;
+      }
       out(`${config.vscodeCommand} が見つからないためブラウザで表示します`);
+      if (hint !== null) out(hint);
       // フォールバック: 選択済みの 1 件ではなく全ファイルをまとめて表示する
-      // (レポート/編集サーバーはページ内ナビで全件を扱えるため)
+      // (レポートはページ内ナビで全件を扱えるため)
     }
   }
 
-  if (values.edit) {
-    return runEditServer(root, hdir, id, browserEntries, values.mine, config, noOpen);
-  }
   return runBrowserReport(root, hdir, id, browserEntries, values.mine, noOpen);
 }

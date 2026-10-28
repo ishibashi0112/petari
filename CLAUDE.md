@@ -8,8 +8,7 @@
 - `pnpm typecheck` — tsc --noEmit
 - `pnpm test` — vitest run
 - `pnpm dev -- <args>` — CLI を直接実行 (Node 24 のネイティブ TS 実行)
-- `pnpm build` — dist/ へ tsc ビルド + monaco 同梱 (vendor/)
-- `pnpm gen:monaco` — monaco-editor を vendor/monaco へ同梱 (clone 直後に 1 回必要)
+- `pnpm build` — dist/ へ tsc ビルド
 
 各実装ステップの完了条件: typecheck と test が全パスすること。
 
@@ -23,19 +22,20 @@
 - クリップボード: OS コマンド呼び出し (macOS: pbpaste/pbcopy, Windows: PowerShell Get-/Set-Clipboard)
 - Windows Downloads: `reg query` で Known Folder GUID `{374DE290-123F-4565-9164-39C4925E467B}` を取得 (OneDrive リダイレクト対応)
 - 出力の色付け: ANSI 直書きの小ユーティリティ
-- 開発依存も最小: typescript / vitest / @types/node / monaco-editor (固定バージョン) のみ。
+- 開発依存も最小: typescript / vitest / @types/node のみ。
   tsx 不使用 (Node 24 ネイティブ TS 実行)
-- **monaco-editor はビルド時同梱** (2026-08-12 ユーザー承認): `pnpm gen:monaco` が
-  min/vs を `vendor/monaco/` へ丸ごとコピー (ハッシュ付きチャンクが相互参照するため
-  部分コピー不可)。vendor/ は gitignore・`files` で npm パッケージに含める。
-  `pnpm build` に同梱ステップを含む。clone 直後は `pnpm gen:monaco` の実行が必要
-  (未実行だと `show --edit` のブラウザ経路が 1 行エラーで案内する)
+- **同梱サードパーティなし**: 2026-08-12 に `show --edit` のブラウザ編集用として同梱した
+  monaco-editor は v0.13.0 (2026-10-28 ユーザー承認) で削除。パッケージの 99%
+  (展開後 24.8MB 中 24.5MB) を占め、slnmix の依存経由で `npx slnmix` にも載っていた。
+  slnmix init が git リポジトリを前提にしたため差分確認は git で足りる。ブラウザ編集
+  (127.0.0.1 の一時サーバー) も同時に廃止し、`show --edit` は VS Code 専用。
+  他者のコードを同梱する機能は、導入審査の説明 (同梱物・待ち受け) が増えるため安易に戻さない
 - pnpm-workspace.yaml の `minimumReleaseAge: 10080` (7日) で新規公開バージョンを遅延取得
 
 ### レイヤ構成
 
-- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / edit / vbproj / new-file-style / watch。テスト最厚領域 (§6, §8)
-- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / diff-server / vbproj (最寄り .vbproj 探索) / new-file-style (手本収集)
+- `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / vbproj / new-file-style / watch。テスト最厚領域 (§6, §8)
+- `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / vbproj (最寄り .vbproj 探索) / new-file-style (手本収集)
 - `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ (apply の .vbproj 登録結線は vbproj-register.ts に分離)
 - `src/assets/protocol.md` — 規約文の同梱原本 (single source)
 
@@ -249,52 +249,25 @@
 - 許容済みの残リスク: 検証と書き込みの間の TOCTOU (単独利用 CLI のため)、
   vscodeCommand の絶対パス指定 (正規ユースのため許可。攻撃には事前のローカル侵害が必要)
 
-### ブラウザ差分ビューのセキュリティ設計 (2026-08-12, show フォールバック + --edit)
+### ブラウザ差分レポートのセキュリティ設計 (2026-08-12、v0.13.0 で閲覧専用に縮小)
 
-- 編集サーバー (infra/diff-server.ts) は 127.0.0.1 + OS 割当ポートのみで待ち受け。
-  URL パス先頭の 128bit 乱数トークンを**長さ検査 → timingSafeEqual** で照合
-  (timingSafeEqual は長さ不一致で throw するため順序が重要。不一致は 404 で統一)。
-  Host ヘッダ完全一致 (DNS rebinding 対策)、POST は Origin 存在時に自 origin 要求。
-  ルートは固定 4 本で、クライアントからパスは受け取らない (整数インデックスのみ)
-- 全応答に CSP `default-src 'none'; style-src 'unsafe-inline'; form-action 'self';
-  frame-ancestors 'none'; base-uri 'none'` + nosniff / no-referrer / no-store。
-  フォーム action とリンクは相対のみ (トークンを HTML 本文に埋めない)。
-  ボディ上限 16 MiB / urlencoded のみ
-- JS の扱い (2026-08-12 ユーザー要望で「JS ゼロ」から段階的に緩和 → 最終形は Monaco 採用):
-  閲覧レポート・一覧・メッセージページは JS ゼロのまま。**編集エディタページのみ**
-  `script-src 'self' 'nonce-<応答ごと乱数>'` — 'self' は同梱 Monaco 資産、nonce は
-  core/editor-html.ts 埋め込みの自前ブートストラップ。外部 CDN・外部リソースは CSP で遮断。
-  style-src 'self' 追加 (editor.main.css)、font-src data: (codicon)、worker-src 'self' blob:。
-  埋め込み JSON データは `<` エスケープで `</script>` 脱出を封止。
-  保存は fetch (`ajax=1` → JSON 応答) とフォーム POST (noscript) の両対応で JS 無効でも動く
-- **Monaco 更新時の注意 (0.56 で実際にハマった点)**: 日本語 NLS は旧
-  `"vs/nls": { availableLanguages }` 設定を使うと `nls/lang/ja.js` (AMD ではなく
-  グローバル `_VSCODE_NLS_MESSAGES` を設定する素のスクリプト) の define を
-  **エラーなしで永遠に待ってハング**する。editor.main より先に素の `<script>` で
-  ja.js を読み込む方式が正 (editor-html.ts の BOOT_JS)。読み込み停止の検知用に
-  20 秒のウォッチドッグあり
-- Monaco 資産の配信は**起動時に vendor/monaco を列挙した許可リストへの完全一致のみ**
-  (".." を含むキーはリストに現れないためトラバーサルは構造的に不成立)。
-  資産にもトークン必須。エディタは monaco.editor.createDiffEditor (view zone の完全整列・
-  シンタックスハイライト込み)。モデルは EOL を正規化するが保存は行テキスト単位の
-  mergeEditedText なので無変更行の raw バイトは保全される (§8)
-- **textarea の値は escapeHtml のみで他の加工禁止**: 制御文字除去をかけると無編集行が
-  「変更」扱いになり保存時に文字が消える。開きタグ直後に \n を必ず挿入 (ブラウザが
-  1 個食うため先頭改行が失われる)。lone CR / NUL を含む行があるファイルは
-  ブラウザ編集不可 (HTML パーサが CR→LF 正規化・NUL→U+FFFD 置換で破壊するため閲覧のみ)
-- 保存は invalidPathReason + isInsideRoot (起動時と保存直前の両方) + symlink 拒否 +
-  sha256 楽観ロック (競合 409、ファイル無傷)。変換不能文字はユーザー入力を保持したまま
-  バナー再表示。マージは core/edit.ts の mergeEditedText (行 diff で整列し無変更行の
-  raw バイト・改行を維持 = §8。diff 品質はマージの正しさに影響しない設計)
+- VS Code が無いときの `show` は自己完結 HTML (core/diff-html.ts) を一時ファイルに書いて
+  既定ブラウザで開くだけ。JS ゼロ・外部リソースゼロ・インライン CSS のみで、meta CSP は
+  `default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'`。
+  未変更範囲の折りたたみも <details> (JS 不要)。補間はすべて escapeHtml、表示テキストは
+  双方向制御文字 (Trojan Source) を除去
+- v0.4.0〜v0.12.0 にあったブラウザ編集 (127.0.0.1 の編集サーバー + 同梱 Monaco Editor) は
+  v0.13.0 で削除 (上記「同梱サードパーティなし」)。実装の経緯 (トークン照合・CSP・
+  Monaco 0.56 の日本語 NLS ハング・textarea の加工禁止など) は v0.12.0 以前の
+  CLAUDE.md / git 履歴を参照
 - VS Code 不在判定は ENOENT に加え **EINVAL** (CVE-2024-27980 対応後の Node は
-  .cmd/.bat をシェル非経由で spawn できない)。それ以外の起動失敗は従来通り exit 1
+  .cmd/.bat をシェル非経由で spawn できない)。それ以外の起動失敗は従来通り exit 1。
+  `--edit` は VS Code 不在でもブラウザへ落とさず exit 1 (git の差分とエディタで直す案内)
 - 静的レポートの一時 HTML (tmpdir の petari-report-*) はコード平文を含むため、
   次回 show 実行時に 1 時間より古いものを自動削除 (閲覧中かもしれない直近分は残す。
   対象は接頭辞一致のディレクトリのみ、symlink は Dirent 判定で除外)
-- 許容済み残リスク: 保存時 TOCTOU (既存方針と同じ) / 無操作タイムアウトによる
-  編集ロスト (textarea 入力はリクエストを発生させないため既定 30 分 + 全ページに明記で
-  緩和。自動リロードは編集内容を消すため禁止) / infra/browser.ts
-  (open / xdg-open / Start-Process) は自動テストなし (clipboard.ts と同じく実機確認)
+- infra/browser.ts (open / xdg-open / Start-Process) は自動テストなし
+  (clipboard.ts と同じく実機確認)
 
 ## メモ
 
@@ -309,7 +282,9 @@
   **ただし v0.9.0 の tarball は dist/ が v0.8.0 のままの不良パッケージ** (下記) /
   v0.9.1: 2026-09-14 v0.9.0 の再公開 + prepublishOnly 追加 /
   v0.10.0: 2026-09-29 二重適用の防止 / v0.11.0: 2026-10-11 init --no-repomix (slnmix init 用) /
-  v0.12.0: 2026-10-11 petari watch)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.12.0: 2026-10-11 petari watch /
+  v0.13.0: 2026-10-28 ブラウザ編集 (Monaco 同梱) を削除 — パッケージ展開後 24.8MB → 約 0.3MB。
+  あわせて macOS / Linux で npx petari が何もせず終わる不具合 (bin の symlink 起動) を修正)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
@@ -329,7 +304,9 @@
   同日の空行診断 (アラインメント化) + init の removeEmptyLines 検知追加後の再実行も同結果。
   2026-08-30 blank-insensitive マッチ追加後の再実行も既知の誤検知 2 族のみで同結果。
   2026-09-12 .vbproj 自動登録 + newFile auto 追加後の再実行: diff-server writeHead の既知
-  誤検知のみで、新規コード (vbproj / new-file-style / vbproj-register) への指摘なし)
+  誤検知のみで、新規コード (vbproj / new-file-style / vbproj-register) への指摘なし。
+  2026-10-28 v0.13.0 (ブラウザ編集の削除) 後の再実行: diff-server.ts の削除で writeHead の
+  誤検知族は消え、clipboard spawn の既知誤検知のみ)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
   自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
   Known Folder / Start-Process の動作確認が未了

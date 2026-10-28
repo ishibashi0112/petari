@@ -1,6 +1,6 @@
 {
   "name": "petari",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "petari — paste AI chat patches onto your codebase",
   "keywords": [
     "cli",
@@ -24,25 +24,22 @@
     "petari": "./dist/cli.js"
   },
   "files": [
-    "dist",
-    "vendor"
+    "dist"
   ],
   "engines": {
     "node": ">=20.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/vendor-monaco.ts",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node src/cli.ts",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
-    "gen:sjis": "node scripts/generate-sjis-table.ts",
-    "gen:monaco": "node scripts/vendor-monaco.ts"
+    "gen:sjis": "node scripts/generate-sjis-table.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "monaco-editor": "0.56.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
