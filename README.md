@@ -130,7 +130,10 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
 - **適用 1 回ごとの差分確認**: `show` は履歴の適用前後を VS Code の差分ビューで開く
   (VS Code がなければ JS を含まない自己完結 HTML レポートをブラウザで開く)。
   普段の確認は git の差分 (VS Code のソース管理など) で足り、`show` は undo 用の履歴を
-  1 回分ずつ見たいとき向け。`show --edit` は VS Code の右ペインで現在のファイルを直接直せる
+  1 回分ずつ見たいとき向け。`show --edit` は VS Code の右ペインで現在のファイルを直接直せる。
+  Windows では `.petari/config.json` の `vscodeCommand` に Code.exe の絶対パス
+  (例: `C:/Users/<ユーザー名>/AppData/Local/Programs/Microsoft VS Code/Code.exe`) を書く
+  (PATH にある code.cmd はシェルを通さずには起動できないため)
 - **実行時依存ゼロ・同梱サードパーティなし**: サプライチェーン対策として npm の実行時依存
   パッケージを持たず、他者のコードも同梱しない (Shift_JIS 変換テーブルも Node 組み込み ICU
   から自動生成して同梱)。パッケージは自前のビルド結果 (dist/) のみ

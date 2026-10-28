@@ -15,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { invalidPathReason } from "../core/applier.ts";
@@ -56,6 +56,16 @@ export function invalidVscodeCommandReason(cmd: string): string | null {
 function isCommandMissing(e: unknown): boolean {
   const code = (e as { code?: unknown } | null)?.code;
   return code === "ENOENT" || code === "EINVAL";
+}
+
+/**
+ * VS Code が見つからないときの Windows 向け案内。VS Code が PATH に置く code.cmd は
+ * シェル非経由では起動できない (ENOENT / EINVAL) ため、既定の "code" では常に不在扱いになる。
+ * Code.exe の絶対パスなら --diff を渡して起動できる
+ */
+export function vscodeMissingHint(cmd: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== "win32" || win32.isAbsolute(cmd)) return null;
+  return '  VS Code で開くには .petari/config.json に "vscodeCommand": "C:/Users/<ユーザー名>/AppData/Local/Programs/Microsoft VS Code/Code.exe" のように Code.exe の絶対パスを書いてください';
 }
 
 let emptyFileCache: string | null = null;
@@ -350,12 +360,15 @@ export async function showCommand(argv: string[]): Promise<number> {
         err("  .petari/config.json の vscodeCommand を確認してください");
         return 1;
       }
+      const hint = vscodeMissingHint(config.vscodeCommand);
       if (values.edit) {
         err(`petari: ${config.vscodeCommand} が見つからないため --edit は使えません`);
+        if (hint !== null) err(hint);
         err("  差分は git で確認し、ファイルはエディタで直接修正してください");
         return 1;
       }
       out(`${config.vscodeCommand} が見つからないためブラウザで表示します`);
+      if (hint !== null) out(hint);
       // フォールバック: 選択済みの 1 件ではなく全ファイルをまとめて表示する
       // (レポートはページ内ナビで全件を扱えるため)
     }

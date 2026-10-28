@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyCommand } from "../src/commands/apply.ts";
-import { cleanupOldReports, generateReportHtml, showCommand } from "../src/commands/show.ts";
+import { cleanupOldReports, generateReportHtml, showCommand, vscodeMissingHint } from "../src/commands/show.ts";
 import { listHistoryIds, type Manifest, type ManifestFileEntry } from "../src/infra/history.ts";
 import type { Operation } from "../src/types.ts";
 
@@ -95,6 +95,22 @@ describe("showCommand: --edit は VS Code 専用 (v0.13.0)", () => {
     // POSIX の true は引数を無視して終了コード 0 (VS Code の代わり)
     writeFileSync(join(root, ".petari", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
     expect(await showCommand(["--root", root, "--edit"])).toBe(0);
+  });
+});
+
+describe("vscodeMissingHint", () => {
+  it("Windows で既定の code (code.cmd は起動できない) なら Code.exe の絶対パスを案内する", () => {
+    expect(vscodeMissingHint("code", "win32")).toContain("Code.exe");
+  });
+
+  it("Windows でも絶対パスを設定済みなら案内しない", () => {
+    expect(vscodeMissingHint("C:/Program Files/Microsoft VS Code/Code.exe", "win32")).toBeNull();
+    expect(vscodeMissingHint("C:\\Tools\\Code.exe", "win32")).toBeNull();
+  });
+
+  it("Windows 以外では案内しない", () => {
+    expect(vscodeMissingHint("code", "darwin")).toBeNull();
+    expect(vscodeMissingHint("code", "linux")).toBeNull();
   });
 });
 
