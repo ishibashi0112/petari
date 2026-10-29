@@ -284,7 +284,10 @@
   v0.10.0: 2026-09-29 二重適用の防止 / v0.11.0: 2026-10-11 init --no-repomix (slnmix init 用) /
   v0.12.0: 2026-10-11 petari watch /
   v0.13.0: 2026-10-28 ブラウザ編集 (Monaco 同梱) を削除 — パッケージ展開後 24.8MB → 約 0.3MB。
-  あわせて macOS / Linux で npx petari が何もせず終わる不具合 (bin の symlink 起動) を修正)。リポジトリ: https://github.com/ishibashi0112/petari
+  あわせて macOS / Linux で npx petari が何もせず終わる不具合 (bin の symlink 起動) を修正。
+  **ただし v0.13.0 の tarball には削除したソースの古いビルド (dist/infra/diff-server.js 等 3 件) が
+  残っている** (下記。どこからも import されないため動作には影響なし) /
+  v0.13.1: 2026-10-29 build が dist/ を消してから tsc するよう修正した再公開)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
@@ -294,6 +297,12 @@
   npm は同一バージョンの上書きを許さないため v0.9.1 として再公開し、v0.9.0 は
   `npm deprecate` で使わないよう案内する。**publish 後は必ず
   `npm pack <name>@<version>` で中身 (版数・新規ファイルの有無) を検証すること**
+- **削除したソースの古いビルドの混入 (2026-10-29)**: v0.13.0 の tarball に、v0.13.0 で消した
+  diff-server / editor-html / edit の古い .js が入っていた (43 件。正しくは 40 件)。tsc は
+  ソースを消しても出力済みの .js を消さず、`files: ["dist"]` がそれを拾うため。動作には
+  影響しないが、待ち受けサーバーのコードが tarball に残ると導入審査の説明 (待ち受けなし) と
+  食い違う。対策として `build` の先頭で dist/ を消す (依存を増やさないよう `node -e` の
+  fs.rmSync)。ソースを消すリリースでは、publish 後の `npm pack` でファイル数も確かめる
 - 大きい変更の後は fallow (`npx -y fallow security` / `npx -y fallow`) で確認を取る運用
   (2026-08-08 初回実行: 実害指摘ゼロ。clipboard.ts の spawn 指摘は誤検知と検証済み。
   2026-08-12 ブラウザ差分ビュー追加後: diff-server.ts の writeHead 指摘 (CWE-113) は
