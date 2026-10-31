@@ -331,7 +331,11 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
         .content,
       "Server=tcp:[MASKED].[MASKED].database.windows.net;",
     );
-    // 残りが署名のように長ければ、「.」が続いても (URL の末尾の拡張子など) 伏せる
+    assert.strictEqual(
+      maskCredentials("Server=tcp:Xk3pQ9vLm2Rt7sWz8Yb4.Hq5nJ8cV1xKz6Tg3Lp0W.internal,1433;", { ...GENERIC, strict: true }).content,
+      "Server=tcp:[MASKED].[MASKED].internal,1433;",
+    );
+    // 残りが署名のように長ければは (URL の末尾の拡張子が続いても) 伏せる
     assert.strictEqual(
       maskCredentials("cb/[MASKED].[MASKED].aaaaaaaaaabbbbbbbbbbcccccccccc.json", GENERIC).content,
       "cb/[MASKED].json",
