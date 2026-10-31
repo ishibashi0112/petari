@@ -684,6 +684,53 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
+  it("引用符の中の # ・既定値つきの URL のパスワード・Dockerfile の継続行・区切りのないキーも伏せる", () => {
+    for (const [input, expected] of [
+      ['DB_PASSWORD="abc #def"', 'DB_PASSWORD="[MASKED]"'],
+      ['DB_password=""#Zq9x""', 'DB_password="[MASKED]"'],
+      ['export DB_PASSWORD="p@ss #1word"', 'export DB_PASSWORD="[MASKED]"'],
+      ['      - "DB_PASSWORD=abc #def"', '      - "DB_PASSWORD=[MASKED]"'],
+      ["      - 'POSTGRES_PASSWORD=Hunter2xyz'", "      - 'POSTGRES_PASSWORD=[MASKED]'"],
+      ["DATABASE_URL=postgres://app:${DB_PASSWORD:-Hunter2xyz}@db:5432/app", "DATABASE_URL=postgres://app:[MASKED]@db:5432/app"],
+      ["ENV APP_ENV=production \\\n    DB_PASSWORD=Hunter2xyz \\\n    API_KEY=abc123", "ENV APP_ENV=production \\\n    DB_PASSWORD=[MASKED] \\\n    API_KEY=[MASKED]"],
+      ["ENV DB_PASSWORD=pa\\ ss123", "ENV DB_PASSWORD=[MASKED]"],
+      ["docker run -e DB_PASSWORD=Hun\\ ter2 img", "docker run -e DB_PASSWORD=[MASKED] img"],
+      ['<add key="DBPASSWORD" value="Hunter2xyz" />', '<add key="DBPASSWORD" value="[MASKED]" />'],
+      ["set SQLCMDPASSWORD=Hunter2xyz", "set SQLCMDPASSWORD=[MASKED]"],
+      ["export PGPASSWORD=Hunter2xyz", "export PGPASSWORD=[MASKED]"],
+      ["ftp.pass1=Hunter2xyz", "ftp.pass1=[MASKED]"],
+      // %...% / !...! が変数の参照なのはバッチファイルの set とコマンドの引数だけ
+      ["DB_PASSWORD=!Qaz2wsx!", "DB_PASSWORD=[MASKED]"],
+      ["amqp://guest:!Qaz2wsx!@rabbit/", "amqp://guest:[MASKED]@rabbit/"],
+      ["password = b'Hunter2xyz'.decode('utf-8')", "password = b'[MASKED]'.decode('utf-8')"],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    for (const input of ["OLDPWD=/home/user", "'spwd': 'spwd#module-spwd',", "postgres://app:${DB_PASSWORD}@db/app", "set DB_PASSWORD=!PW!"]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
+  it("SQL の UPDATE ... SET・文字列や属性の中の set は、その終わりより後ろを伏せない", () => {
+    for (const [input, expected] of [
+      ['db.query("UPDATE users SET password=? WHERE id=?", [hash, id]);', 'db.query("UPDATE users SET password=[MASKED]", [hash, id]);'],
+      [
+        `sql = "UPDATE M_USER SET PASSWORD='" & txtPassword.Text & "' WHERE USER_ID='" & txtUserId.Text & "'"`,
+        `sql = "UPDATE M_USER SET PASSWORD='[MASKED]' WHERE USER_ID='" & txtUserId.Text & "'"`,
+      ],
+      ['<Exec Command="set DB_PASSWORD=Hunter2xyz" WorkingDirectory="$(OutDir)" />', '<Exec Command="set DB_PASSWORD=[MASKED]" WorkingDirectory="$(OutDir)" />'],
+      ['Process.Start("cmd", "/c set DB_PASSWORD=Hunter2xyz && run.bat")', 'Process.Start("cmd", "/c set DB_PASSWORD=[MASKED] && run.bat")'],
+      ['set "DB_PASSWORD=Hun"ter2xyz"', 'set "DB_PASSWORD=[MASKED]"'],
+      // 文字列の中の \" ・ "" は文字列の終わりではない
+      ['Process.Start("cmd", "/c set PASSWORD=\\"Hunter2x\\" && run.bat");', 'Process.Start("cmd", "/c set PASSWORD=[MASKED] && run.bat");'],
+      ['Shell("cmd /c set PASSWORD=""Hunter2x"" & run.bat")', 'Shell("cmd /c set PASSWORD="[MASKED]" & run.bat")'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    const cs = 'cmd.CommandText = "UPDATE m_user SET pwd=@pwd, upd_date=GETDATE() WHERE user_id=@id"; // 更新';
+    assert.ok(maskCredentials(cs, LOOSE).content.endsWith('"; // 更新'));
+  });
+
   it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
     const started = Date.now();
     for (const vbSource of [false, true]) {
@@ -692,6 +739,9 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       maskCredentials('"' + "A".repeat(500000) + 'Token": "abc12345"', { vbSource, strict: true });
       maskCredentials("ENV " + "A=b ".repeat(200000), { vbSource, strict: true });
       maskCredentials("redis://:" + "&amp;".repeat(200000), { vbSource, strict: true });
+      maskCredentials("set A=b & ".repeat(150000), { vbSource, strict: true });
+      maskCredentials("ENV " + "A=b \\\n".repeat(150000), { vbSource, strict: true });
+      maskCredentials('set "PASSWORD=' + '"x'.repeat(300000), { vbSource, strict: true });
     }
     assert.ok(Date.now() - started < 15000);
   });
@@ -713,6 +763,9 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       ['set password=@"Zq9xWvK2"', "set password=[MASKED]"],
       ['set PASSWORD=a"b&c"d & echo x', "set PASSWORD=[MASKED] & echo x"],
       ["set PASSWORD=a^&b9zz", "set PASSWORD=[MASKED]"],
+      // 閉じていない引用符は行末まで値のうち
+      ['set PASSWORD="abc', "set PASSWORD=[MASKED]"],
+      ["set password=&quot;Zq9x\"x&quot;", "set password=[MASKED]"],
       ['set "A=x" & set "DB_PASSWORD=Prod123x" & call y', 'set "A=x" & set "DB_PASSWORD=[MASKED]" & call y'],
       // MSBuild の Exec・ビルド後イベントに書いたもの
       ['<Exec Command="set &quot;DB_PASSWORD=Prod123x&quot; &amp; call y" />', '<Exec Command="set &quot;DB_PASSWORD=[MASKED]&quot; &amp; call y" />'],
