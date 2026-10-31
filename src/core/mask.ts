@@ -674,19 +674,23 @@ export interface MaskLinesOptions {
   path: string;
   /** 高エントロピー文字列も伏せるか (省略時は true) */
   strict?: boolean;
+  /**
+   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (slnmix build) に指定する。
+   * 省略時は拡張子から、パックが取り得る伏せ方をすべて使う (.vb は VB / 汎用テキストの両方)
+   */
+  vbSource?: boolean;
 }
 
-/**
- * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
- * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
- * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
- */
 /** 抜粋で伏せる範囲 (どの伏せ方でも伏せる範囲を合わせたもの)。対応づけられない伏せ方があれば null */
 function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | null {
   const all: MaskSpan[] = [];
   // 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
   // strict のときは両方の範囲を伏せる
-  for (const mode of maskModes(options.path, (options.strict ?? true) ? [true, false] : [false])) {
+  const stricts = (options.strict ?? true) ? [true, false] : [false];
+  const vbSource = options.vbSource;
+  const modes =
+    vbSource === undefined ? maskModes(options.path, stricts) : stricts.map((strict) => ({ vbSource, strict }));
+  for (const mode of modes) {
     const spans = maskedSpans(text, mode);
     if (spans === null) return null;
     // 伏せた範囲が多いファイル (大きな埋め込み画像など) で引数の上限を超えないよう 1 つずつ足す
@@ -695,6 +699,11 @@ function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | nul
   return mergeSpans(all);
 }
 
+/**
+ * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
+ * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
+ * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
+ */
 export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
   const text = lines.join("\n");
   const spans = displaySpans(text, options);
