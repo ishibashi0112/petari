@@ -178,7 +178,9 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
         ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません"
         : f.reason === "copied"
           ? "伏せ字を含む同じ行が元より多く、どれが元の行か決まりません"
-          : "伏せる前の同じ行が見つかりません";
+          : f.reason === "unseparable"
+            ? "複数行にまたがる値 (秘密鍵など) の一部か、1 つに伏せた複数の値の行で、元の値に戻せません。この行を含まない範囲の SEARCH / REPLACE で変更してください"
+            : "伏せる前の同じ行が見つかりません";
     return `「${f.line.trim()}」(${what})`;
   });
   const more = r.failures.length > 5 ? ` 他 ${r.failures.length - 5} 行` : "";
@@ -327,8 +329,12 @@ function planReplace(
   /** 伏せ字の行の表示 (前後の空白を除く) ごとの元の値の組の数。2 以上なら値の違いでしか区別できない */
   const valueSetsOf = (key: string): number => {
     const sets = new Set<string>();
-    for (const view of views()) {
-      for (const l of view) if (l.text.trim() === key) sets.add(JSON.stringify(l.values));
+    const all = views();
+    for (let i = 0; i < (all[0]?.length ?? 0); i++) {
+      const here = all.flatMap((view) => (view[i]?.text.trim() === key ? [view[i]] : []));
+      // 戻せない形の表示は、同じ行が別の伏せ方で戻せるなら数えない (restoreMaskedLines と同じ)
+      const restorable = here.some((l) => l?.values !== null);
+      for (const l of here) if (l !== undefined && (l.values !== null || !restorable)) sets.add(JSON.stringify(l.values));
     }
     return sets.size;
   };

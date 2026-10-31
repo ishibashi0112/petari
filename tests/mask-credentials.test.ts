@@ -312,6 +312,88 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       '{ "Password": "[MASKED]", "ApiKey": "[MASKED]", "Name": "x", "tokenTtl": 30, \'db_pass\': \'[MASKED]\' }',
     );
   });
+
+  it("${NAME} だけの値は伏せず、${NAME:-既定値} の既定値は伏せる", () => {
+    assert.strictEqual(
+      maskCredentials("spring.datasource.password=${DB_PASSWORD}\nDB_PASSWORD=${SECRET_PW}", LOOSE).content,
+      "spring.datasource.password=${DB_PASSWORD}\nDB_PASSWORD=${SECRET_PW}",
+    );
+    for (const input of [
+      "spring.datasource.password=${DB_PASSWORD:Hunter2Secret}",
+      "Server=db;Password=${DB_PASSWORD:-Hunter2Secret};Database=x",
+      'password = "${DB_PASSWORD:-Hunter2Secret}"',
+      '<add name="db" connectionString="Server=db;Password=${PW:-Hunter2Secret};" />',
+    ]) {
+      assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
+    }
+    assert.ok(!maskCredentials('Dim s = "Server=db;Password=${PW:-Hunter2Secret};"', { vbSource: true, strict: false }).content.includes("Hunter2"));
+  });
+
+  it("コメントの次の行・YAML の : のキーも伏せる(三項演算子は伏せない)", () => {
+    for (const input of [
+      '{\n  // DB settings\n  "Password": "hunter2"\n}',
+      "'default': {\n  # PostgreSQL\n  'PASSWORD': 'hunter2',",
+      "host: 'x', // c\n  password: 'hunter2',",
+      'db:\n  password: "hunter2"',
+      'db:\r\n  password: "hunter2"',
+    ]) {
+      assert.ok(!maskCredentials(input, LOOSE).content.includes("hunter2"), input);
+    }
+    const ternary = 'const t = cond ? "password" : "text";\nconst u = cond\n  ? "password"\n  : "text";';
+    assert.strictEqual(maskCredentials(ternary, LOOSE).content, ternary);
+  });
+
+  it("早く閉じた引用符・\\' の後ろの値も伏せる", () => {
+    assert.ok(!maskCredentials("Server=x;Password='ab'cd;Database=y", LOOSE).content.includes("cd;"));
+    assert.ok(!maskCredentials("const password = 'it\\'s-Hunter2';", LOOSE).content.includes("Hunter2"));
+    assert.strictEqual(
+      maskCredentials("Server=x;Password='a;b';Database=y", LOOSE).content,
+      "Server=x;Password='[MASKED]';Database=y",
+    );
+  });
+
+  it("行末の空白のある値を二重に数えない", () => {
+    const result = maskCredentials("PASSWORD=Hunter2 \nAPI_KEY=abc123\t", LOOSE);
+    assert.strictEqual(result.content, "PASSWORD=[MASKED] \nAPI_KEY=[MASKED]\t");
+    assert.strictEqual(result.findings.length, 2);
+  });
+
+  it("真偽値の設定と、ユーザー ID 系のリソースの表示の文言は伏せない", () => {
+    for (const input of [
+      '<add key="EncryptPassword" value="false"/>',
+      '<add key="RequireToken" value="true"/>',
+      '<setting name="SavePassword" serializeAs="String"><value>True</value></setting>',
+      '{ "SavePassword": "true" }',
+      '<data name="UserId" xml:space="preserve"><value>User ID</value></data>',
+      '<data name="UserName" xml:space="preserve"><value>Name</value></data>',
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input, input);
+    }
+    const vb = [
+      '<Global.System.Configuration.DefaultSettingValueAttribute("True")>  _',
+      "Public Property SavePassword() As Boolean",
+    ].join("\n");
+    assert.strictEqual(maskCredentials(vb, { vbSource: true, strict: false }).content, vb);
+    assert.ok(!maskCredentials('<add key="RequireToken" value="a1b2c3d4e5f6"/>', LOOSE).content.includes("a1b2"));
+    assert.ok(!maskCredentials('<add key="DbPassword" value="truthy1"/>', LOOSE).content.includes("truthy1"));
+    assert.ok(!maskCredentials('<data name="UserId" xml:space="preserve"><value>sa</value></data>', LOOSE).content.includes(">sa<"));
+  });
+
+  it("キーが秘密系で ; を含む値は全体を伏せる(接続文字列の形の値は ; まで)", () => {
+    assert.strictEqual(
+      maskCredentials("DB_PASSWORD=Hunter2;Server=x\nMYSQL_PWD=Hunter2; charset=utf8", LOOSE).content,
+      "DB_PASSWORD=[MASKED]\nMYSQL_PWD=[MASKED]",
+    );
+    assert.strictEqual(
+      maskCredentials("ConnectionString=Server=x;Password=Hunter2;Database=y", LOOSE).content,
+      "ConnectionString=Server=x;Password=[MASKED];Database=y",
+    );
+  });
+
+  it("日本語のキーは語の数によらず秘密系として伏せる", () => {
+    assert.ok(!maskCredentials('{ "パスワード": "Hunter2" }', LOOSE).content.includes("Hunter2"));
+    assert.ok(!maskCredentials('{ "DB接続パスワード": "abc" }', LOOSE).content.includes("abc"));
+  });
 });
 
 describe("credentialMasker: VB の連結で続く秘密の値", () => {

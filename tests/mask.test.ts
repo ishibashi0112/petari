@@ -433,20 +433,96 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(buildFailureReport(p.failures)).not.toContain("Tok3nSecretValue");
   });
 
-  it("その行だけで伏せる行は写して足しても戻す (同じ行なので値が決まる)", () => {
+  it("キーがその行にある値の行も、写して足した回答は書かずに止める (セクションや分岐をまたいで同じ値を書かない)", () => {
     const packed = maskCredentials(config, { vbSource: false, strict: true }).content.split("\n");
     const p = planChangeSet(
       cs(replace("App.config", block(packed.slice(2, 3), [packed[2] as string, "    <!-- 予備 -->", packed[2] as string]))),
       states,
       NEW_FILE,
     );
-    expect(p.ok).toBe(true);
-    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe(
-      config.replace(
-        '    <add key="DbPassword" value="Hunter2Secret" />\n',
-        '    <add key="DbPassword" value="Hunter2Secret" />\n    <!-- 予備 -->\n    <add key="DbPassword" value="Hunter2Secret" />\n',
-      ),
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("masked-value");
+    expect(p.failures[0]?.message).toContain("元より多く");
+    const ini = "[prod]\nserver=prod\npassword=ProdSecret1\n";
+    const iniPacked = maskCredentials(ini, { vbSource: false, strict: true }).content.split("\n");
+    expect(iniPacked[2]).toBe("password=[MASKED]");
+    const q = planChangeSet(
+      cs(replace("app.ini", block(iniPacked.slice(0, 3), [...iniPacked.slice(0, 3), "[test]", "server=test", "password=[MASKED]"]))),
+      new Map([["app.ini", state(ini)]]),
+      NEW_FILE,
     );
+    expect(q.ok).toBe(false);
+    expect(q.failures[0]?.kind).toBe("masked-value");
+    const vb = ['If env = "prod" Then', '    pwd = "ProdSecret1"', "End If", ""].join("\n");
+    const vbPacked = maskCredentials(vb, { vbSource: true, strict: true }).content.split("\n");
+    const r = planChangeSet(
+      cs(
+        replace(
+          "M.vb",
+          block(vbPacked.slice(0, 3), [vbPacked[0] as string, vbPacked[1] as string, 'ElseIf env = "test" Then', vbPacked[1] as string, "End If"]),
+        ),
+      ),
+      new Map([["M.vb", state(vb)]]),
+      NEW_FILE,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.failures[0]?.kind).toBe("masked-value");
+    expect(buildFailureReport(r.failures)).not.toContain("ProdSecret1");
+  });
+
+  it("並べ替え・字下げの変更・まわりの行の編集は止めない (伏せ字の行の数が元と同じなら戻す)", () => {
+    const ini = "[prod]\nserver=prod\npassword=ProdSecret1\nuser=sa\n";
+    const packed = maskCredentials(ini, { vbSource: false, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      cs(replace("app.ini", block(packed.slice(0, 4), ["[prod]", "  " + (packed[3] as string), "  " + (packed[2] as string), "server=prod2"]))),
+      new Map([["app.ini", state(ini)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe("[prod]\n  user=sa\n  password=ProdSecret1\nserver=prod2\n");
+  });
+
+  it("複数行にまたがる値の一部の行は、戻せない理由と別の範囲で変更する案内を出す", () => {
+    const pem = ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEAx3k9vQ2p", "-----END RSA PRIVATE KEY-----"];
+    const src = ["Module M", ...pem.map((l) => "    ' " + l), "End Module", ""].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      { header: "x", files: [{ op: "rewrite", path: "M.vb", line: 1, content: ["' top", ...packed.slice(0, -1)] }] } as never,
+      new Map([["M.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.message).toContain("この行を含まない範囲");
+    expect(buildFailureReport(p.failures)).not.toContain("MIIEowIBAAKCAQEAx3k9vQ2p");
+  });
+
+  it("汎用テキストの伏せ方だけが複数行の値とみなす行も、VB の伏せ方で戻せるなら戻す", () => {
+    // 汎用テキストの伏せ方では 3 行目の password = " から 6 行目の " までが 1 つの値になり、合わせた表示の
+    // 6 行目は VB の表示と同じ文字列のまま「複数行の値の一部」になる
+    const src = [
+      "    Dim pwd As String = _",
+      "    ' def\"",
+      '    password = "abc',
+      "    ' <value>",
+      "    Dim pwd As String = _",
+      '    "c\';"',
+      "End Module",
+      "",
+    ].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    expect(packed[5]).toBe('    "[MASKED]"');
+    const states = new Map([["M.vb", state(src)]]);
+    const p = planChangeSet(cs(replace("M.vb", block(packed.slice(4, 6), [...packed.slice(4, 6), "    ' note"]))), states, NEW_FILE);
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("End Module", "    ' note\nEnd Module"));
+    // 適用済みの判定も同じ (古い SEARCH で、REPLACE がすでにある)
+    const q = planChangeSet(
+      cs(replace("M.vb", block(["    Dim pwdOld As String = _", '    "[MASKED]"'], packed.slice(4, 6)))),
+      states,
+      NEW_FILE,
+    );
+    expect(q.ok).toBe(true);
+    expect(q.outcomes[0]?.alreadyApplied).toBe(true);
   });
 
   it("行継続の続きの行を写して足した回答は書かずに止める", () => {
@@ -1079,7 +1155,8 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
       ["D.vb", { exists: false, symlink: false, bytes: null }],
     ]);
     const masked = cs(
-      replace("A.vb", block(['        Open("Data Source=db;Password=[MASKED]")'], ['        Open("Data Source=db;Password=[MASKED]")', "        Log()", '        Open("Data Source=db;Password=[MASKED]")'])),
+      // A.vb で同じ値の行が増える (実際の値を書いた行。伏せ字の行を写して増やす回答は copied で止まる)
+      replace("A.vb", block(['        Open("Data Source=db;Password=[MASKED]")'], ['        Open("Data Source=db;Password=[MASKED]")', "        Log()", line])),
       replace("C.vb", block(['        Open("Data Source=db;Password=[MASKED]")'], [])),
       change.files[2] as FileChange,
     );

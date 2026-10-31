@@ -69,7 +69,11 @@ const IDENT_BODY = `${IDENT_HEAD}0-9.\\uFF10-\\uFF19`;
  * (引用符は残す)
  */
 const CONNSTR_SECRET =
-  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|]|$)|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+
+/** 接続文字列のキーそのもの(行頭の Password=x;Server=y は接続文字列として扱う) */
+const CONNSTR_KEY_NAME =
+  /^(?:password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)$/i;
 
 /** 接続文字列の値を囲む引用符(長いものから) */
 const CONNSTR_QUOTES = ["&quot;", "&apos;", '\\"', '""', "'"];
@@ -77,7 +81,7 @@ const CONNSTR_QUOTES = ["&quot;", "&apos;", '\\"', '""', "'"];
 /** 接続文字列のユーザー系キー(User ID / UID など明確なもののみ)。
  *  値の先頭 : は SQL バインド変数(UID = :UID 等)のため対象外 */
 const CONNSTR_USER =
-  /\b(user\s*id|userid|username|uid)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /\b(user\s*id|userid|username|uid)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|]|$)|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /**
  * 日本語キー=値(設定ファイル・接続文字列・リテラル内)。
@@ -98,7 +102,7 @@ const JP_KEY_USER =
 const ATTR_SECRET =
   /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*[@$]{0,2}")([^"]+(?:""[^"]*)*)(")/gi;
 const ATTR_SECRET_SINGLE =
-  /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*')([^'\r\n]+)(')/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*')((?:[^'\\\r\n]|\\.)+)(')/gi;
 
 /**
  * XML の開始タグの属性の並び(引用符の中の > も含める)。長さに上限を設けるのは、閉じていないタグが
@@ -162,13 +166,19 @@ const USER_KEY_WORDS = new Set(["userid", "username", "uid", "user"]);
 /** コードでは別の意味でも使う語(字句解析の token、HTTP の credentials など) */
 const WEAK_KEY_WORDS = new Set(["token", "credential", "credentials"]);
 
+/** 秘密ではない値: 真偽値(SavePassword = True / RequireToken = "true" などの設定)と書式の差し込みだけの値 */
+function isNonSecretValue(value: string): boolean {
+  return /^(?:true|false)$/i.test(value.trim()) || isPlaceholderOnly(value);
+}
+
 /**
  * 書式の差し込み(%s / {} / {0} / {1,-8:D} / {:.2f} / ${x})だけでできた値('%s:%s' など)。秘密ではないため伏せない。
- * {...} は番号か書式指定だけのもの(ODBC の接続文字列は Pwd={...} の形で値を囲むため)
+ * {...} は番号か書式指定だけのもの(ODBC の接続文字列は Pwd={...} の形で値を囲むため)、${...} は名前だけのもの
+ * (${DB_PASSWORD:-既定値} の既定値は伏せる)
  */
 function isPlaceholderOnly(value: string): boolean {
   const PLACEHOLDER =
-    /%[-+ #0]*\d*(?:\.\d+)?[sdifxXr]|\{(?:\d+(?:,-?\d+)?(?::[^{}\r\n]*)?|:[^{}A-Za-z\r\n]*[A-Za-z%]?)?\}|\$\{[^{}\r\n]*\}/g;
+    /%[-+ #0]*\d*(?:\.\d+)?[sdifxXr]|\{(?:\d+(?:,-?\d+)?(?::[^{}\r\n]*)?|:[^{}A-Za-z\r\n]*[A-Za-z%]?)?\}|\$\{[A-Za-z_][A-Za-z0-9_.]*\}/g;
   return PLACEHOLDER.test(value) && !/[A-Za-z0-9]/.test(value.replace(PLACEHOLDER, ""));
 }
 
@@ -200,9 +210,13 @@ function isSecretPair(key: string, value: string, labels = true): boolean {
     value === "" ||
     value === MASK ||
     (labels && looksLikeLabel(key, value)) ||
-    isPlaceholderOnly(value)
+    isNonSecretValue(value)
   ) {
     return false;
+  }
+  // 日本語のキー(パスワード など)は別の意味を持たない
+  if (/(?:パスワード|ﾊﾟｽﾜｰﾄﾞ|暗証番号)$/.test(key)) {
+    return true;
   }
   const words = keyWords(key);
   const [, lastTwo] = lastKeyWords(key);
@@ -450,7 +464,7 @@ function maskConnstrText(
       );
       const inner = quote === undefined ? value : value.slice(quote.length, -quote.length);
       // 先に伏せた値(単一引用符の属性など)・書式の差し込みだけの値は伏せない
-      if (inner === MASK || isPlaceholderOnly(inner)) {
+      if (inner.trim() === MASK || isPlaceholderOnly(inner)) {
         return whole;
       }
       findings.push({ line: toLine(offset), kind });
@@ -622,7 +636,7 @@ function maskVbSource(
         // My.Settings の既定値(続くプロパティの名前で決める)
         if (kind === undefined && DEFAULT_SETTING_CALLEE.test(tail)) {
           const property = DEFAULT_SETTING_PROPERTY.exec(content.slice(j + 1, j + 400));
-          kind = property === null ? undefined : kindForConfigKey(property[1] ?? "");
+          kind = property === null || isNonSecretValue(inner) ? undefined : kindForConfigKey(property[1] ?? "");
         }
       }
       const continued =
@@ -720,17 +734,25 @@ function maskConfigAdds(
 ): string {
   return text.replace(CONFIG_ADD, (tag: string, offset: number) => {
     let key: string | undefined;
-    let hasValue = false;
+    let value: string | undefined;
     for (const attr of tag.matchAll(CONFIG_ATTR)) {
       const quoted = attr[3] ?? "";
       if (attr[1]?.toLowerCase() === "key") {
         key ??= quoted.slice(1, -1);
       } else if (quoted.slice(1, -1).trim() !== "") {
-        hasValue = true;
+        value ??= quoted.slice(1, -1).trim();
       }
     }
     const kind = key === undefined ? undefined : kindForConfigKey(key);
-    if (kind === undefined || !hasValue) {
+    // 真偽値・差し込みだけの値と、token などの別の意味でも使う語のキーの秘密らしくない値は伏せない
+    // (空白を含む値はパスフレーズのことがあるため、表示の文言の例外は使わない)
+    if (
+      kind === undefined ||
+      value === undefined ||
+      value === MASK ||
+      isNonSecretValue(value) ||
+      (kind === KIND_PASSWORD && !isSecretPair(key ?? "", value, false))
+    ) {
       return tag;
     }
     findings.push({ line: toLine(offset), kind });
@@ -774,11 +796,16 @@ function maskGenericText(
       const name = found === null ? undefined : (found[1] ?? found[2]);
       const kind = name === undefined ? undefined : kindForConfigKey(name);
       const shown = maskElementText(value);
+      // リソース(.resx)は表示の文言が多いため、文言らしい値も伏せない
       const resource = /^<data\b/i.test(open);
+      const cdata = /^<!\[CDATA\[([\s\S]*)\]\]>$/.exec(value);
+      const inner = (cdata === null ? value : (cdata[1] ?? "")).trim();
       if (
         kind === undefined ||
         shown === undefined ||
-        (resource && kind === KIND_PASSWORD && !isSecretPair(name ?? "", value.trim()))
+        isNonSecretValue(inner) ||
+        (kind === KIND_PASSWORD && !isSecretPair(name ?? "", inner, resource)) ||
+        (resource && looksLikeLabel(name ?? "", inner))
       ) {
         return whole;
       }
@@ -808,14 +835,17 @@ function maskGenericText(
     const quote = value.charAt(0);
     const quoted = value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote);
     const inner = quoted ? value.slice(1, -1) : value;
+    // 接続文字列の形の値(Password=x;Server=y / ConnectionString=Server=x;Password=y)は接続文字列として
+    // ; まで伏せる。値の先頭がキーでない(DB_PASSWORD=Hunter2;Server=x)なら、先頭で判定して全体を伏せる
+    const listed = !quoted && /;\s*[A-Za-z][A-Za-z0-9 _.-]*=/.test(inner);
+    const head = listed ? (inner.split(";")[0] ?? "").trim() : inner;
     if (
       kind === undefined ||
       inner === "" ||
       inner === MASK ||
-      (!quoted && /;\s*[A-Za-z][A-Za-z0-9 _.-]*=/.test(inner)) ||
-      (kind === KIND_PASSWORD ? !isSecretPair(key, inner) : isPlaceholderOnly(inner))
+      (listed && (head.includes("=") || CONNSTR_KEY_NAME.test(key))) ||
+      (kind === KIND_PASSWORD ? !isSecretPair(key, head) : isPlaceholderOnly(head))
     ) {
-      // 接続文字列の形の値(Password=x;Server=y)は接続文字列として ; まで伏せる
       return whole;
     }
     findings.push({ line: lineOf(result, offset), kind });
@@ -860,9 +890,10 @@ function maskGenericText(
   // キーと文字列の値("password": "..." / dbPassword = "..." / { apiKey: '...' })
   result = result.replace(KEY_LITERAL, (whole, key: string, sep: string, literal: string, offset: number) => {
     const name = /^["']/.test(key) ? key.slice(1, -1) : key;
-    // : はオブジェクト・辞書・行頭のキーだけ(三項演算子の cond ? "password" : "text" を除く)
+    // : はオブジェクト・辞書・行頭(コメントの次の行・YAML も)のキーだけ(三項演算子の cond ? "password" : "text" を除く)
     const before = result.slice(Math.max(0, offset - 200), offset);
-    if (sep.includes(":") && !/(?:^|[{,[(])\s*$/.test(before)) {
+    const lineStart = /[{,[(\n][ \t]*$/.test(before) || (offset <= 200 && /^[ \t]*$/.test(before));
+    if (sep.includes(":") && !lineStart) {
       return whole;
     }
     if (!isSecretPair(name, literal.slice(1, -1))) {
@@ -1019,11 +1050,6 @@ export interface MaskedLine {
    * これらの行は 1 行にまとめて表示されるため、AI が写した SEARCH とは本来一致しない
    */
   wrapped: boolean;
-  /**
-   * 伏せた値のキーがその行にない行 (キーが別の行にある `<value>...</value>`・行継続の続きの行・キーによらない
-   * 形で伏せた値の行など)。この行を写して足すと別のキーに同じ値を書き得る (petari の伏せ字の復元が使う)
-   */
-  contextual?: boolean;
 }
 
 /**
@@ -1172,42 +1198,7 @@ export function maskedViews(lines: string[], path: string): MaskedLine[][] {
     const group = spansByMode.filter((_, k) => stricts.includes(modes[k]?.strict ?? true));
     if (group.every((spans) => spans !== null)) add(mergeSpans(group.flatMap((spans) => spans ?? [])));
   }
-  // 伏せた値のキーがその行にない行に印を付ける (同じ文字列の行はまとめて判定する)
-  const keyedCache = new Map<string, Set<string> | null>();
-  for (let i = 0; i < lines.length; i++) {
-    if (!views.some((view) => view[i]?.values?.some((value) => value !== MASK) === true)) continue;
-    const line = lines[i] ?? "";
-    let keyed = keyedCache.get(line);
-    if (keyed === undefined) {
-      keyed = keyedValuesOf(line, path);
-      keyedCache.set(line, keyed);
-    }
-    for (const view of views) {
-      const v = view[i];
-      if (v === undefined || !hasMaskToken(v.text)) continue;
-      const contextual =
-        v.values === null || v.values.some((value) => value !== MASK && (keyed === null || !keyed.has(value)));
-      if (contextual) view[i] = { ...v, contextual: true };
-    }
-  }
   return views;
-}
-
-/**
- * 1 行だけを、キーと名前による伏せ方 (strict なし) で伏せたときに伏せる値。その行にキーがある値
- * (`<add key="DbPassword" value="..." />`・`pwd = "..."`・接続文字列の `Password=...`)。キーによらない形
- * (トークンの形・秘密鍵・高エントロピー値) で伏せたものがあれば null (キーが別の行にあるかもしれない)
- */
-function keyedValuesOf(line: string, path: string): Set<string> | null {
-  const keyed = new Set<string>();
-  for (const mode of maskModes(path, [false])) {
-    const result = maskCredentials(line, mode);
-    if (result.findings.some((f) => f.kind !== KIND_PASSWORD && f.kind !== KIND_USER)) return null;
-    const spans = maskedSpans(line, mode);
-    if (spans === null) return null;
-    for (const span of spans) keyed.add(line.slice(span.start, span.end));
-  }
-  return keyed;
 }
 
 /**
@@ -1239,7 +1230,7 @@ function fillMaskTokens(line: string, values: string[]): string {
 
 export interface MaskRestoreFailure {
   line: string;
-  reason: "no-source" | "ambiguous" | "copied";
+  reason: "no-source" | "ambiguous" | "copied" | "unseparable";
 }
 
 export type MaskRestoreResult =
@@ -1268,9 +1259,10 @@ export type MaskRestoreResult =
  * 戻すのは、元のファイルの [from, to) にある伏せた行と (前後の空白を除いて) 同じ文字列の行だけ
  * (伏せ字の行をそのまま残した場合)。伏せ字の行を書き換えた・新しく足した行は、値の取り違えや
  * コメントへの書き出しを避けるため戻さない (no-source)。同じ文字列の行が複数あって値が 1 通りに
- * 決まらなければ ambiguous。その行だけでは伏せない行 (キーが別の行にある `<value>[MASKED]</value>`・
- * 行継続の続きの行など。MaskedLine.contextual) を元の範囲より多く書くなら、写して足した行があり
- * どれが元の行か決まらないため copied (別のキーに同じ値を書かないように)。literal のときは no-source の行を [MASKED] の文字のまま書く
+ * 決まらなければ ambiguous。複数行にまたがる値の一部・1 つに伏せた複数の値の行は戻せない (unseparable)。
+ * 実際の値を伏せた行を元の範囲より多く書くなら、写して足した行がありどれが元の行か決まらないため copied
+ * (キーが別の行にある `<value>[MASKED]</value>`・INI のセクションや If の分岐の中の `pwd = [MASKED]` を写すと、
+ * 別のキー・別の場所に同じ値を書くことになるため)。literal のときは no-source の行を [MASKED] の文字のまま書く
  * (伏せ字を扱うコードそのものを書く場合の明示の指定)。ただし範囲に実際の値を伏せた行があるときは
  * literal を使わない (伏せ字の行を書き換えた回答で、実際の値を [MASKED] の文字で上書きしないため)
  */
@@ -1281,7 +1273,7 @@ export function restoreMaskedLines(
   options: { literal?: boolean } = {},
 ): MaskRestoreResult {
   // 範囲の伏せた行を、前後の空白を除いた表示ごとにまとめる (元の値の組の重複は除く)
-  type Candidate = { values: string[] | null; source: number; sources: Set<number>; contextual: boolean };
+  type Candidate = { values: string[] | null; source: number; sources: Set<number> };
   const index = new Map<string, Map<string, Candidate>>();
   // 範囲にある同じ表示の行の数 (伏せ方ごとに数えて多いほう)
   const sourceCount = new Map<string, number>();
@@ -1299,10 +1291,9 @@ export function restoreMaskedLines(
       const valuesKey = JSON.stringify(v.values);
       const known = candidates.get(valuesKey);
       if (known === undefined) {
-        candidates.set(valuesKey, { values: v.values, source: i, sources: new Set([i]), contextual: v.contextual === true });
+        candidates.set(valuesKey, { values: v.values, source: i, sources: new Set([i]) });
       } else {
         known.sources.add(i);
-        if (v.contextual === true) known.contextual = true;
       }
       index.set(key, candidates);
     }
@@ -1339,6 +1330,10 @@ export function restoreMaskedLines(
       continue;
     }
     const only = candidates[0];
+    if (candidates.length === 1 && only !== undefined && only.values === null) {
+      failures.push({ line, reason: "unseparable" });
+      continue;
+    }
     if (
       candidates.length > 1 ||
       only === undefined ||
@@ -1348,9 +1343,9 @@ export function restoreMaskedLines(
       failures.push({ line, reason: "ambiguous" });
       continue;
     }
-    // その行だけでは伏せない行を元より多く書くなら、写して足した行がある (別のキーに同じ値を書き得る)
+    // 実際の値を伏せた行を元より多く書くなら、写して足した行がある (別のキー・別の場所に同じ値を書き得る)
     const real = only.values.some((value) => value !== MASK);
-    if (real && only.contextual && (written.get(line.trim()) ?? 0) > (sourceCount.get(line.trim()) ?? 0)) {
+    if (real && (written.get(line.trim()) ?? 0) > (sourceCount.get(line.trim()) ?? 0)) {
       failures.push({ line, reason: "copied" });
       continue;
     }
