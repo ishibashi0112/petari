@@ -140,11 +140,14 @@ const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
 /**
  * 前の 2 つが伏せ字で、残りが短い(20 文字未満)並び。高エントロピーのサブドメインを伏せたホスト名
  * (`[MASKED].[MASKED].database.windows.net` など)で、トークンの残りではない。JWT の署名は 43 文字以上
- * あるため、伏せ損ねて残るのは長い並び(それは伏せる)
+ * あるため、伏せ損ねて残るのは長い並び(それは伏せる)。ただし文字列の連結(`" & _` / `" +`)や
+ * 伏せ字が続くときは、署名が途中で切れている(続きがある)ので伏せる
  */
-function isShortTail(whole: string): boolean {
+function isShortTail(whole: string, offset: number, all: string): boolean {
   const head = `${MASK}.${MASK}.`;
-  return whole.startsWith(head) && whole.length - head.length < 20;
+  if (!whole.startsWith(head) || whole.length - head.length >= 20) return false;
+  const after = all.slice(offset + whole.length, offset + whole.length + 40);
+  return !/^(?:"\s*[&+]|\.\[MASKED\])/.test(after);
 }
 
 /** 伏せ字を含み、伏せていない英数字も残っているか */
@@ -522,8 +525,8 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
   );
   // 一部だけ伏せたトークンの残り(伏せ字がなければ探さない)
   if (result.includes(MASK)) {
-    result = result.replace(PARTIAL_JWT, (whole: string) =>
-      isPartlyMasked(whole) && !isShortTail(whole) ? MASK : whole,
+    result = result.replace(PARTIAL_JWT, (whole: string, offset: number, all: string) =>
+      isPartlyMasked(whole) && !isShortTail(whole, offset, all) ? MASK : whole,
     );
     result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
       isPartlyMasked(token) ? `${prefix}${MASK}` : whole,

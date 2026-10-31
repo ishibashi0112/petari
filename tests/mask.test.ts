@@ -981,8 +981,8 @@ describe("applier: 複数行の値・空行の差", () => {
     ].join("\n");
     const states = new Map([["s.yaml", state(src)]]);
     for (const [search, named] of [
-      [["  host: example", "  port: 80"], "- 4〜5 行目: 複数行にまたがる値"],
-      // SEARCH に対応づけた END の行は、写しても伏せ字が入らないので名指ししない
+      // END の行は (文脈でも SEARCH に対応づけた行でも) 写しても伏せ字が入らないので名指ししない
+      [["  host: example", "  port: 80"], "- 4 行目: 複数行にまたがる値"],
       [["    -----END RSA PRIVATE KEY-----", "  host: example", "  port: 80"], "- 4 行目: 複数行にまたがる値"],
     ] as const) {
       const p = planChangeSet(cs(replace("s.yaml", block([...search], ["x"]))), states, NEW_FILE);
@@ -990,12 +990,36 @@ describe("applier: 複数行の値・空行の差", () => {
       expect(report).toContain("修正のヒント");
       // 前後の文脈にある鍵の範囲の行は名指しし、写すのは記号の付いた行だけと明記する
       expect(report).toContain(named);
+      expect(report).not.toContain("4〜5 行目");
       expect(report).toContain("記号のない前後の文脈の行は含めません");
       expect(report).not.toContain("MIIEow");
     }
     // ヒントどおりに写せば一致する
     const copy = ["    -----END RSA PRIVATE KEY-----", "  host: example", "  timeout: 30", "  port: 80"];
     expect(planChangeSet(cs(replace("s.yaml", block(copy, [...copy.slice(0, 3), "  port: 8080"]))), states, NEW_FILE).ok).toBe(true);
+  });
+
+  it("文脈の END の行は名指ししない (一意に特定するのに使える)", () => {
+    const src = [
+      "svc1:",
+      "  key: |",
+      "    -----BEGIN RSA PRIVATE KEY-----",
+      "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "    -----END RSA PRIVATE KEY-----",
+      "  host: example",
+      "  port: 80",
+      "svc2:",
+      "  host: example",
+      "  port: 80",
+      "",
+    ].join("\n");
+    const states = new Map([["s.yaml", state(src)]]);
+    const p = planChangeSet(cs(replace("s.yaml", block(["  host: example", "  timeout: 5", "  port: 80"], ["x"]))), states, NEW_FILE);
+    const report = buildFailureReport(p.failures);
+    expect(report).toContain("- 4 行目: 複数行にまたがる値");
+    expect(report).not.toContain("4〜5 行目");
+    const anchored = ["    -----END RSA PRIVATE KEY-----", "  host: example", "  port: 80"];
+    expect(planChangeSet(cs(replace("s.yaml", block(anchored, [...anchored.slice(0, 2), "  port: 8080"]))), states, NEW_FILE).ok).toBe(true);
   });
 
   it("前後の文脈にある鍵の本文の行も名指しする (その前の行で特定しようとして同じ失敗を繰り返さない)", () => {

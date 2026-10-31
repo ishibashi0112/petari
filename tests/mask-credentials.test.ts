@@ -335,6 +335,11 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
       maskCredentials("Server=tcp:Xk3pQ9vLm2Rt7sWz8Yb4.Hq5nJ8cV1xKz6Tg3Lp0W.internal,1433;", { ...GENERIC, strict: true }).content,
       "Server=tcp:[MASKED].[MASKED].internal,1433;",
     );
+    // 署名が文字列の連結で途中で切れているときは、短い残りも伏せる
+    assert.strictEqual(
+      maskCredentials('t = "[MASKED].[MASKED].abcdefghijklmno" & _', GENERIC).content,
+      't = "[MASKED]" & _',
+    );
     // 残りが署名のように長ければは (URL の末尾の拡張子が続いても) 伏せる
     assert.strictEqual(
       maskCredentials("cb/[MASKED].[MASKED].aaaaaaaaaabbbbbbbbbbcccccccccc.json", GENERIC).content,

@@ -189,16 +189,15 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
 type BlockMatch = ReturnType<typeof matchBlock>;
 
 /**
- * 抜粋の行のうち、複数行にまたがる値を伏せた範囲にかかる行に印を付ける。前後の文脈の行は常に
- * (そこまで写すと伏せた本文の行が入り、伏せた表示で照合することになるため)、SEARCH に対応づけた行は
- * その行を写した SEARCH に伏せ字が入るときだけ (伏せ字のない SEARCH は実ファイルで照合するため、
- * その行を含めても一致する)
+ * 抜粋の行のうち、写すと一致しない「複数行にまたがる値を伏せた範囲にかかる行」に印を付ける。
+ * 伏せ字のない SEARCH は実ファイルで照合するため、その範囲の行を含めても一致する。一致しないのは、
+ * SEARCH に伏せ字が入るとき (SEARCH に対応づけた行に伏せ字があるか、その行自体が伏せ字を含む) だけ
  */
 function markWrapped(a: NearestAnalysis, isWrapped: (lineNo: number) => boolean): NearestAnalysis {
-  if (a.window === null) return a;
+  if (a.window === null || !a.window.lines.some((l) => hasMaskToken(l.text))) return a;
   const alignedMasked = a.window.lines.some((l) => l.verdict !== null && hasMaskToken(l.text));
   const lines = a.window.lines.map((l) =>
-    (l.verdict === null || alignedMasked) && isWrapped(l.lineNo) ? { ...l, wrapped: true } : l,
+    (alignedMasked || hasMaskToken(l.text)) && isWrapped(l.lineNo) ? { ...l, wrapped: true } : l,
   );
   return { ...a, window: { ...a.window, lines } };
 }
