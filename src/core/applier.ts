@@ -174,7 +174,11 @@ export interface PlanOptions {
 function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }): string {
   const shown = r.failures.slice(0, 5).map((f) => {
     const what =
-      f.reason === "ambiguous" ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません" : "伏せる前の同じ行が見つかりません";
+      f.reason === "ambiguous"
+        ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません"
+        : f.reason === "copied"
+          ? "伏せ字を含む同じ行が元より多く、どれが元の行か決まりません"
+          : "伏せる前の同じ行が見つかりません";
     return `「${f.line.trim()}」(${what})`;
   });
   const more = r.failures.length > 5 ? ` 他 ${r.failures.length - 5} 行` : "";

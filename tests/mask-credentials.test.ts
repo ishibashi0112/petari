@@ -180,8 +180,60 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       ["DB_PASSWORD=[MASKED]", "export SECRET_TOKEN=[MASKED]", "COMPASS=north", "BYPASS=1", "MY_UID=[MASKED]"].join("\n"),
     );
     assert.strictEqual(
-      maskCredentials("DB_PASSWORD = 'Hunter2'\nname = 'it''s'\nprint('pass=' + x)", LOOSE).content,
-      "DB_PASSWORD = '[MASKED]'\nname = 'it''s'\nprint('pass=' + x)",
+      maskCredentials("DB_PASSWORD = 'Hunter2'\nname = 'it''s'", LOOSE).content,
+      "DB_PASSWORD = '[MASKED]'\nname = 'it''s'",
+    );
+    // 接続文字列の単一引用符の値('' は ' のエスケープ。閉じていなければ区切りまで)
+    assert.strictEqual(
+      maskCredentials("Server=srv;Password='ab''cd;ef';Database=x\nUser ID='sa\nPwd='Hunter2", LOOSE).content,
+      "Server=srv;Password='[MASKED]';Database=x\nUser ID=[MASKED]\nPwd=[MASKED]",
+    );
+  });
+
+  it("キー名の一部に秘密系の語を含むだけのもの・コード・表示の文言は伏せない", () => {
+    const json = [
+      '{ "jsonwebtoken": "^9.0.2", "passport": "^0.7.0",',
+      '  "login.passwordPlaceholder": "8 chars", "errors.tokenExpired": "expired",',
+      '  "password": "パスワード", "Password": "Password" }',
+    ].join("\n");
+    assert.strictEqual(maskCredentials(json, LOOSE).content, json);
+    const code = ["this._token = token;", "const next_token = this.refresh(token)", "first_pass = True"].join("\n");
+    assert.strictEqual(maskCredentials(code, LOOSE).content, code);
+    const config = '<add key="BypassProxy" value="true" />\n<add key="PasswordMinLength" value="8" />';
+    assert.strictEqual(maskCredentials(config, LOOSE).content, config);
+    // 字句解析の token・HTTP の credentials・書式だけの値・字下げした引数
+    const lexer = [
+      '{ token: "keyword", defaultToken: "invalid", "token": "token#module-token" }',
+      '{cases:{"@keywords":{token:"keyword.$0"},"@reserved":{token:"constant.reserved.$0"}}}',
+      'if(u===" ")this.whitespace_before_token=" ";this.next_token="ident";',
+      "const mode: RequestCredentials = 'omit';",
+      "    user_pass = '%s:%s' % (user, passwd)",
+      "    credentials = '{0}:{1}'.format(a, b)",
+      "    def f(self, credentials=None, secure=None):",
+      "        login(user='klem', debug=None,",
+    ].join("\n");
+    assert.strictEqual(maskCredentials(lexer, LOOSE).content, lexer);
+  });
+
+  it("C# の逐語的・補間文字列の値も伏せる", () => {
+    assert.strictEqual(
+      maskCredentials('var pwd = @"Zq9\\Secret";\nvar password = $"Zq9{x}";\nvar uid = @"sa";', LOOSE).content,
+      'var pwd = @"[MASKED]";\nvar password = $"[MASKED]";\nvar uid = @"[MASKED]";',
+    );
+  });
+
+  it("token / credentials は値が秘密らしいとき・キーに別の秘密系の語があるときだけ伏せる", () => {
+    assert.strictEqual(
+      maskCredentials('{ "token": "ghp_9fK2aQ7xZ1", "authToken": "a1b2c3d4e5", "secretToken": "x" }', LOOSE).content,
+      '{ "token": "[MASKED]", "authToken": "[MASKED]", "secretToken": "[MASKED]" }',
+    );
+    assert.strictEqual(
+      maskCredentials("GITHUB_TOKEN=ghp_9fK2aQ7xZ1\nTOKEN_TYPE=bearer\nAUTH_TOKEN=short", LOOSE).content,
+      "GITHUB_TOKEN=[MASKED]\nTOKEN_TYPE=bearer\nAUTH_TOKEN=short",
+    );
+    assert.strictEqual(
+      maskCredentials('this.db_password = "x"; cfg.access_token = "a1b2c3d4e5f6"; this.username = "sa";', LOOSE).content,
+      'this.db_password = "[MASKED]"; cfg.access_token = "[MASKED]"; this.username = "[MASKED]";',
     );
   });
 
@@ -204,6 +256,8 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
       'pwd = "abc" & vbCrLf & "def" + "ghi"',
       "apiKey = \"part1\" _",
       '    & "part2"',
+      'pwd = "abc" & _ \' 続き',
+      '    "def"',
     ].join("\n");
     assert.strictEqual(
       maskCredentials(vb, LOOSE_VB).content,
@@ -213,6 +267,8 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
         'pwd = "[MASKED]" & vbCrLf & "[MASKED]" + "[MASKED]"',
         'apiKey = "[MASKED]" _',
         '    & "[MASKED]"',
+        'pwd = "[MASKED]" & _ \' 続き',
+        '    "[MASKED]"',
       ].join("\n"),
     );
   });
@@ -228,6 +284,30 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
     assert.strictEqual(
       maskCredentials(vb, LOOSE_VB).content,
       ['pwd = "[MASKED]" & userName & "def"', 'pwd = "[MASKED]"', 'title = "Sales"', 'msg = "Hello" & _', '    "World"'].join("\n"),
+    );
+  });
+
+  it("接続文字列の値がリテラルをまたいで続くときは続きの先頭も伏せる", () => {
+    const vb = [
+      'cs = "Server=x;Password=Hun" & "ter2Secret;Database=y"',
+      'cs = "Server=x;Password=" & "Hun" & _',
+      '    "ter2;Database=y"',
+      'cs = "Server=x;Password=" & ";Database=y"',
+    ].join("\n");
+    assert.strictEqual(
+      maskCredentials(vb, LOOSE_VB).content,
+      [
+        'cs = "Server=x;Password=[MASKED]" & "[MASKED];Database=y"',
+        'cs = "Server=x;Password=" & "[MASKED]" & _',
+        '    "[MASKED];Database=y"',
+        'cs = "Server=x;Password=" & ";Database=y"',
+      ].join("\n"),
+    );
+    // SQL の条件は続きとみなさない(; の後のキーでない)
+    const sql = ['sql = "SELECT * FROM t WHERE pwd=1" & " AND a=2"', 'sql = "WHERE pwd=" & "\'x\'" & " AND a=2"'].join("\n");
+    assert.strictEqual(
+      maskCredentials(sql, LOOSE_VB).content,
+      ['sql = "SELECT * FROM t WHERE pwd=[MASKED]" & " AND a=2"', 'sql = "WHERE pwd=" & "[MASKED]" & " AND a=2"'].join("\n"),
     );
   });
 });

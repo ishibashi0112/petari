@@ -408,6 +408,82 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(report).not.toContain("Hunter2Secret");
     expect(report).not.toContain("Tok3nSecretValue");
   });
+
+  it("キーが別の行にある値の行を写して足した回答は書かずに止める (別のキーに同じ値を書かない)", () => {
+    const packed = maskCredentials(config, { vbSource: false, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      cs(
+        replace(
+          "App.config",
+          block(packed.slice(6, 9), [
+            ...packed.slice(6, 9),
+            '    <setting name="BackupToken" serializeAs="String">',
+            "      <value>[MASKED]</value>",
+            "    </setting>",
+          ]),
+        ),
+      ),
+      states,
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("masked-value");
+    expect(p.failures[0]?.message).toContain("<value>[MASKED]</value>");
+    expect(p.failures[0]?.message).toContain("元より多く");
+    expect(buildFailureReport(p.failures)).not.toContain("Tok3nSecretValue");
+  });
+
+  it("その行だけで伏せる行は写して足しても戻す (同じ行なので値が決まる)", () => {
+    const packed = maskCredentials(config, { vbSource: false, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      cs(replace("App.config", block(packed.slice(2, 3), [packed[2] as string, "    <!-- 予備 -->", packed[2] as string]))),
+      states,
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe(
+      config.replace(
+        '    <add key="DbPassword" value="Hunter2Secret" />\n',
+        '    <add key="DbPassword" value="Hunter2Secret" />\n    <!-- 予備 -->\n    <add key="DbPassword" value="Hunter2Secret" />\n',
+      ),
+    );
+  });
+
+  it("行継続の続きの行を写して足した回答は書かずに止める", () => {
+    const src = ['Dim pwd As String = _', '    "Hunter2Secret"', "Dim other As String = Nothing", ""].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    expect(packed[1]).toBe('    "[MASKED]"');
+    const p = planChangeSet(
+      cs(
+        replace(
+          "Db.vb",
+          block([packed[0] as string, packed[1] as string, packed[2] as string], [
+            packed[0] as string,
+            packed[1] as string,
+            "Dim other As String = _",
+            packed[1] as string,
+          ]),
+        ),
+      ),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("masked-value");
+    expect(p.failures[0]?.message).toContain("元より多く");
+  });
+
+  it("キーが別の行にある値の行もそのまま残すなら元の値に戻す", () => {
+    const src = ['Dim pwd As String = _', '    "Hunter2Secret"', "Dim other As String = Nothing", ""].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      cs(replace("Db.vb", block(packed.slice(0, 3), [packed[0] as string, packed[1] as string, 'Dim other As String = ""']))),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("= Nothing", '= ""'));
+  });
 });
 
 describe("applier: 伏せ字で値を取り違えない・ファイルを壊さない", () => {
