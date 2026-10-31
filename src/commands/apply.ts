@@ -296,7 +296,9 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       !planChangeSet(changeSet, states, resolveNewFile, { literalMasked: true }).failures.some(
         (f) => f.kind === "masked-value",
       );
-    if (values["literal-masked"] !== true && masked.some((f) => f.literalAllowed === true) && literalWorks()) {
+    // petari watch は --literal-masked を受け付けないため案内しない
+    const canSpecify = detected === undefined && values["literal-masked"] !== true;
+    if (canSpecify && masked.some((f) => f.literalAllowed === true) && literalWorks()) {
       err(
         "注: [MASKED] という文字そのものを書く変更 (伏せ字を扱うコード) なら、--literal-masked を付けると" +
           "そのまま書き込めます。実際の値を伏せた行には使わないでください\n",

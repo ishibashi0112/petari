@@ -858,6 +858,43 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     expect(written).toContain('"Hunter2Secret"');
   });
 
+  it("読めないファイル (UTF-16) を消す変更と一緒なら使わない", () => {
+    const utf16 = new Uint8Array([0xff, 0xfe, ...[..."password=Hunter2\n"].flatMap((c) => [c.charCodeAt(0), 0])]);
+    const change = cs(
+      { op: "delete", path: "old.config", line: 1 },
+      { op: "create", path: "new.config", line: 1, content: ["password=[MASKED]"] },
+    );
+    const states = new Map<string, FileState>([
+      ["old.config", { exists: true, symlink: false, bytes: utf16 }],
+      ["new.config", { exists: false, symlink: false, bytes: null }],
+    ]);
+    const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.literalRefused).toBe(true);
+  });
+
+  it("別のファイルで同じ値の行を増やしても、消えた値の埋め合わせにしない", () => {
+    const line = '        Open("Data Source=db;Password=P@ss1")';
+    const change = cs(
+      replace("A.vb", block([line], [line, "        Log()", line])),
+      replace("C.vb", block([line], [])),
+      { op: "create", path: "D.vb", line: 1, content: ['        Open("Data Source=db;Password=[MASKED]")'] },
+    );
+    const states = new Map<string, FileState>([
+      ["A.vb", state(`Module A\n${line}\nEnd Module\n`)],
+      ["C.vb", state(`Module C\n${line}\nEnd Module\n`)],
+      ["D.vb", { exists: false, symlink: false, bytes: null }],
+    ]);
+    const masked = cs(
+      replace("A.vb", block(['        Open("Data Source=db;Password=[MASKED]")'], ['        Open("Data Source=db;Password=[MASKED]")', "        Log()", '        Open("Data Source=db;Password=[MASKED]")'])),
+      replace("C.vb", block(['        Open("Data Source=db;Password=[MASKED]")'], [])),
+      change.files[2] as FileChange,
+    );
+    const p = planChangeSet(masked, states, NEW_FILE, { literalMasked: true });
+    expect(p.ok).toBe(false);
+    expect(p.failures.map((f) => [f.path, f.literalRefused])).toEqual([["D.vb", true]]);
+  });
+
   it("伏せた値が消えない変更なら、ほかのファイルに伏せ字があっても使う", () => {
     const change = cs(
       replace("Db.vb", block(["End Module"], ["    Sub A()", "    End Sub", "End Module"])),
@@ -870,6 +907,37 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
     expect(p.ok).toBe(true);
     expect(text(p.outcomes[1]?.afterBytes ?? null)).toContain('"[MASKED]"');
+  });
+});
+
+describe("applier: 複数行の値・空行の差", () => {
+  it("複数行にまたがる値を伏せた行を SEARCH に含めて失敗したら、その行を名指しする", () => {
+    const src = ["<configuration>", '  <add key="Mail" password="Hunter2', '     Secret99" />', '  <add key="x" value="1" />', "</configuration>", ""].join("\n");
+    const p = planChangeSet(
+      cs(
+        replace(
+          "app.config",
+          block(['  <add key="Mail" password="[MASKED]', '     [MASKED]" />', '  <add key="x" value="1" />'], ['  <add key="x" value="2" />']),
+        ),
+      ),
+      new Map([["app.config", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.failures[0]?.message).toContain("抜粋の 2〜3 行目は複数行にまたがる値");
+    const report = buildFailureReport(p.failures);
+    expect(report).not.toContain("Hunter2");
+    expect(report).not.toContain("Secret99");
+  });
+
+  it("伏せ字を含む REPLACE が空行の差だけで見つかっても「適用済み」にしない", () => {
+    const src = ["Sub A()", '    pwd = "Hunter2Secret"', "    Open(pwd)", "End Sub", ""].join("\n");
+    const p = planChangeSet(
+      cs(replace("a.vb", block(['    pwd = "[MASKED]"', "    Opn(pwd)"], ['    pwd = "[MASKED]"', "", "    Open(pwd)"]))),
+      new Map([["a.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("block-not-found");
   });
 });
 

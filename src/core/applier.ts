@@ -188,6 +188,19 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
 
 type BlockMatch = ReturnType<typeof matchBlock>;
 
+/** 行番号の一覧を「3〜5, 9」の形にする */
+function formatLineRanges(lineNos: number[]): string {
+  const sorted = [...new Set(lineNos)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === (sorted[j] ?? 0) + 1) j++;
+    parts.push(i === j ? `${sorted[i]}` : `${sorted[i]}〜${sorted[j]}`);
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
 /**
  * 伏せた表示ごとに照合する (SEARCH の [MASKED] は slnmix のパックから写した行)。
  * どれかの表示で複数一致する・表示によって一致する位置が違うときは ambiguous
@@ -325,7 +338,8 @@ function planReplace(
         // 当たった変更を「済み」にしない)
         const byViews = (): PresenceStage | null => {
           const r = matchOnViews(views(), { ...block, search: block.replace });
-          if (r?.ok !== true) return null;
+          // 空行の差だけを吸収した一致は「済み」にしない (伏せ字のない REPLACE の判定と同じ)
+          if (r?.ok !== true || r.stage === "blank-insensitive") return null;
           const distinct = block.replace.filter(hasMaskToken).every((l) => valueSetsOf(l.trim()) <= 1);
           return distinct ? r.stage : null;
         };
@@ -369,10 +383,21 @@ function planReplace(
           nearestReplace = byReplace;
         }
       }
+      // 複数行にまたがる値を伏せた行は、SEARCH に含めると一致しない (パックでは 1 行にまとめて見えるため、
+      // 一致に含めない)。抜粋をそのまま写して同じ失敗を繰り返さないよう、その行を名指しする
+      const wrappedLines = [nearest, nearestReplace].flatMap((a) =>
+        (a?.window?.lines ?? [])
+          .map((l) => l.lineNo)
+          .filter((n) => views().some((view) => view[n - 1]?.wrapped === true)),
+      );
       failures.push({
         path: change.path,
         kind: "block-not-found",
-        message,
+        message:
+          wrappedLines.length > 0
+            ? `${message}。抜粋の ${formatLineRanges(wrappedLines)} 行目は複数行にまたがる値 (秘密鍵の本文など) を伏せた行で、` +
+              "SEARCH に含めると一致しません。その前後の行だけで一意に特定できる範囲にしてください"
+            : message,
         block,
         nearest,
         ...(nearestReplace !== undefined ? { nearestReplace } : {}),
@@ -671,9 +696,6 @@ function writesLiteralMask(plan: Plan): boolean {
  * 複数行にまたがる値は行ごと) を数えて比べる。伏せ方を対応づけられないファイルがあれば、減るものとして扱う
  */
 function losesMaskedValue(changeSet: ChangeSet, states: Map<string, FileState>, plan: Plan): boolean {
-  const add = (total: Map<string, number>, counts: Map<string, number>): void => {
-    for (const [value, n] of counts) total.set(value, (total.get(value) ?? 0) + n);
-  };
   const linesOf = (bytes: Uint8Array): string[] | null => {
     try {
       return decodeFile(bytes).lines.map((l) => l.text);
@@ -681,34 +703,30 @@ function losesMaskedValue(changeSet: ChangeSet, states: Map<string, FileState>, 
       return null;
     }
   };
-  const before = new Map<string, number>();
-  const seen = new Set<string>();
-  for (const change of changeSet.files) {
-    const state = states.get(change.path);
-    if (state === undefined || !state.exists || state.bytes === null || seen.has(change.path)) continue;
-    seen.add(change.path);
-    const lines = linesOf(state.bytes);
-    if (lines === null) continue;
-    const counts = maskedValueCounts(lines, change.path);
-    if (counts === null) return true;
-    add(before, counts);
-  }
-  if (before.size === 0) return false;
-  const after = new Map<string, number>();
+  // 元の値に戻すのは同じファイルの行からだけなので、値はファイルをまたいで移らない。ファイルごとに比べる
+  // (別のファイルで同じ値の行を増やしても、消えた分を埋め合わせたことにしない)
   for (const o of plan.outcomes) {
     const path = o.change.path;
-    if (o.change.op === "delete" && o.failures.length === 0) continue;
     const state = states.get(path);
-    const bytes = o.afterBytes ?? (state?.exists === true ? state.bytes : null);
-    if (bytes === null || bytes === undefined) continue;
-    const lines = linesOf(bytes);
-    if (lines === null) continue;
-    const counts = maskedValueCounts(lines, path);
-    if (counts === null) return true;
-    add(after, counts);
-  }
-  for (const [value, n] of before) {
-    if ((after.get(value) ?? 0) < n) return true;
+    if (state === undefined || !state.exists || state.bytes === null) continue;
+    const beforeLines = linesOf(state.bytes);
+    // 読めないファイルは、伏せた値があるか確かめられないため減るものとして扱う
+    if (beforeLines === null) return true;
+    const before = maskedValueCounts(beforeLines, path);
+    if (before === null) return true;
+    if (before.size === 0) continue;
+    let after = new Map<string, number>();
+    if (!(o.change.op === "delete" && o.failures.length === 0)) {
+      const bytes = o.afterBytes ?? state.bytes;
+      const afterLines = linesOf(bytes);
+      if (afterLines === null) return true;
+      const counts = maskedValueCounts(afterLines, path);
+      if (counts === null) return true;
+      after = counts;
+    }
+    for (const [value, n] of before) {
+      if ((after.get(value) ?? 0) < n) return true;
+    }
   }
   return false;
 }
