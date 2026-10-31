@@ -967,6 +967,36 @@ describe("applier: 複数行の値・空行の差", () => {
     expect(text(ok.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("port: 80", "port: 8080"));
   });
 
+  it("伏せ字のない SEARCH では、秘密鍵の範囲の行が抜粋にあっても修正のヒントを出す", () => {
+    const src = [
+      "service:",
+      "  key: |",
+      "    -----BEGIN RSA PRIVATE KEY-----",
+      "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "    -----END RSA PRIVATE KEY-----",
+      "  host: example",
+      "  timeout: 30",
+      "  port: 80",
+      "",
+    ].join("\n");
+    const states = new Map([["s.yaml", state(src)]]);
+    for (const search of [
+      ["  host: example", "  port: 80"],
+      ["    -----END RSA PRIVATE KEY-----", "  host: example", "  port: 80"],
+    ]) {
+      const p = planChangeSet(cs(replace("s.yaml", block(search, ["x"]))), states, NEW_FILE);
+      expect(p.failures[0]?.message).not.toContain("複数行にまたがる値");
+      const report = buildFailureReport(p.failures);
+      expect(report).toContain("修正のヒント");
+      expect(report).not.toContain("行目: 複数行にまたがる値");
+      expect(report).not.toContain("とした行は SEARCH に含めず");
+      expect(report).not.toContain("MIIEow");
+    }
+    // ヒントどおりに写せば一致する
+    const copy = ["    -----END RSA PRIVATE KEY-----", "  host: example", "  timeout: 30", "  port: 80"];
+    expect(planChangeSet(cs(replace("s.yaml", block(copy, [...copy.slice(0, 3), "  port: 8080"]))), states, NEW_FILE).ok).toBe(true);
+  });
+
   it("複数行にまたがる値のない失敗の依頼には、伏せた範囲の行の例外を載せない", () => {
     const p = planChangeSet(
       cs(replace("a.vb", block(["Sub B()"], ["x"]))),
