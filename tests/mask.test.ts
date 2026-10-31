@@ -511,7 +511,7 @@ describe("applier: 設定ファイルの伏せた値", () => {
     );
     expect(move.ok).toBe(false);
     expect(move.outcomes[0]?.withheld).toBe(true);
-    expect(move.failures.map((f) => f.message).join("\n")).toContain("このファイルから消える");
+    expect(move.failures.map((f) => f.message).join("\n")).toContain("実際の値をファイルから消す");
     expect(move.failures.map((f) => f.message).join("\n")).toContain("1 つのブロック");
     // ファイルの名前を変える回答 (delete + create)
     const rename = planChangeSet(
@@ -537,6 +537,89 @@ describe("applier: 設定ファイルの伏せた値", () => {
     );
     expect(remove.ok).toBe(true);
     expect(remove.outcomes[0]?.withheld).toBeUndefined();
+  });
+
+  it("伏せ字の行の移動先が当たらない・作れない・適用済みと判定されたときも、移動元の削除を書かない", () => {
+    const db = ["Public Class Db", '    Private Const DbPassword As String = "Hunter2Secret"', "    Sub Open()", "    End Sub", "End Class", ""].join("\n");
+    const cfg = ["Public Module Settings", "End Module", ""].join("\n");
+    const packed = maskCredentials(db, { vbSource: true, strict: true }).content.split("\n");
+    const removeFromDb = block(packed.slice(0, 3), [packed[0] as string, packed[2] as string], 1);
+    const moved = '    Public Const DbPassword As String = "[MASKED]"';
+    const withheld = (p: ReturnType<typeof planChangeSet>): boolean | undefined => p.outcomes.find((o) => o.change.path === "Db.vb")?.withheld;
+    // 移動先の SEARCH が当たらない
+    const notFound = planChangeSet(
+      cs(replace("Db.vb", removeFromDb), replace("Config.vb", block(["Public Module Config"], ["Public Module Config", moved], 1))),
+      new Map([["Db.vb", state(db)], ["Config.vb", state(cfg)]]),
+      NEW_FILE,
+    );
+    expect(notFound.ok).toBe(false);
+    expect(withheld(notFound)).toBe(true);
+    expect(text(notFound.outcomes[0]?.afterBytes ?? null)).toContain("Public Class Db");
+    // 移動先のファイルがない / 既にある
+    for (const dest of [
+      replace("Missing.vb", block(["End Module"], [moved, "End Module"], 1)),
+      { op: "create", path: "Config.vb", line: 2, content: ["Public Module Settings", moved, "End Module"] } as FileChange,
+    ]) {
+      const p = planChangeSet(
+        cs(replace("Db.vb", removeFromDb), dest),
+        new Map<string, FileState>([["Db.vb", state(db)], ["Config.vb", state(cfg)], ["Missing.vb", { exists: false, symlink: false, bytes: null }]]),
+        NEW_FILE,
+      );
+      expect(p.ok).toBe(false);
+      expect(withheld(p)).toBe(true);
+    }
+    // 移動先を適用済みと判定した (古い SEARCH が移動元の位置に当たった) ときは、--partial なしでも書かない
+    const src = ["Module M", "    Sub Open()", '        pwd = "Hunter2Secret"', "        Connect()", "    End Sub", "    Sub Reopen()", "        Close(True)", "        Connect()", "    End Sub", "End Module", ""].join("\n");
+    const pk = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    const already = planChangeSet(
+      cs(
+        replace(
+          "M.vb",
+          block(["        Close(True)", "        Connect()"], [pk[2] as string, "        Connect()"], 1),
+          block(pk.slice(1, 4), [pk[1] as string, pk[3] as string], 2),
+        ),
+      ),
+      new Map([["M.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(already.ok).toBe(false);
+    expect(already.outcomes[0]?.withheld).toBe(true);
+    // 伏せ字のない変更が当たらないだけなら、値を消す変更 (ハードコードした値の削除) は --partial で書ける
+    const plain = planChangeSet(
+      cs(replace("Db.vb", removeFromDb), replace("Config.vb", block(["Public Module Config"], ["Public Module Config", "    ' x"], 1))),
+      new Map([["Db.vb", state(db)], ["Config.vb", state(cfg)]]),
+      NEW_FILE,
+    );
+    expect(plain.ok).toBe(false);
+    expect(withheld(plain)).toBeUndefined();
+  });
+
+  it("短い値は語の途中に現れても残っているとみなさない", () => {
+    const src = ["Module M", '    Const pwd As String = "test"', "End Module", ""].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    expect(packed[1]).toBe('    Const pwd As String = "[MASKED]"');
+    const p = planChangeSet(
+      cs(
+        replace("M.vb", block(packed.slice(0, 2), [packed[0] as string, "    ' read from App.config (latest settings)"], 1)),
+        { op: "create", path: "App.config", line: 2, content: ['<add key="pwd" value="[MASKED]" />'] } as FileChange,
+      ),
+      new Map<string, FileState>([["M.vb", state(src)], ["App.config", { exists: false, symlink: false, bytes: null }]]),
+      NEW_FILE,
+    );
+    expect(p.outcomes[0]?.withheld).toBe(true);
+  });
+
+  it("読めないファイル (UTF-16) の削除も、伏せ字の行の移動先が書かれないときは書かない", () => {
+    const utf16 = new Uint8Array([0xff, 0xfe, ...[...'<add key="DbPassword" value="Hunter2Secret" />'].flatMap((ch) => [ch.charCodeAt(0), 0])]);
+    const p = planChangeSet(
+      cs(
+        { op: "delete", path: "Old.config", line: 1 } as FileChange,
+        { op: "create", path: "App.config", line: 2, content: ['<add key="DbPassword" value="[MASKED]" />'] } as FileChange,
+      ),
+      new Map<string, FileState>([["Old.config", { exists: true, symlink: false, bytes: utf16 }], ["App.config", { exists: false, symlink: false, bytes: null }]]),
+      NEW_FILE,
+    );
+    expect(p.outcomes[0]?.withheld).toBe(true);
   });
 
   it("戻せない理由は同じ行を 1 つにまとめて数を添える", () => {
@@ -1144,7 +1227,7 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     ]);
     const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
     expect(p.ok).toBe(false);
-    const withheld = (f: { message: string }): boolean => f.message.includes("このファイルから消える");
+    const withheld = (f: { message: string }): boolean => f.message.includes("実際の値をファイルから消す");
     expect(p.failures.filter((f) => !withheld(f)).map((f) => [f.kind, f.literalRefused, f.literalAllowed])).toEqual([["masked-value", true, undefined]]);
     // 移動元の削除は --partial でも書かない
     expect(p.failures.filter(withheld).map((f) => f.path)).toEqual(["Db.vb"]);
@@ -1249,7 +1332,7 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     );
     const p = planChangeSet(masked, states, NEW_FILE, { literalMasked: true });
     expect(p.ok).toBe(false);
-    const withheld = (f: { message: string }): boolean => f.message.includes("このファイルから消える");
+    const withheld = (f: { message: string }): boolean => f.message.includes("実際の値をファイルから消す");
     expect(p.failures.filter((f) => !withheld(f)).map((f) => [f.path, f.literalRefused])).toEqual([["D.vb", true]]);
     expect(p.failures.filter(withheld).map((f) => f.path)).toEqual(["C.vb"]);
   });

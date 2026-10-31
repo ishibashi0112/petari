@@ -177,7 +177,7 @@ export interface PlanOptions {
 }
 
 /** 伏せ字を戻せなかったときの説明 (失敗レポートとして AI に貼られる前提の文面) */
-function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }): string {
+function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }, options: { moveHint?: boolean } = {}): string {
   // 同じ行・同じ理由は 1 つにまとめる (写して足した行は同じ行が並ぶため)
   const grouped = new Map<string, { failure: MaskRestoreFailure; count: number }>();
   for (const f of r.failures) {
@@ -201,7 +201,7 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
   const rest = entries.slice(5).reduce((sum, e) => sum + e.count, 0);
   const more = rest > 0 ? ` 他 ${rest} 行` : "";
   // 伏せ字の行を別のブロックの位置へ移す回答は、移動先に戻す元がないため no-source になる
-  const move = r.failures.some((f) => f.reason === "no-source")
+  const move = options.moveHint !== false && r.failures.some((f) => f.reason === "no-source")
     ? `伏せ字を含む行を同じファイルの別の位置へ移すなら、元の位置と新しい位置を 1 つのブロックの SEARCH / REPLACE に含めてください。`
     : "";
   return (
@@ -603,7 +603,7 @@ function planFile(
             failures: maskedContent.map((line) => ({ line, reason: "no-source" })),
             literalRefused: false,
             literalAllowed: true,
-          }),
+          }, { moveHint: false }),
         );
         for (const f of outcome.failures) f.literalAllowed = true;
         return outcome;
@@ -741,12 +741,34 @@ export function planChangeSet(
 }
 
 /**
- * 伏せ字を元の値に戻せない変更 (masked-value) があるとき、伏せていた実際の値が消える他の変更を書かない。
- * 伏せ字の行を別のブロック・別のファイルへ移す回答 (移動先は戻す元がないため止まる) で、--partial が
- * 移動元の削除だけを書くと、値が作業ツリーから消えるため (同じ回答を出し直しても戻す元がもうない)
+ * 伏せ字 [MASKED] を含む行を書く変更で、書かれないもの (当てられなかった・元の値に戻せなかった・既に適用済みと
+ * 判定した) があるか。あれば、その変更が値の移動先のことがある
+ */
+function hasUnwrittenMaskedLine(plan: Plan): boolean {
+  for (const o of plan.outcomes) {
+    const c = o.change;
+    if (c.op === "replace") {
+      if (o.alreadyAppliedBlocks.some((a) => a.block.replace.some(hasMaskToken))) return true;
+      // ファイル単位の失敗 (ファイルがない・読めないなど) はすべてのブロックが書かれない
+      const unwritten = o.failures.some((f) => f.block === undefined)
+        ? c.blocks
+        : o.failures.flatMap((f) => (f.block === undefined ? [] : [f.block]));
+      if (unwritten.some((b) => b.replace.some(hasMaskToken))) return true;
+    } else if (c.op === "rewrite" || c.op === "create") {
+      if ((o.failures.length > 0 || o.alreadyApplied) && c.content.some(hasMaskToken)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 伏せ字 [MASKED] を含む行を書く変更のどれかが書かれないとき、伏せていた実際の値をファイルから消す他の変更を
+ * 書かない。伏せ字の行を別のブロック・別のファイルへ移す回答で、移動先が当たらない・戻す元がない・既に適用済みと
+ * 判定されると、--partial (適用済みの判定では --partial なしでも) が移動元の削除だけを書いて、値が作業ツリーから
+ * 消えるため (同じ回答を出し直しても戻す元がもうない)
  */
 function withholdMaskedLosses(states: Map<string, FileState>, plan: Plan): Plan {
-  if (!plan.failures.some((f) => f.kind === "masked-value")) return plan;
+  if (!plan.failures.some((f) => f.kind === "masked-value") && !hasUnwrittenMaskedLine(plan)) return plan;
   for (const o of plan.outcomes) {
     const writes = o.afterBytes !== null || (o.change.op === "delete" && o.failures.length === 0);
     if (!writes || o.alreadyApplied || !outcomeRemovesMaskedValue(o, states.get(o.change.path))) continue;
@@ -755,9 +777,11 @@ function withholdMaskedLosses(states: Map<string, FileState>, plan: Plan): Plan 
       path: o.change.path,
       kind: "masked-value",
       message:
-        `伏せ字 ${MASK_TOKEN} を元の値に戻せない変更が同じ回答にあるため、伏せていた実際の値がこのファイルから消える変更は` +
-        `書き込みません。伏せ字を含む行は別のブロックや別のファイルへ移せません (同じファイルの中で移すなら、元の位置と` +
-        `新しい位置を 1 つのブロックの SEARCH / REPLACE に含めてください)`,
+        `このファイルの変更は伏せていた実際の値をファイルから消すため、書き込みません。同じ回答に、伏せ字 ${MASK_TOKEN} を` +
+        `含む行を書く変更で書かれないもの (当てられなかった・元の値に戻せなかった・既に適用済みと判定した) があり、` +
+        `値の移動先が書かれないおそれがあるためです。伏せ字を含む行は別のファイルへ移せません (同じファイルの中で移すなら、` +
+        `元の位置と新しい位置を 1 つのブロックの SEARCH / REPLACE に含めてください)。値を消すこと自体が目的なら、` +
+        `ほかの変更と分けて出力してください`,
     };
     o.failures.push(failure);
     plan.failures.push(failure);
@@ -794,8 +818,9 @@ function outcomeRemovesMaskedValue(o: FileOutcome, state: FileState | undefined)
   try {
     beforeText = decodeFile(state.bytes).lines.map((l) => l.text).join("\n");
   } catch {
-    // 読めないファイルには伏せた表示がなく、戻す元にもならない
-    return false;
+    // 読めないファイル (UTF-16 など) は、伏せた値があるか確かめられないため消すものとして扱う
+    // (slnmix は UTF-16 も読んで伏せるため、AI は伏せ字として見ている)
+    return o.change.op === "delete" || o.afterBytes !== null;
   }
   const values = maskedValueCounts(beforeText.split("\n"), o.change.path);
   if (values === null) return true;
@@ -809,7 +834,13 @@ function outcomeRemovesMaskedValue(o: FileOutcome, state: FileState | undefined)
   }
   // 値が非常に多い大きなファイルは、文字列を値ごとに数えると時間がかかるため、伏せた値の数で比べる (安全側)
   if (values.size * (beforeText.length + afterText.length) > 50_000_000) return outcomeLosesMaskedValue(o, state);
-  const occurrences = (text: string, value: string): number => text.split(value).length - 1;
+  // 値の端が英数字なら、語の途中に現れたもの (値 test と latest) は数えない
+  const occurrences = (text: string, value: string): number => {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const head = /^[A-Za-z0-9_]/.test(value) ? "(?<![A-Za-z0-9_])" : "";
+    const tail = /[A-Za-z0-9_]$/.test(value) ? "(?![A-Za-z0-9_])" : "";
+    return (text.match(new RegExp(head + escaped + tail, "g")) ?? []).length;
+  };
   for (const value of values.keys()) {
     if (value.trim() === "") continue;
     if (occurrences(afterText, value) < occurrences(beforeText, value)) return true;
