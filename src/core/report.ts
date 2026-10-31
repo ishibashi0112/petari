@@ -27,6 +27,10 @@ const MATCH_SPEC_NOTE = [
   "  (抜粋では実ファイル側にだけある行を + で示します)",
   "- 行内空白や空行の調整・ASCII 行だけへの縮小・別アンカーへの乗り換えでは解決しません。各失敗に",
   "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
+];
+
+/** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
+const MASK_SPEC_NOTE = [
   "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] を含む行は SEARCH にも REPLACE にも一字も",
   "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
   "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
@@ -156,12 +160,22 @@ export function buildBlankInsensitiveNote(outcomes: FileOutcome[]): string | nul
  */
 export function buildMaskRestoreNote(outcomes: FileOutcome[], written: boolean): string | null {
   let count = 0;
+  let literal = 0;
   for (const o of outcomes) {
     count += o.restoredMasks ?? 0;
-    for (const b of o.appliedBlocks) count += b.restoredMasks ?? 0;
+    literal += o.literalMasks ?? 0;
+    for (const b of o.appliedBlocks) {
+      count += b.restoredMasks ?? 0;
+      literal += b.literalMasks ?? 0;
+    }
   }
-  if (count === 0) return null;
-  return `注: 伏せ字 [MASKED] ${count} 箇所は元の値に戻して${written ? "書き込みました" : "書き込みます"} (git diff で確認してください)`;
+  const verb = written ? "書き込みました" : "書き込みます";
+  const notes: string[] = [];
+  if (count > 0) notes.push(`注: 伏せ字 [MASKED] ${count} 箇所は元の値に戻して${verb} (git diff で確認してください)`);
+  if (literal > 0) {
+    notes.push(`注: [MASKED] という文字 ${literal} 箇所を、--literal-masked の指定どおりそのまま${verb} (git diff で確認してください)`);
+  }
+  return notes.length > 0 ? notes.join("\n") : null;
 }
 
 /** 検証失敗 (マッチング・パス・エンコーディング) のレポート */
@@ -176,6 +190,7 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
     );
   }
   parts.push("", ...MATCH_SPEC_NOTE);
+  const specAt = parts.length;
   if (ctx.outcomes !== undefined) {
     parts.push("", ...outcomeSummary(ctx.outcomes));
   }
@@ -200,6 +215,9 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
     if (f.nearestReplace !== undefined) {
       parts.push("", ...renderNearestReplace(f.nearestReplace));
     }
+  }
+  if (parts.slice(specAt).some((l) => l.includes("[MASKED]"))) {
+    parts.splice(specAt, 0, ...MASK_SPEC_NOTE);
   }
   parts.push("", RE_REQUEST, "");
   return parts.join("\n");

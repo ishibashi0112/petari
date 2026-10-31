@@ -128,6 +128,20 @@ const TOKEN_PATTERNS: ReadonlyArray<{ kind: string; regex: RegExp }> = [
 /** Bearer トークン(bearer という語は残しトークン部のみマスク) */
 const BEARER_TOKEN = /\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi;
 
+/**
+ * 一部だけ伏せたトークンの残り。厳格モードでは高エントロピー値の判定がトークンの形式より
+ * 先に走るため、20 文字未満の部分(JWT の署名、Bearer トークンの「.」の後ろなど)が残る
+ * ことがある。伏せ字を含み、伏せていない英数字も残っているものを丸ごと伏せる
+ */
+const PARTIAL_JWT =
+  /(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])(?:\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])){2}/g;
+const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
+
+/** 伏せ字を含み、伏せていない英数字も残っているか */
+function isPartlyMasked(token: string): boolean {
+  return token.includes(MASK) && /[A-Za-z0-9]/.test(token.split(MASK).join(""));
+}
+
 /** PRIVATE KEY ブロック(BEGIN/END 行は残し中身をマスク) */
 const PRIVATE_KEY_BLOCK =
   /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]+?(-----END [A-Z ]*PRIVATE KEY-----)/g;
@@ -337,11 +351,21 @@ function maskVbSource(
   strict: boolean,
 ): string {
   let out = "";
+  // 直前のコード(out の末尾)の控え。out を毎回切り出すと、大きいファイルで
+  // 文字列全体の複製が文字列リテラルごとに起きて遅くなるため
+  let recent = "";
+  const emit = (piece: string): void => {
+    out += piece;
+    recent += piece;
+    if (recent.length > 400) {
+      recent = recent.slice(-200);
+    }
+  };
   let i = 0;
   const n = content.length;
 
   while (i < n) {
-    const ch = content[i];
+    const ch = content.charAt(i);
 
     if (ch === '"') {
       // 文字列リテラルを読み取る("" は " のエスケープ。行内で閉じる前提)
@@ -366,7 +390,7 @@ function maskVbSource(
 
       // 直前のコードが「秘密系変数 = 」「秘密系の名前付き引数 :=」
       // 「秘密系メソッドの引数」ならリテラル全体をマスク
-      const tail = out.slice(-200);
+      const tail = recent.slice(-200);
       let kind: string | undefined;
       if (closed && inner.trim() !== "") {
         const assignMatch = ASSIGNMENT_TAIL.exec(tail);
@@ -383,7 +407,7 @@ function maskVbSource(
       }
       if (kind !== undefined) {
         findings.push({ line: lineOf(content, i), kind });
-        out += `"${MASK}"`;
+        emit(`"${MASK}"`);
         i = j + 1;
         continue;
       }
@@ -397,7 +421,7 @@ function maskVbSource(
           lineOf(content, i),
         );
       }
-      out += `"${maskedInner}${closed ? '"' : ""}`;
+      emit(`"${maskedInner}${closed ? '"' : ""}`);
       i = closed ? j + 1 : j;
       continue;
     }
@@ -408,17 +432,14 @@ function maskVbSource(
       while (j < n && content[j] !== "\n") {
         j += 1;
       }
-      out += maskCommentText(
-        content.slice(i, j),
-        findings,
-        lineOf(content, i),
-        strict,
+      emit(
+        maskCommentText(content.slice(i, j), findings, lineOf(content, i), strict),
       );
       i = j;
       continue;
     }
 
-    out += ch;
+    emit(ch);
     i += 1;
   }
   return out;
@@ -489,7 +510,14 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
       return `${prefix}${MASK}`;
     },
   );
+  result = result.replace(PARTIAL_JWT, (whole: string) => (isPartlyMasked(whole) ? MASK : whole));
+  result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
+    isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
+  );
 
+  // 大きい文字列を控えに残したままにしない
+  lineIndexText = undefined;
+  lineIndexBreaks = [];
   return { content: result, findings };
 }
 
@@ -647,13 +675,15 @@ export interface MaskLinesOptions {
 
 /**
  * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
- * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして) でも伏せられる範囲を
+ * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
 export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
   const text = lines.join("\n");
   const all: MaskSpan[] = [];
-  for (const mode of maskModes(options.path, [options.strict ?? true])) {
+  // 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
+  // strict のときは両方の範囲を伏せる
+  for (const mode of maskModes(options.path, (options.strict ?? true) ? [true, false] : [false])) {
     const spans = maskedSpans(text, mode);
     if (spans === null) {
       return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
@@ -668,21 +698,30 @@ export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions):
 // ---------------------------------------------------------------------------
 
 /**
- * 照合と伏せ字の復元に使う伏せた表示。slnmix のパックが取り得る伏せ方ごとに作る
- * (同じ表示になるものは 1 つにまとめる)。対応づけられない伏せ方は含めない
+ * 照合と伏せ字の復元に使う伏せた表示。slnmix のパックが取り得る伏せ方ごとと、失敗レポート・
+ * ビルドエラーの抜粋 (maskLinesForDisplay) と同じ合わせ方のもの (抜粋から写した SEARCH 用) を作る。
+ * 同じ表示になるものは 1 つにまとめ、対応づけられない伏せ方は含めない
  */
 export function maskedViews(lines: string[], path: string): MaskedLine[][] {
   const text = lines.join("\n");
   const views: MaskedLine[][] = [];
   const seen = new Set<string>();
-  for (const mode of maskModes(path, [true, false])) {
-    const spans = maskedSpans(text, mode);
-    if (spans === null || spans.length === 0) continue;
+  const add = (spans: MaskSpan[]): void => {
+    if (spans.length === 0) return;
     const view = linesFromSpans(lines, text, spans);
     const key = view.map((l) => l.text).join("\n");
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     views.push(view);
+  };
+  const modes = maskModes(path, [true, false]);
+  const spansByMode = modes.map((mode) => maskedSpans(text, mode));
+  for (const spans of spansByMode) {
+    if (spans !== null) add(spans);
+  }
+  for (const stricts of [[true, false], [false]]) {
+    const group = spansByMode.filter((_, k) => stricts.includes(modes[k]?.strict ?? true));
+    if (group.every((spans) => spans !== null)) add(mergeSpans(group.flatMap((spans) => spans ?? [])));
   }
   return views;
 }
@@ -696,9 +735,29 @@ function fillMaskTokens(line: string, values: string[]): string {
   return out;
 }
 
+export interface MaskRestoreFailure {
+  line: string;
+  reason: "no-source" | "ambiguous";
+}
+
 export type MaskRestoreResult =
-  | { ok: true; lines: string[]; restored: number }
-  | { ok: false; line: string; reason: "no-source" | "ambiguous" };
+  | {
+      ok: true;
+      lines: string[];
+      /** 元の値に戻した伏せ字の数 */
+      restored: number;
+      /** literal の指定で [MASKED] の文字のまま書いた数 */
+      literal: number;
+    }
+  | {
+      ok: false;
+      /** 戻せない行のすべて */
+      failures: MaskRestoreFailure[];
+      /** literal の指定があったが、範囲に実際の値を伏せた行があるため使わなかった */
+      literalRefused: boolean;
+      /** literal を指定すれば書ける (範囲に実際の値を伏せた行がなく、戻せない行がすべて no-source) */
+      literalAllowed: boolean;
+    };
 
 /**
  * 書き込む行の伏せ字を元の値に戻す。
@@ -706,7 +765,8 @@ export type MaskRestoreResult =
  * (伏せ字の行をそのまま残した場合)。伏せ字の行を書き換えた・新しく足した行は、値の取り違えや
  * コメントへの書き出しを避けるため戻さない (no-source)。同じ文字列の行が複数あって値が 1 通りに
  * 決まらなければ ambiguous。literal のときは no-source の行を [MASKED] の文字のまま書く
- * (伏せ字を扱うコードそのものを書く場合の明示の指定)
+ * (伏せ字を扱うコードそのものを書く場合の明示の指定)。ただし範囲に実際の値を伏せた行があるときは
+ * literal を使わない (伏せ字の行を書き換えた回答で、実際の値を [MASKED] の文字で上書きしないため)
  */
 export function restoreMaskedLines(
   lines: string[],
@@ -714,37 +774,56 @@ export function restoreMaskedLines(
   range: { from: number; to: number },
   options: { literal?: boolean } = {},
 ): MaskRestoreResult {
+  // 範囲の伏せた行を、前後の空白を除いた表示ごとにまとめる (元の値の組の重複は除く)
+  const index = new Map<string, Map<string, string[] | null>>();
+  let hasRealValue = false;
+  for (const view of views) {
+    for (let i = Math.max(0, range.from); i < Math.min(range.to, view.length); i++) {
+      const v = view[i];
+      if (v === undefined || !hasMaskToken(v.text)) continue;
+      if (v.values === null || v.values.some((value) => value !== MASK)) hasRealValue = true;
+      const key = v.text.trim();
+      const candidates = index.get(key) ?? new Map<string, string[] | null>();
+      candidates.set(JSON.stringify(v.values), v.values);
+      index.set(key, candidates);
+    }
+  }
+  const literal = options.literal === true && !hasRealValue;
   const out: string[] = [];
+  const failures: MaskRestoreFailure[] = [];
   let restored = 0;
+  let literalCount = 0;
   for (const line of lines) {
     if (!hasMaskToken(line)) {
       out.push(line);
       continue;
     }
-    const key = line.trim();
-    const distinct = new Map<string, string[] | null>();
-    for (const view of views) {
-      for (let i = Math.max(0, range.from); i < Math.min(range.to, view.length); i++) {
-        const v = view[i];
-        if (v === undefined || v.text.trim() !== key) continue;
-        distinct.set(JSON.stringify(v.values), v.values);
-      }
-    }
-    const values = [...distinct.values()];
-    if (values.length === 0) {
-      if (options.literal === true) {
+    const candidates = [...(index.get(line.trim())?.values() ?? [])];
+    if (candidates.length === 0) {
+      if (literal) {
         out.push(line);
-        continue;
+        literalCount += line.split(MASK).length - 1;
+      } else {
+        failures.push({ line, reason: "no-source" });
       }
-      return { ok: false, line, reason: "no-source" };
+      continue;
     }
-    const only = values[0];
-    if (values.length > 1 || only === null || only === undefined) {
-      return { ok: false, line, reason: "ambiguous" };
+    const only = candidates[0];
+    if (candidates.length > 1 || only === null || only === undefined) {
+      failures.push({ line, reason: "ambiguous" });
+      continue;
     }
     out.push(fillMaskTokens(line, only));
     // 実ファイルにもともと [MASKED] という文字がある行は、その文字に戻る (数えない)
-    restored += only.filter((v) => v !== MASK).length;
+    restored += only.filter((value) => value !== MASK).length;
   }
-  return { ok: true, lines: out, restored };
+  if (failures.length > 0) {
+    return {
+      ok: false,
+      failures,
+      literalRefused: options.literal === true && hasRealValue,
+      literalAllowed: !hasRealValue && failures.every((f) => f.reason === "no-source"),
+    };
+  }
+  return { ok: true, lines: out, restored, literal: literalCount };
 }

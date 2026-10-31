@@ -125,12 +125,28 @@ describe("restoreMaskedLines", () => {
 
   it("同じ文字列の伏せた行から値を戻す (インデントは書き込む側のまま)", () => {
     const r = restoreMaskedLines(['    pwd = "[MASKED]"', "Log()"], views, { from: 0, to: 3 });
-    expect(r).toEqual({ ok: true, lines: ['    pwd = "s3cret"', "Log()"], restored: 1 });
+    expect(r).toEqual({ ok: true, lines: ['    pwd = "s3cret"', "Log()"], restored: 1, literal: 0 });
   });
 
   it("書き換えた行は戻さない (値の取り違えを避ける)", () => {
     const r = restoreMaskedLines(['conn = "Server=b;Password=[MASKED]"'], views, { from: 0, to: 3 });
-    expect(r).toEqual({ ok: false, line: 'conn = "Server=b;Password=[MASKED]"', reason: "no-source" });
+    expect(r).toEqual({
+      ok: false,
+      failures: [{ line: 'conn = "Server=b;Password=[MASKED]"', reason: "no-source" }],
+      literalRefused: false,
+      literalAllowed: false,
+    });
+  });
+
+  it("戻せない行はすべて報告する", () => {
+    const r = restoreMaskedLines(
+      ['conn = "Server=b;Password=[MASKED]"', 'pwd = "[MASKED]"', 'Log("[MASKED]")'],
+      views,
+      { from: 0, to: 3 },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.failures.map((f) => f.line)).toEqual(['conn = "Server=b;Password=[MASKED]"', 'Log("[MASKED]")']);
   });
 
   it("範囲の外の行からは戻さない", () => {
@@ -141,12 +157,30 @@ describe("restoreMaskedLines", () => {
   it("同じ表示で値の違う行が範囲に 2 つあれば戻さない", () => {
     const two = ['pwd = "aaa111"', 'pwd = "bbb222"'];
     const r = restoreMaskedLines(['pwd = "[MASKED]"'], maskedViews(two, "a.vb"), { from: 0, to: 2 });
-    expect(r).toEqual({ ok: false, line: 'pwd = "[MASKED]"', reason: "ambiguous" });
+    expect(r).toEqual({
+      ok: false,
+      failures: [{ line: 'pwd = "[MASKED]"', reason: "ambiguous" }],
+      literalRefused: false,
+      literalAllowed: false,
+    });
   });
 
-  it("literal なら戻せない [MASKED] をそのまま残す", () => {
+  it("literal なら戻せない [MASKED] をそのまま残す (範囲に実際の値を伏せた行がないとき)", () => {
+    const plain = maskedViews(["Open(pwd)", "Log()"], "a.vb");
+    const before = restoreMaskedLines(['Log("[MASKED]")'], plain, { from: 0, to: 2 });
+    expect(before).toMatchObject({ ok: false, literalRefused: false, literalAllowed: true });
+    const r = restoreMaskedLines(['Log("[MASKED]")'], plain, { from: 0, to: 2 }, { literal: true });
+    expect(r).toEqual({ ok: true, lines: ['Log("[MASKED]")'], restored: 0, literal: 1 });
+  });
+
+  it("literal でも範囲に実際の値を伏せた行があれば使わない (実際の値を [MASKED] で上書きしない)", () => {
     const r = restoreMaskedLines(['Log("[MASKED]")'], views, { from: 0, to: 3 }, { literal: true });
-    expect(r).toEqual({ ok: true, lines: ['Log("[MASKED]")'], restored: 0 });
+    expect(r).toEqual({
+      ok: false,
+      failures: [{ line: 'Log("[MASKED]")', reason: "no-source" }],
+      literalRefused: true,
+      literalAllowed: false,
+    });
   });
 });
 
@@ -543,5 +577,131 @@ describe("applier: 伏せ字で値を取り違えない・ファイルを壊さ�
     expect(new TextDecoder("shift_jis").decode(after)).toBe(
       ["' 接続", 'Dim pwd As String = "Hunter2Secret"', "Open(pwd, 30)", ""].join("\r\n"),
     );
+  });
+
+  it("実際の値の行と、[MASKED] という文字の行が伏せると同じに見えるなら、どちらとも決めずに止める", () => {
+    const src = [
+      "Module Tests",
+      "    Sub Expected()",
+      '        Dim conn As String = "Server=db1;Password=[MASKED]"',
+      "        Check(conn)",
+      "    End Sub",
+      "    Sub Real()",
+      '        Dim conn As String = "Server=db1;Password=Hunter2Secret"',
+      "        Open(conn)",
+      "    End Sub",
+      "End Module",
+      "",
+    ].join("\n");
+    const plan = run(
+      "Tests.vb",
+      src,
+      block(
+        ['        Dim conn As String = "Server=db1;Password=[MASKED]"'],
+        ['        Dim conn As String = "Server=db1;Password=[MASKED]"', '        Log("opening")'],
+      ),
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.failures[0]?.kind).toBe("block-ambiguous");
+  });
+
+  it("失敗レポートの抜粋 (伏せ方を合わせた表示) をそのまま写した SEARCH でも一致し、元の値に戻す", () => {
+    const src = [
+      "Public Class Login",
+      "    Sub DoLogin()",
+      '        Dim userName As String = "sa_admin"',
+      "        pwd = txtPassword.Text",
+      "        Connect(userName, pwd)",
+      "    End Sub",
+      "End Class",
+      "",
+    ].join("\n");
+    // .vb の抜粋は VB / 汎用テキストの両方の伏せ方の範囲を伏せるため、pwd = の右辺も伏せて見える
+    const first = run(
+      "Login.vb",
+      src,
+      block(
+        ['        Dim userName As String = "[MASKED]"', "        pwd = txtPassword.Text", "        Conect(userName, pwd)"],
+        ['        Dim userName As String = "[MASKED]"', "        pwd = txtPassword.Text", "        Connect(userName, pwd, 30)"],
+      ),
+    );
+    const report = buildFailureReport(first.failures);
+    expect(report).toContain("│        pwd = [MASKED]");
+    expect(report).not.toContain("sa_admin");
+    const second = run(
+      "Login.vb",
+      src,
+      block(
+        ['        Dim userName As String = "[MASKED]"', "        pwd = [MASKED]", "        Connect(userName, pwd)"],
+        ['        Dim userName As String = "[MASKED]"', "        pwd = [MASKED]", "        Connect(userName, pwd, 30)"],
+      ),
+    );
+    expect(second.ok).toBe(true);
+    expect(text(second.outcomes[0]?.afterBytes ?? null)).toContain(
+      '        Dim userName As String = "sa_admin"\n        pwd = txtPassword.Text\n        Connect(userName, pwd, 30)',
+    );
+  });
+
+  it("--literal-masked でも、範囲に実際の値を伏せた行があれば [MASKED] の文字で上書きしない", () => {
+    const change = cs(
+      replace(
+        "Db.vb",
+        block(['        Dim pwd As String = "[MASKED]"'], ['        Dim pwd As String = "[MASKED]" \' 本番', "        Log()"]),
+      ),
+    );
+    const states = new Map([["Db.vb", state(DB_VB)]]);
+    const plan = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
+    expect(plan.ok).toBe(false);
+    expect(plan.failures[0]?.kind).toBe("masked-value");
+    expect(plan.failures[0]?.literalRefused).toBe(true);
+    expect(plan.failures[0]?.literalAllowed).toBeUndefined();
+    const plain = planChangeSet(change, states, NEW_FILE);
+    expect(plain.failures[0]?.literalRefused).toBeUndefined();
+    expect(plain.failures[0]?.literalAllowed).toBeUndefined();
+  });
+
+  it("元の値に戻せない行はすべて失敗の理由に載せる", () => {
+    const plan = run(
+      "Db.vb",
+      DB_VB,
+      block(
+        ['        Dim pwd As String = "[MASKED]"', "        Open(pwd)"],
+        ['        Dim pwd As String = "[MASKED]" \' 本番', '        Console.WriteLine("pwd=[MASKED]")', "        Open(pwd)"],
+      ),
+    );
+    expect(plan.ok).toBe(false);
+    const message = plan.failures[0]?.message ?? "";
+    expect(message).toContain('Dim pwd As String = "[MASKED]" \' 本番');
+    expect(message).toContain('Console.WriteLine("pwd=[MASKED]")');
+    expect(message).not.toContain("Hunter2Secret");
+  });
+});
+
+describe("report: 伏せ字の注記", () => {
+  const run = (path: string, src: string, b: ReplaceBlock) =>
+    planChangeSet(cs(replace(path, b)), new Map([[path, state(src)]]), NEW_FILE);
+  it("照合仕様の伏せ字の項は、レポートに [MASKED] が出るときだけ載せる", () => {
+    const masked = run("Db.vb", DB_VB, block(['        Dim pwd As String = "[MASKED]"', "        Opn(pwd)"], ["x"]));
+    expect(buildFailureReport(masked.failures)).toContain("抜粋の [MASKED] は実際の値を伏せた印です");
+    const plain = run("Plain.vb", "Module M\n    Sub A()\n    End Sub\nEnd Module\n", block(["    Sub B()"], ["x"]));
+    expect(plain.ok).toBe(false);
+    expect(buildFailureReport(plain.failures)).not.toContain("[MASKED]");
+  });
+
+  it("--literal-masked で [MASKED] の文字のまま書いた数を注記する", () => {
+    const plan = planChangeSet(
+      cs({ op: "create", path: "mask.ts", line: 1, content: ['export const MASK = "[MASKED]";'] }),
+      new Map([["mask.ts", { exists: false, symlink: false, bytes: null }]]),
+      NEW_FILE,
+      { literalMasked: true },
+    );
+    expect(plan.ok).toBe(true);
+    expect(buildMaskRestoreNote(plan.outcomes, false)).toContain("[MASKED] という文字 1 箇所を、--literal-masked の指定どおりそのまま書き込みます");
+    const without = planChangeSet(
+      cs({ op: "create", path: "mask.ts", line: 1, content: ['export const MASK = "[MASKED]";'] }),
+      new Map([["mask.ts", { exists: false, symlink: false, bytes: null }]]),
+      NEW_FILE,
+    );
+    expect(without.failures[0]?.literalAllowed).toBe(true);
   });
 });

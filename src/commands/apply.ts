@@ -283,8 +283,17 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   });
   // 伏せ字を戻せない失敗の補足は端末にだけ出す (AI に貼るレポートに書くと、AI が実際の値の行にも
   // 指定を勧めかねないため)
+  // --literal-masked の案内は端末にだけ出す (AI に貼るレポートには書かない。実際の値を伏せた行にまで
+  // 指定を勧めさせないため)
   const literalHint = (): void => {
-    if (plan.failures.some((f) => f.kind === "masked-value")) {
+    const masked = plan.failures.filter((f) => f.kind === "masked-value");
+    if (masked.some((f) => f.literalRefused === true)) {
+      err(
+        "注: 変更する範囲に実際の値を伏せた [MASKED] の行があるため、--literal-masked は使いませんでした " +
+          "(実際の値を [MASKED] の文字で上書きしないため)\n",
+      );
+    }
+    if (values["literal-masked"] !== true && masked.some((f) => f.literalAllowed === true)) {
       err(
         "注: [MASKED] という文字そのものを書く変更 (伏せ字を扱うコード) なら、--literal-masked を付けると" +
           "そのまま書き込めます。実際の値を伏せた行には使わないでください\n",

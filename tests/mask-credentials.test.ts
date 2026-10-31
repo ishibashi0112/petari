@@ -293,3 +293,24 @@ describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
   });
 });
 
+describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モード)", () => {
+  it("Bearer トークンの「.」の後ろの短い部分も伏せる", () => {
+    const vb = 'req.Headers.Add("Authorization", "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe")';
+    const result = maskCredentials(vb, VB);
+    assert.ok(!result.content.includes("sEcReTtAiLvAlUe"), result.content);
+    assert.ok(result.content.includes('"Bearer [MASKED]"'));
+  });
+
+  it("JWT の 20 文字未満の部分も伏せる", () => {
+    const jwt = "token: eyJhbGciOiJub25lIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.abcdefghijklmnop";
+    const result = maskCredentials(jwt, GENERIC);
+    assert.strictEqual(result.content, "token: [MASKED]");
+  });
+
+  it("すべて伏せた部分だけなら変えない", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
+    assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
+  });
+});

@@ -73,6 +73,10 @@ export interface Failure {
    * 「本来当てたかった箇所」の提示と、変更が既に別の形で入っている可能性の診断材料
    */
   nearestReplace?: NearestAnalysis;
+  /** masked-value のとき: --literal-masked の指定があったが、実際の値を伏せた行がある範囲のため使わなかった */
+  literalRefused?: boolean;
+  /** masked-value のとき: --literal-masked を指定すれば [MASKED] の文字のまま書ける (案内用) */
+  literalAllowed?: boolean;
 }
 
 /** 適用に成功した replace ブロックの記録 (差分プレビューと manifest 用) */
@@ -85,6 +89,8 @@ export interface AppliedBlockInfo {
   inserted: string[];
   /** 伏せ字 [MASKED] を元の値に戻した数 (SEARCH を伏せた表示で照合したブロックなど) */
   restoredMasks?: number;
+  /** --literal-masked で [MASKED] の文字のまま書いた数 */
+  literalMasks?: number;
 }
 
 /** REPLACE が既にファイル内に存在したためスキップしたブロック (冪等性・成功扱い) */
@@ -111,6 +117,8 @@ export interface FileOutcome {
   totalBlocks: number;
   /** rewrite で伏せ字 [MASKED] を元の値に戻した数 (replace はブロックごとに記録) */
   restoredMasks?: number;
+  /** rewrite / create で --literal-masked により [MASKED] の文字のまま書いた数 */
+  literalMasks?: number;
 }
 
 export interface Plan {
@@ -163,12 +171,14 @@ export interface PlanOptions {
 
 /** 伏せ字を戻せなかったときの説明 (失敗レポートとして AI に貼られる前提の文面) */
 function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }): string {
-  const what =
-    r.reason === "ambiguous"
-      ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません"
-      : "伏せる前の同じ行が見つかりません";
+  const shown = r.failures.slice(0, 5).map((f) => {
+    const what =
+      f.reason === "ambiguous" ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません" : "伏せる前の同じ行が見つかりません";
+    return `「${f.line.trim()}」(${what})`;
+  });
+  const more = r.failures.length > 5 ? ` 他 ${r.failures.length - 5} 行` : "";
   return (
-    `${prefix}伏せ字 ${MASK_TOKEN} を元の値に戻せないため書き込めません (${what}: 「${r.line.trim()}」)。` +
+    `${prefix}伏せ字 ${MASK_TOKEN} を元の値に戻せないため書き込めません: ${shown.join("、")}${more}。` +
     `${MASK_TOKEN} は実際の値を伏せた印で、petari が元の値に戻せるのは、伏せ字を含む行を一字も変えずに残したときだけです。` +
     `伏せ字を含む行は SEARCH にも REPLACE にもそのまま写してください。伏せ字を含む行を書き換える・新しく足す・` +
     `コメントなどに ${MASK_TOKEN} と書く変更はできません (その行は変えずに残し、利用者に手で直してもらうよう説明してください)`
@@ -241,18 +251,28 @@ function planReplace(
   let docLines: DocLine[] = doc.lines;
   let textLines: string[] = docLines.map((l) => l.text);
   const literal = options.literalMasked === true;
+  // 伏せた表示 (行の位置は実ファイルと同じ)。照合・復元用 (伏せ方ごと) と失敗レポートの抜粋用。
+  // 必要になったときだけ作り、ブロックを適用して行が変わったら作り直す
+  let viewsCache: MaskedLine[][] | null = null;
+  const views = (): MaskedLine[][] => (viewsCache ??= maskedViews(textLines, change.path));
+  let displayCache: string[] | null = null;
+  const display = (): string[] =>
+    (displayCache ??= maskLinesForDisplay(textLines, { path: change.path }));
 
   for (const block of change.blocks) {
-    // 伏せた表示 (行の位置は実ファイルと同じ)。照合・復元用 (伏せ方ごと) と失敗レポートの抜粋用。
-    // 先行ブロックの適用で行が変わるため、ブロックごとに必要になったときだけ作る
-    let viewsCache: MaskedLine[][] | null = null;
-    const views = (): MaskedLine[][] => (viewsCache ??= maskedViews(textLines, change.path));
-    let displayCache: string[] | null = null;
-    const display = (): string[] =>
-      (displayCache ??= maskLinesForDisplay(textLines, { path: change.path }));
     let m: BlockMatch = matchBlock(textLines, block);
-    if (!m.ok && m.reason === "not-found" && block.search.some(hasMaskToken)) {
-      m = matchOnViews(views(), block) ?? m;
+    if (block.search.some(hasMaskToken) && (m.ok || m.reason === "not-found")) {
+      // SEARCH の [MASKED] は伏せた表示となら一致する (slnmix のパックから写した行)。実ファイルで
+      // 一致しても (もともと [MASKED] という文字の行)、伏せると同じに見える別の箇所があれば ambiguous
+      const byViews = matchOnViews(views(), block);
+      if (!m.ok) {
+        m = byViews ?? m;
+      } else if (byViews !== null && (!byViews.ok || byViews.start !== m.start || byViews.end !== m.end)) {
+        const positions = [
+          ...new Set([m.start, ...(byViews.ok ? [byViews.start] : (byViews.positions ?? []))]),
+        ].sort((a, b) => a - b);
+        m = { ok: false, block, reason: "ambiguous", stage: m.stage, count: positions.length, positions };
+      }
     }
     if (!m.ok) {
       // 冪等性 (§6): SEARCH 不一致でも REPLACE がまるごと存在すれば「適用済み」として
@@ -263,9 +283,9 @@ function planReplace(
           const r = matchOnViews(views(), { ...block, search: block.replace });
           return r?.ok === true ? r.stage : null;
         };
-        const stage =
-          findContentStage(textLines, block.replace) ??
-          (block.replace.some(hasMaskToken) ? byViews() : null);
+        const stage = block.replace.some(hasMaskToken)
+          ? byViews()
+          : findContentStage(textLines, block.replace);
         if (stage !== null) {
           already.push({ block, stage });
           continue;
@@ -315,6 +335,7 @@ function planReplace(
     }
     let replacement = m.replacement as string[];
     let restoredMasks = 0;
+    let literalMasks = 0;
     if (replacement.some(hasMaskToken)) {
       // 伏せ字のまま書くと実際の値が消える。SEARCH の範囲の同じ行から元の値に戻し、戻せなければ止める
       const r = restoreMaskedLines(replacement, views(), { from: m.start, to: m.end }, { literal });
@@ -324,11 +345,14 @@ function planReplace(
           kind: "masked-value",
           message: maskFailureMessage(`ブロック ${block.index}: `, r),
           block,
+          ...(r.literalRefused ? { literalRefused: true } : {}),
+          ...(r.literalAllowed ? { literalAllowed: true } : {}),
         });
         continue;
       }
       replacement = r.lines;
       restoredMasks = r.restored;
+      literalMasks = r.literal;
     }
     // 冪等性 (§6.1): 追記型ブロックは適用後も SEARCH が一致し続けるため、追記する行が
     // 一致範囲の前後に既にあれば「適用済み」としてスキップする (再実行での重複追記を防ぐ)
@@ -361,10 +385,13 @@ function planReplace(
       removed: textLines.slice(m.start, m.end),
       inserted: replacement,
       ...(restoredMasks > 0 ? { restoredMasks } : {}),
+      ...(literalMasks > 0 ? { literalMasks } : {}),
     });
     const newDocLines: DocLine[] = replacement.map((text) => ({ text, raw: null, eol: null }));
     docLines = [...docLines.slice(0, m.start), ...newDocLines, ...docLines.slice(m.end)];
     textLines = [...textLines.slice(0, m.start), ...replacement, ...textLines.slice(m.end)];
+    viewsCache = null;
+    displayCache = null;
   }
 
   const afterBytes =
@@ -416,18 +443,22 @@ function planFile(
         }
         return fileFailure(change, "target-exists", "create 指定ですがファイルが既に存在します (全文置き換えなら rewrite を使用)");
       }
-      const maskedLine = change.content.find(hasMaskToken);
-      if (maskedLine !== undefined && options.literalMasked !== true) {
-        return fileFailure(
+      const maskedContent = change.content.filter(hasMaskToken);
+      if (maskedContent.length > 0 && options.literalMasked !== true) {
+        const outcome = fileFailure(
           change,
           "masked-value",
           maskFailureMessage("新規ファイルには元の値がありません。", {
             ok: false,
-            line: maskedLine,
-            reason: "no-source",
+            failures: maskedContent.map((line) => ({ line, reason: "no-source" })),
+            literalRefused: false,
+            literalAllowed: true,
           }),
         );
+        for (const f of outcome.failures) f.literalAllowed = true;
+        return outcome;
       }
+      const createLiteral = maskedContent.reduce((n, line) => n + line.split(MASK_TOKEN).length - 1, 0);
       const bad = findUnencodable(change.content.join("\n"), newFile.encoding);
       if (bad.length > 0) {
         return fileFailure(change, "unencodable", `新規ファイルの既定エンコーディング (${newFile.encoding}) に変換できない文字: ${bad.join(" ")}`);
@@ -441,6 +472,7 @@ function planFile(
         alreadyAppliedBlocks: [],
         alreadyApplied: false,
         totalBlocks: 0,
+        ...(createLiteral > 0 ? { literalMasks: createLiteral } : {}),
       };
     }
     case "rewrite": {
@@ -456,6 +488,7 @@ function planFile(
       const current = doc.lines.map((l) => l.text);
       let content = change.content;
       let restoredMasks = 0;
+      let literalMasks = 0;
       if (content.some(hasMaskToken)) {
         // 伏せ字は、現在のファイルの同じ行 (伏せた表示) から元の値に戻す
         const r = restoreMaskedLines(
@@ -464,9 +497,17 @@ function planFile(
           { from: 0, to: current.length },
           { literal: options.literalMasked === true },
         );
-        if (!r.ok) return fileFailure(change, "masked-value", maskFailureMessage("", r));
+        if (!r.ok) {
+          const outcome = fileFailure(change, "masked-value", maskFailureMessage("", r));
+          for (const f of outcome.failures) {
+            if (r.literalRefused) f.literalRefused = true;
+            if (r.literalAllowed) f.literalAllowed = true;
+          }
+          return outcome;
+        }
         content = r.lines;
         restoredMasks = r.restored;
+        literalMasks = r.literal;
       }
       // 冪等性: 全文が現在の内容と一致するなら適用済みとしてスキップ
       if (contentEqualsStage(current, content) !== null) {
@@ -488,6 +529,7 @@ function planFile(
         alreadyApplied: false,
         totalBlocks: 0,
         ...(restoredMasks > 0 ? { restoredMasks } : {}),
+        ...(literalMasks > 0 ? { literalMasks } : {}),
       };
     }
     case "delete": {
