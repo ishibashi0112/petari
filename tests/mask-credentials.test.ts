@@ -458,6 +458,49 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
+  it("VB のコメントの . や数字から始まる代入も伏せる", () => {
+    for (const input of ['    \' .Password = "OldPass99"', '\'.Password = "OldPass99"', '\' 1.pwd = "OldPass99"', "'２pwd = \"OldPass99\""]) {
+      assert.ok(!maskCredentials(input, { vbSource: true, strict: false }).content.includes("OldPass99"), input);
+    }
+  });
+
+  it("型の注釈と読める : の後ろの代入も伏せる", () => {
+    for (const input of [
+      '  case "prod": dbPassword = "Pr0dSecret!"; break;',
+      'else: dbPassword = "devSecret1"',
+      'const { value: dbPassword = "Hunter2xyz" } = opts;',
+    ]) {
+      assert.ok(!maskCredentials(input, LOOSE).content.includes("Secret") && !maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
+    }
+    // : の後に空白のない key:label="..." は型の注釈とみなさない
+    assert.strictEqual(maskCredentials('last_synced_token:label="Last_Synced_Token"', LOOSE).content, 'last_synced_token:label="Last_Synced_Token"');
+  });
+
+  it("? で終わるコメントの次の行のキーも伏せる", () => {
+    for (const input of [
+      '# Which DB password?\npassword: "Pr0dSecret"',
+      'CONFIG = {\n    # which password?\n    "password": "Pr0dSecret",\n}',
+      '// TODO: rotate this?\n  dbPassword: "Pr0dSecret",',
+      'db:\n  host: localhost # really?\n  password: "Pr0dSecret"',
+    ]) {
+      assert.ok(!maskCredentials(input, LOOSE).content.includes("Pr0dSecret"), input);
+    }
+  });
+
+  it("C# の getter だけの自動プロパティ・@\"...\" / $\"...\" の値も伏せ、pass1 / pass2 は伏せない", () => {
+    for (const input of [
+      'public string Password { get; } = "Pr0dSecret";',
+      'public string DbPassword { get; protected internal set; } = "Pr0dSecret";',
+      'private const string ConnPassword = @"Pr0dSecret";',
+      'var smtpPwd = $"Pr0dSecret";',
+      'var smtpPwd = @"Pr0d""Secret";',
+    ]) {
+      assert.ok(!maskCredentials(input, LOOSE).content.includes("Pr0d") && !maskCredentials(input, LOOSE).content.includes("Secret"), input);
+    }
+    const passes = 'const pass1 = "tokenize", pass2 = "minify";';
+    assert.strictEqual(maskCredentials(passes, LOOSE).content, passes);
+  });
+
   it("長い語を含む VB のコメントでも止まらない", { timeout: 20000 }, () => {
     const started = Date.now();
     maskCredentials("x = 1 '" + "b".repeat(2000000), { vbSource: true, strict: true });
@@ -469,6 +512,10 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     const vb = 'Dim savePassword As String = "True"\nMy.Settings.SavePassword = "False"';
     assert.strictEqual(maskCredentials(vb, { vbSource: true, strict: false }).content, vb);
     assert.ok(!maskCredentials('Dim savePassword As String = "Truthy1"', { vbSource: true, strict: false }).content.includes("Truthy1"));
+    assert.strictEqual(
+      maskCredentials('savePassword = "False" & "Hunter2"', { vbSource: true, strict: false }).content,
+      'savePassword = "False" & "[MASKED]"',
+    );
   });
 
   it("日本語のキーは語の数によらず秘密系として伏せる", () => {

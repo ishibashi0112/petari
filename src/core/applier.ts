@@ -121,6 +121,11 @@ export interface FileOutcome {
   restoredMasks?: number;
   /** rewrite / create で --literal-masked により [MASKED] の文字のまま書いた数 */
   literalMasks?: number;
+  /**
+   * 伏せ字を元の値に戻せない変更が同じ回答にあるため、伏せていた値が消えるこのファイルの変更を書かない
+   * (--partial でも。戻せない変更が値の移動先のことがあるため)
+   */
+  withheld?: boolean;
 }
 
 export interface Plan {
@@ -195,10 +200,14 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
   });
   const rest = entries.slice(5).reduce((sum, e) => sum + e.count, 0);
   const more = rest > 0 ? ` 他 ${rest} 行` : "";
+  // 伏せ字の行を別のブロックの位置へ移す回答は、移動先に戻す元がないため no-source になる
+  const move = r.failures.some((f) => f.reason === "no-source")
+    ? `伏せ字を含む行を同じファイルの別の位置へ移すなら、元の位置と新しい位置を 1 つのブロックの SEARCH / REPLACE に含めてください。`
+    : "";
   return (
     `${prefix}伏せ字 ${MASK_TOKEN} を元の値に戻せないため書き込めません: ${shown.join("、")}${more}。` +
     `${MASK_TOKEN} は実際の値を伏せた印で、petari が元の値に戻せるのは、伏せ字を含む行を一字も変えずに残したときだけです。` +
-    `伏せ字を含む行は SEARCH にも REPLACE にもそのまま写してください。伏せ字を含む行を書き換える・新しく足す・` +
+    `伏せ字を含む行は SEARCH にも REPLACE にもそのまま写してください。${move}伏せ字を含む行を書き換える・新しく足す・` +
     `コメントなどに ${MASK_TOKEN} と書く変更はできません (その行は変えずに残し、利用者に手で直してもらうよう説明してください)`
   );
 }
@@ -717,7 +726,7 @@ export function planChangeSet(
     return { outcomes, failures, ok: failures.length === 0 };
   };
   const plan = planAll(options);
-  if (options.literalMasked === true && writesLiteralMask(plan) && losesMaskedValue(changeSet, states, plan)) {
+  if (options.literalMasked === true && writesLiteralMask(plan) && losesMaskedValue(states, plan)) {
     // [MASKED] の文字のまま書くと同時に、伏せた実際の値がどこかから消える (伏せ字の行の移動・ファイルの
     // 移動・書き換え)。実際の値を [MASKED] の文字で置き換えることになるため、指定を使わずに計画し直す
     const strict = planAll({ ...options, literalMasked: false });
@@ -726,8 +735,34 @@ export function planChangeSet(
       f.literalRefused = true;
       delete f.literalAllowed;
     }
-    return strict;
+    return withholdMaskedLosses(states, strict);
   }
+  return withholdMaskedLosses(states, plan);
+}
+
+/**
+ * 伏せ字を元の値に戻せない変更 (masked-value) があるとき、伏せていた実際の値が消える他の変更を書かない。
+ * 伏せ字の行を別のブロック・別のファイルへ移す回答 (移動先は戻す元がないため止まる) で、--partial が
+ * 移動元の削除だけを書くと、値が作業ツリーから消えるため (同じ回答を出し直しても戻す元がもうない)
+ */
+function withholdMaskedLosses(states: Map<string, FileState>, plan: Plan): Plan {
+  if (!plan.failures.some((f) => f.kind === "masked-value")) return plan;
+  for (const o of plan.outcomes) {
+    const writes = o.afterBytes !== null || (o.change.op === "delete" && o.failures.length === 0);
+    if (!writes || o.alreadyApplied || !outcomeRemovesMaskedValue(o, states.get(o.change.path))) continue;
+    o.withheld = true;
+    const failure: Failure = {
+      path: o.change.path,
+      kind: "masked-value",
+      message:
+        `伏せ字 ${MASK_TOKEN} を元の値に戻せない変更が同じ回答にあるため、伏せていた実際の値がこのファイルから消える変更は` +
+        `書き込みません。伏せ字を含む行は別のブロックや別のファイルへ移せません (同じファイルの中で移すなら、元の位置と` +
+        `新しい位置を 1 つのブロックの SEARCH / REPLACE に含めてください)`,
+    };
+    o.failures.push(failure);
+    plan.failures.push(failure);
+  }
+  plan.ok = plan.failures.length === 0;
   return plan;
 }
 
@@ -743,7 +778,47 @@ function writesLiteralMask(plan: Plan): boolean {
  * (replace / rewrite / delete) と新しく作るファイルの全体で、変更の前後の伏せた値 (抜粋と同じ伏せ方。
  * 複数行にまたがる値は行ごと) を数えて比べる。伏せ方を対応づけられないファイルがあれば、減るものとして扱う
  */
-function losesMaskedValue(changeSet: ChangeSet, states: Map<string, FileState>, plan: Plan): boolean {
+function losesMaskedValue(states: Map<string, FileState>, plan: Plan): boolean {
+  // 元の値に戻すのは同じファイルの行からだけなので、値はファイルをまたいで移らない。ファイルごとに比べる
+  // (別のファイルで同じ値の行を増やしても、消えた分を埋め合わせたことにしない)
+  return plan.outcomes.some((o) => outcomeLosesMaskedValue(o, states.get(o.change.path)));
+}
+
+/**
+ * 1 つのファイルの変更で、伏せていた実際の値のどれかがファイルの文字列から (数を) 減らすか。伏せ方は変わっても
+ * 値が残る変更 (前の行を書き換えて、次の行の値が伏せられなくなる) は減らないとみなす
+ */
+function outcomeRemovesMaskedValue(o: FileOutcome, state: FileState | undefined): boolean {
+  if (state === undefined || !state.exists || state.bytes === null) return false;
+  let beforeText: string;
+  try {
+    beforeText = decodeFile(state.bytes).lines.map((l) => l.text).join("\n");
+  } catch {
+    // 読めないファイルには伏せた表示がなく、戻す元にもならない
+    return false;
+  }
+  const values = maskedValueCounts(beforeText.split("\n"), o.change.path);
+  if (values === null) return true;
+  let afterText = "";
+  if (!(o.change.op === "delete" && o.failures.length === 0)) {
+    try {
+      afterText = decodeFile(o.afterBytes ?? state.bytes).lines.map((l) => l.text).join("\n");
+    } catch {
+      return true;
+    }
+  }
+  // 値が非常に多い大きなファイルは、文字列を値ごとに数えると時間がかかるため、伏せた値の数で比べる (安全側)
+  if (values.size * (beforeText.length + afterText.length) > 50_000_000) return outcomeLosesMaskedValue(o, state);
+  const occurrences = (text: string, value: string): number => text.split(value).length - 1;
+  for (const value of values.keys()) {
+    if (value.trim() === "") continue;
+    if (occurrences(afterText, value) < occurrences(beforeText, value)) return true;
+  }
+  return false;
+}
+
+/** 1 つのファイルの変更で、伏せていた実際の値のどれかが数を減らすか (読めない・対応づけられないなら減るものとする) */
+function outcomeLosesMaskedValue(o: FileOutcome, state: FileState | undefined): boolean {
   const linesOf = (bytes: Uint8Array): string[] | null => {
     try {
       return decodeFile(bytes).lines.map((l) => l.text);
@@ -751,30 +826,25 @@ function losesMaskedValue(changeSet: ChangeSet, states: Map<string, FileState>, 
       return null;
     }
   };
-  // 元の値に戻すのは同じファイルの行からだけなので、値はファイルをまたいで移らない。ファイルごとに比べる
-  // (別のファイルで同じ値の行を増やしても、消えた分を埋め合わせたことにしない)
-  for (const o of plan.outcomes) {
-    const path = o.change.path;
-    const state = states.get(path);
-    if (state === undefined || !state.exists || state.bytes === null) continue;
-    const beforeLines = linesOf(state.bytes);
-    // 読めないファイルは、伏せた値があるか確かめられないため減るものとして扱う
-    if (beforeLines === null) return true;
-    const before = maskedValueCounts(beforeLines, path);
-    if (before === null) return true;
-    if (before.size === 0) continue;
-    let after = new Map<string, number>();
-    if (!(o.change.op === "delete" && o.failures.length === 0)) {
-      const bytes = o.afterBytes ?? state.bytes;
-      const afterLines = linesOf(bytes);
-      if (afterLines === null) return true;
-      const counts = maskedValueCounts(afterLines, path);
-      if (counts === null) return true;
-      after = counts;
-    }
-    for (const [value, n] of before) {
-      if ((after.get(value) ?? 0) < n) return true;
-    }
+  const path = o.change.path;
+  if (state === undefined || !state.exists || state.bytes === null) return false;
+  const beforeLines = linesOf(state.bytes);
+  // 読めないファイルは、伏せた値があるか確かめられないため減るものとして扱う
+  if (beforeLines === null) return true;
+  const before = maskedValueCounts(beforeLines, path);
+  if (before === null) return true;
+  if (before.size === 0) return false;
+  let after = new Map<string, number>();
+  if (!(o.change.op === "delete" && o.failures.length === 0)) {
+    const bytes = o.afterBytes ?? state.bytes;
+    const afterLines = linesOf(bytes);
+    if (afterLines === null) return true;
+    const counts = maskedValueCounts(afterLines, path);
+    if (counts === null) return true;
+    after = counts;
+  }
+  for (const [value, n] of before) {
+    if ((after.get(value) ?? 0) < n) return true;
   }
   return false;
 }

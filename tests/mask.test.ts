@@ -493,6 +493,52 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(text(q.outcomes[0]?.afterBytes ?? null)).toContain('"Hunter2Secret"');
   });
 
+  it("戻せない変更があるときは、伏せていた値が消える他の変更を --partial でも書かない", () => {
+    const src = ["Public Class Db", "    Public Sub Open()", "        cn.Open()", "    End Sub", "", '    Private Const DbPassword As String = "Hunter2Secret"', "End Class", ""].join("\r\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\r\n");
+    expect(packed[5]).toBe('    Private Const DbPassword As String = "[MASKED]"');
+    // 伏せ字の行を別のブロックの位置へ移す回答
+    const move = planChangeSet(
+      cs(
+        replace(
+          "Db.vb",
+          block(packed.slice(0, 2), [packed[0] as string, packed[5] as string, "", packed[1] as string], 1),
+          block(packed.slice(4, 7), [packed[6] as string], 2),
+        ),
+      ),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(move.ok).toBe(false);
+    expect(move.outcomes[0]?.withheld).toBe(true);
+    expect(move.failures.map((f) => f.message).join("\n")).toContain("このファイルから消える");
+    expect(move.failures.map((f) => f.message).join("\n")).toContain("1 つのブロック");
+    // ファイルの名前を変える回答 (delete + create)
+    const rename = planChangeSet(
+      cs({ op: "delete", path: "Db.vb", line: 1 } as FileChange, { op: "create", path: "Database.vb", line: 2, content: packed } as FileChange),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(rename.ok).toBe(false);
+    expect(rename.outcomes[0]?.withheld).toBe(true);
+    // 同じ範囲で移すなら戻せる
+    const one = planChangeSet(
+      cs(replace("Db.vb", block(packed.slice(0, 7), [packed[0] as string, packed[5] as string, "", ...packed.slice(1, 4), packed[6] as string]))),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(one.ok).toBe(true);
+    expect(text(one.outcomes[0]?.afterBytes ?? null)).toContain('"Hunter2Secret"');
+    // 戻せない変更がなければ、値を消す変更 (ハードコードした値の削除) はそのまま書く
+    const remove = planChangeSet(
+      cs(replace("Db.vb", block(packed.slice(4, 7), [packed[6] as string]))),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(remove.ok).toBe(true);
+    expect(remove.outcomes[0]?.withheld).toBeUndefined();
+  });
+
   it("戻せない理由は同じ行を 1 つにまとめて数を添える", () => {
     const ini = "[prod]\npassword=ProdSecret1\n";
     const packed = maskCredentials(ini, { vbSource: false, strict: true }).content.split("\n");
@@ -1098,7 +1144,10 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     ]);
     const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
     expect(p.ok).toBe(false);
-    expect(p.failures.map((f) => [f.kind, f.literalRefused, f.literalAllowed])).toEqual([["masked-value", true, undefined]]);
+    const withheld = (f: { message: string }): boolean => f.message.includes("このファイルから消える");
+    expect(p.failures.filter((f) => !withheld(f)).map((f) => [f.kind, f.literalRefused, f.literalAllowed])).toEqual([["masked-value", true, undefined]]);
+    // 移動元の削除は --partial でも書かない
+    expect(p.failures.filter(withheld).map((f) => f.path)).toEqual(["Db.vb"]);
   });
 
   it("同じファイルの中で伏せ字の行を移すときも使わない", () => {
@@ -1200,7 +1249,9 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     );
     const p = planChangeSet(masked, states, NEW_FILE, { literalMasked: true });
     expect(p.ok).toBe(false);
-    expect(p.failures.map((f) => [f.path, f.literalRefused])).toEqual([["D.vb", true]]);
+    const withheld = (f: { message: string }): boolean => f.message.includes("このファイルから消える");
+    expect(p.failures.filter((f) => !withheld(f)).map((f) => [f.path, f.literalRefused])).toEqual([["D.vb", true]]);
+    expect(p.failures.filter(withheld).map((f) => f.path)).toEqual(["C.vb"]);
   });
 
   it("伏せた値が消えない変更なら、ほかのファイルに伏せ字があっても使う", () => {

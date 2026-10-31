@@ -137,18 +137,37 @@ const SETTING_NAME = /\bname\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
  */
 const ENV_LINE = /^((?:export[ \t]+)?)([A-Za-z0-9_.-]+)(=)([^\r\n]*)/gm;
 
+/** キーの値の文字列(C# の @"..." / $"..." / $@"..." も) */
+const KEY_VALUE = String.raw`((?:\$?@|@\$)"(?:[^"\r\n]|"")*"|\$?"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')`;
+/** 型の注釈の型(string / Optional[str] / Map<K, V> / string | null) */
+const KEY_TYPE = String.raw`[A-Za-z_$][\w$.]*(?:<[^<>\r\n]*>|\[[^\[\]\r\n]*\])*\??`;
+
 /**
  * キーと文字列の値: JSON の "password": "..."、コードの dbPassword = "..." / { apiKey: '...' } など。
- * キーは識別子(途中から始めない)か引用符で囲んだもの、区切りは : か =(== などの比較は除く)。
+ * キーは識別子(途中から始めない)か引用符で囲んだもの、区切りは : か =(== などの比較は除く)のほか、
+ * VB の As 型(汎用テキストとして伏せる .vb の Dim pwd As String = "...")・C# の自動プロパティの初期化子
+ * ({ get; set; } = "..." / { get; } = "...")・Go の := も認める。
  * キーの判定は置き換えの中で行う(正規表現に入れると、秘密系の語を多く含む長い文字列で遅くなるため)
  */
+const KEY_LITERAL = new RegExp(
+  String.raw`((?<![A-Za-z0-9_$.])[A-Za-z_$][A-Za-z0-9_$.]*|"[^"\r\n]*"|'[^'\r\n]*')` +
+    String.raw`(\s*(?:(?<=[ \t])[Aa][Ss][ \t]+[A-Za-z_][\w.]*(?:\(\))?[ \t]*=(?!=)` +
+    String.raw`|\{[ \t]*get;[ \t]*(?:(?:(?:public|private|protected|internal)[ \t]+)*(?:set|init);[ \t]*)?\}[ \t]*=(?!=)` +
+    String.raw`|:=|:|=(?!=))\s*)` +
+    KEY_VALUE,
+  "g",
+);
+
 /**
- * キーと文字列の値。区切りは : / = のほか、型の注釈(TS / Python の password: string = "...")・VB の As 型
- * (汎用テキストとして伏せる .vb の Dim pwd As String = "...")・C# の自動プロパティの初期化子
- * ({ get; set; } = "...")・Go の := も認める
+ * 型の注釈つきのキーと文字列の値(TS / Python の password: string = "...")。KEY_LITERAL の後に別に探す
+ * (同じ式に入れると case "prod": dbPassword = "..." の dbPassword を型と読み、その代入を探し直さないため)
  */
-const KEY_LITERAL =
-  /((?<![A-Za-z0-9_$.])[A-Za-z_$][A-Za-z0-9_$.]*|"[^"\r\n]*"|'[^'\r\n]*')(\s*(?::[ \t]*[A-Za-z_$][\w$.]*(?:<[^<>\r\n]*>|\[[^\[\]\r\n]*\])*\??(?:[ \t]*\|[ \t]*[A-Za-z_$][\w$.]*(?:<[^<>\r\n]*>|\[[^\[\]\r\n]*\])*\??)*[ \t]*=(?!=)|(?<=[ \t])[Aa][Ss][ \t]+[A-Za-z_][\w.]*(?:\(\))?[ \t]*=(?!=)|\{[ \t]*get;[ \t]*(?:(?:private|protected|internal)[ \t]+)?(?:set|init);[ \t]*\}[ \t]*=(?!=)|:=|:|=(?!=))\s*)("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')/g;
+const KEY_LITERAL_TYPED = new RegExp(
+  String.raw`((?<![A-Za-z0-9_$.])[A-Za-z_$][A-Za-z0-9_$.]*)` +
+    String.raw`(\s*:[ \t]+${KEY_TYPE}(?:[ \t]*\|[ \t]*${KEY_TYPE})*[ \t]*=(?!=)\s*)` +
+    KEY_VALUE,
+  "g",
+);
 
 /** 設定のキー名の最後の語(と最後の 2 語を続けたもの)がこれらなら秘密系 / ユーザー ID 系 */
 const SECRET_KEY_WORDS = new Set([
@@ -244,7 +263,8 @@ function keyWords(key: string): string[] {
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.toLowerCase())
     // 番号・版の語は除き、語の末尾の番号も除く(Password2 / DB_PASSWORD_2 / password_v2)
-    .map((word) => (/^v?\d+$/.test(word) ? "" : word.replace(/(?<=[a-z])\d+$/, "")))
+    // (pass1 / pass2 は処理の段のことが多いため除かない)
+    .map((word) => (/^v?\d+$/.test(word) ? "" : /^pass\d+$/.test(word) ? word : word.replace(/(?<=[a-z])\d+$/, "")))
     .filter((word) => word !== "");
 }
 
@@ -315,7 +335,8 @@ const CALLEE_TAIL = new RegExp(`([${IDENT_HEAD}][${IDENT_BODY}]*)\\s*$`);
 /** コメント内のコメントアウトされた代入('wk_Pswd = "x" など) */
 const COMMENT_ASSIGN = new RegExp(
   // 識別子の途中からは始めない(長い語のコメントで各位置から語の終わりまでを読み直さないように)
-  `(?<![${IDENT_BODY}])([${IDENT_HEAD}][${IDENT_BODY}]*)(\\s*=\\s*")([^"\\r\\n]+)(")`,
+  // (.Password / 1.pwd のように . や数字から始まる語もそのまま識別子として読む)
+  `(?<![${IDENT_BODY}])([${IDENT_BODY}]+)(\\s*=\\s*")([^"\\r\\n]+)(")`,
   "g",
 );
 
@@ -657,13 +678,14 @@ function maskVbSource(
       if (kind === undefined && continued && secretPart === "whole") {
         kind = secretKind;
       }
-      // 真偽値(Dim savePassword As String = "True")は伏せない
-      if (kind !== undefined && /^(?:true|false)$/i.test(inner.trim())) {
-        kind = undefined;
-      }
       if (kind !== undefined) {
-        findings.push({ line: lineOf(content, i), kind });
-        emit(`"${MASK}"`);
+        // 真偽値(Dim savePassword As String = "True")は伏せない(連結で続くリテラルは値の続きとして伏せる)
+        if (/^(?:true|false)$/i.test(inner.trim())) {
+          emit(`"${inner}"`);
+        } else {
+          findings.push({ line: lineOf(content, i), kind });
+          emit(`"${MASK}"`);
+        }
         secretKind = kind;
         secretPart = "whole";
         sinceSecret = "";
@@ -893,16 +915,20 @@ function maskGenericText(
       return `${key}${eq}${MASK}${closeQuote}`;
     },
   );
-  // キーと文字列の値("password": "..." / dbPassword = "..." / { apiKey: '...' })
-  result = result.replace(KEY_LITERAL, (whole, key: string, sep: string, literal: string, offset: number) => {
+  const maskKeyLiteral = (whole: string, key: string, sep: string, literal: string, offset: number): string => {
     const name = /^["']/.test(key) ? key.slice(1, -1) : key;
     // : だけの区切りはオブジェクト・辞書・行頭(コメントの次の行・YAML も)のキーだけ(三項演算子の cond ? "password" : "text" を除く)
     const before = result.slice(Math.max(0, offset - 200), offset);
     if (sep.includes(":") && !sep.includes("=")) {
-      // 行頭は YAML のリストの項目(- password: "...")も。前の行が ? で終わる(複数行の三項演算子)なら行頭とみなさない
+      // 行頭は YAML のリストの項目(- password: "...")も。前の行が ? で終わり、: の前に空白があれば複数行の
+      // 三項演算子とみなす(? で終わるコメントの行は除く)
+      const ternary =
+        /^\s+:/.test(sep) &&
+        /\?[ \t]*\r?\n[ \t]*$/.test(before) &&
+        !/(?:#|\/\/)[^\r\n]*\?[ \t]*\r?\n[ \t]*$/.test(before);
       const lineStart =
         /[{,[(][ \t]*$/.test(before) ||
-        (/\n[ \t]*(?:-[ \t]+)?$/.test(before) && !/\?[ \t]*\r?\n[ \t]*$/.test(before)) ||
+        (/\n[ \t]*(?:-[ \t]+)?$/.test(before) && !ternary) ||
         (offset <= 200 && /^[ \t]*(?:-[ \t]+)?$/.test(before));
       // TS の型の文字列リテラルの合併(token: "a" | "b")は値ではない
       const union = /^[ \t]*\|(?!\|)/.test(result.slice(offset + whole.length, offset + whole.length + 20));
@@ -910,13 +936,17 @@ function maskGenericText(
         return whole;
       }
     }
-    if (!isSecretPair(name, literal.slice(1, -1))) {
+    const prefix = /^[@$]*/.exec(literal)?.[0] ?? "";
+    const quote = literal.charAt(prefix.length);
+    if (!isSecretPair(name, literal.slice(prefix.length + 1, -1))) {
       return whole;
     }
     findings.push({ line: lineOf(result, offset), kind: KIND_PASSWORD });
-    const quote = literal.charAt(0);
-    return `${key}${sep}${quote}${MASK}${quote}`;
-  });
+    return `${key}${sep}${prefix}${quote}${MASK}${quote}`;
+  };
+  // キーと文字列の値("password": "..." / dbPassword = "..." / { apiKey: '...' } / password: string = "...")
+  result = result.replace(KEY_LITERAL, maskKeyLiteral);
+  result = result.replace(KEY_LITERAL_TYPED, maskKeyLiteral);
   result = maskConnstrText(result, findings, (index) => lineOf(result, index));
   if (strict) {
     result = maskEntropyText(result, findings, (index) => lineOf(result, index));

@@ -50,7 +50,7 @@ import { formatVbprojPlan, planVbprojRegistrations, type VbprojPlan } from "./vb
 
 /** このファイルは書き込み対象か (適用済みのみのファイルは書き込み不要なので含めない) */
 function isApplicable(o: FileOutcome): boolean {
-  if (o.alreadyApplied) return false;
+  if (o.alreadyApplied || o.withheld === true) return false;
   if (o.change.op === "replace") return o.appliedBlocks.length > 0;
   return o.failures.length === 0;
 }
