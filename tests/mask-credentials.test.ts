@@ -731,6 +731,67 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(maskCredentials(cs, LOOSE).content.endsWith('"; // 更新'));
   });
 
+  it("行の前の update の語・別の行の SQL の SET・エスケープした引用符の set を正しく読む", () => {
+    for (const [input, expected] of [
+      ['if /i "%1"=="update" set DB_PASSWORD=Secret123', 'if /i "%1"=="update" set DB_PASSWORD=[MASKED]'],
+      ["call update.bat & set DB_PASSWORD=Secret123", "call update.bat & set DB_PASSWORD=[MASKED]"],
+      ['sqlcmd -Q "UPDATE Config SET Flag=1" & set SA_PASSWORD=Secret123', 'sqlcmd -Q "UPDATE Config SET Flag=1" & set SA_PASSWORD=[MASKED]'],
+      ["(set DB_PASSWORD=Pa^)ss123)", "(set DB_PASSWORD=[MASKED])"],
+      ["set password=:Zq9x", "set password=[MASKED]"],
+      ['"start": "set \\"DB_PASSWORD=Secret123\\" && node app.js"', '"start": "set \\"DB_PASSWORD=[MASKED]\\" && node app.js"'],
+      ['var c = @"set ""DB_PASSWORD=Secret123"" && run.bat";', 'var c = @"set ""DB_PASSWORD=[MASKED]"" && run.bat";'],
+      ['ENV DB_PASSWORD="Sec\\"ret" X=1', 'ENV DB_PASSWORD="[MASKED]" X=1'],
+      ['docker run -e "DB_PASSWORD=Sec\\"ret" img', 'docker run -e "DB_PASSWORD=[MASKED]" img'],
+      ["postgres://user:Pa&#x40;ss@host/db", "postgres://user:[MASKED]@host/db"],
+      ['      - "API_KEY=abc#def" # c', '      - "API_KEY=[MASKED]" # c'],
+      ['<add name="x" connectionString="Password=Bu\'2024x;Data Source=x" />', '<add name="x" connectionString="Password=[MASKED];Data Source=x" />'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    // SQL の SET col=:col / @col(UPDATE の次の行のもの)は伏せない
+    for (const input of [
+      "UPDATE T_USER\nSET LOGIN_PASSWORD=:LOGIN_PASSWORD, UPD_USER=:UPD_USER\nWHERE ID=:ID",
+      'sb.AppendLine("SET LOGIN_PASSWORD=:LOGIN_PASSWORD, UPD_USER=:UPD_USER")',
+      "UPDATE Users\nSET LoginUser=@LoginUser, Email=@Email WHERE Id=@Id",
+      "UPDATE Users\nSET DbPassword=@NewDbPassword, X=1",
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
+  it("パスワードを引数で渡すコマンド(sqlcmd -P・mysql -p・net use・schtasks /RP)の値を伏せる", () => {
+    for (const [input, expected] of [
+      ["sqlcmd -S DBSV01 -U sa -P Secret123 -i setup.sql", "sqlcmd -S DBSV01 -U sa -P [MASKED] -i setup.sql"],
+      ['osql -S srv -U sa -P "Sec ret" -Q "select 1"', 'osql -S srv -U sa -P "[MASKED]" -Q "select 1"'],
+      ["bcp db.dbo.T out t.dat -S srv -U sa -PSecret123 -c", "bcp db.dbo.T out t.dat -S srv -U sa -P[MASKED] -c"],
+      [
+        'test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-U", "sa", "-P", "Str0ngPa55!", "-Q", "SELECT 1"]',
+        'test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-U", "sa", "-P", "[MASKED]", "-Q", "SELECT 1"]',
+      ],
+      ["mysql -u root -pSecret123 mydb < dump.sql", "mysql -u root -p[MASKED] mydb < dump.sql"],
+      ['"C:\\Program Files\\MySQL\\bin\\mysql.exe" -u root -pSecret123', '"C:\\Program Files\\MySQL\\bin\\mysql.exe" -u root -p[MASKED]'],
+      ["net use \\\\srv\\share Secret123 /user:dom\\x", "net use \\\\srv\\share [MASKED] /user:dom\\x"],
+      ['net use Z: "\\\\srv\\share name" Secret123 /user:x', 'net use Z: "\\\\srv\\share name" [MASKED] /user:x'],
+      ["schtasks /Create /TN job /TR run.bat /RU svc /RP Secret123 /SC DAILY", "schtasks /Create /TN job /TR run.bat /RU svc /RP [MASKED] /SC DAILY"],
+      ["schtasks /Create /S host /U admin /P Secret123 /TN job", "schtasks /Create /S host /U admin /P [MASKED] /TN job"],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    // 変数の参照・MSBuild のプロパティ・入力を求める指定(* / 値なしの -p)は伏せない
+    for (const input of [
+      "sqlcmd -S srv -U sa -P%SA_PASSWORD% -i x.sql",
+      "sqlcmd -S srv -U sa -P $(DbPassword)",
+      "mysql -u root -p mydb",
+      "net use \\\\srv\\share * /user:x",
+      "echo -P is a flag",
+      "cp -pr /var/lib/mysql/* /backup/",
+      "python mysql.py -pr x",
+      "cp -P bcp/x.txt y",
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
   it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
     const started = Date.now();
     for (const vbSource of [false, true]) {
@@ -742,6 +803,10 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       maskCredentials("set A=b & ".repeat(150000), { vbSource, strict: true });
       maskCredentials("ENV " + "A=b \\\n".repeat(150000), { vbSource, strict: true });
       maskCredentials('set "PASSWORD=' + '"x'.repeat(300000), { vbSource, strict: true });
+      maskCredentials("(set A=b) ".repeat(150000), { vbSource, strict: true });
+      maskCredentials("UPDATE t SET a=1 ".repeat(100000), { vbSource, strict: true });
+      maskCredentials('x("set A=b") '.repeat(100000), { vbSource, strict: true });
+      maskCredentials("pass" + "1".repeat(200000) + "_a".repeat(100000) + "=x", { vbSource, strict: true });
     }
     assert.ok(Date.now() - started < 15000);
   });
