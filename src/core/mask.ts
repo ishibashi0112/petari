@@ -315,7 +315,7 @@ const BATCH_SET = /(?<=^|[ \t@(&|;"'>])([Ss][Ee][Tt][ \t]+)(\\"|""|"|&quot;)?([A
 const CLI_COMMAND =
   /(?<![\w.-])(sqlcmd|osql|isql|bcp|mysql|mysqldump|mysqladmin|mysqlimport|net[ \t]+use|schtasks)(?:\.exe)?(?=["'\s,\]%!]|&(?:quot|apos);|$)/gi;
 /** 引数の区切りの空白(行の継続(バッチの ^ / シェルの \ の後の改行)も) */
-const CLI_SP = String.raw`(?:[ \t]|[\^\\]\r?\n)+`;
+const CLI_SP = String.raw`(?:[ \t]|\^\r?\n|(?<=[ \t])\\\r?\n)+`;
 /** 引用符で囲まない値の文字(行の継続の ^ / \ は値に含めない) */
 const CLI_BARE = (excluded: string): string => String.raw`(?:[^\s"'` + "`" + String.raw`^\\${excluded}]|[\^\\](?![\r\n]|$))+`;
 /** 引用符で囲んだ値("..." / '...' / MSBuild の &quot;...&quot;) */
@@ -360,7 +360,7 @@ const CLI_ARGS: ReadonlyArray<readonly [RegExp, readonly RegExp[]]> = [
 ];
 /** コマンド名のない引数の文字列(ProcessStartInfo.Arguments = "-S srv -U sa -P ...")の -U ユーザー -P パスワード */
 const CLI_USER_PASSWORD = new RegExp(
-  String.raw`((?<=[\s"'])-U[ \t]+(?:${CLI_QUOTED}|[^\s"'` + "`" + String.raw`]+)[ \t]+-P[ \t]*)(${CLI_VALUE})`,
+  String.raw`((?<=[\s"'])-U[ \t]*(?:${CLI_QUOTED}|[^\s"'` + "`" + String.raw`]+)[ \t]+-P[ \t]*)(${CLI_VALUE})`,
   "g",
 );
 
@@ -375,7 +375,8 @@ function cliCommandEnd(text: string, start: number, limit = text.length): number
     const ch = text.charAt(i);
     if (ch === "\n" || ch === "\r") {
       const prev = text.charAt(i - 1);
-      if (i > start && (prev === "^" || prev === "\\")) {
+      // シェルの \ は空白の後のものだけ(パスの末尾の \ は継続ではない)
+      if (i > start && (prev === "^" || (prev === "\\" && /[ \t]/.test(text.charAt(i - 2))))) {
         if (ch === "\r" && text.charAt(i + 1) === "\n") {
           i += 1;
         }
@@ -425,10 +426,10 @@ function isCliNonSecret(value: string): boolean {
     isPlaceholderOnly(inner) ||
     // $Password(PowerShell)/ $$MYSQL_PASSWORD(compose)/ $env:X / ${x} / {password}(f 文字列)/ {{ x }} / $(Prop)(MSBuild)/
     // $(cat ...) ・ `...`(コマンドの置き換え)/ <password> ・ [password](説明文の書き方)
-    /^(?:\$\$?\{?[A-Za-z_]\w*\}?|\$env:[A-Za-z_]\w*|\{[A-Za-z_][\w.]*\}|\{\{[^{}]*\}\}|\$\([\w.]+\)|<[^<>]*>|\[[^\[\]]*\])$/i.test(inner) ||
+    /^(?:\$\$?[A-Za-z_]+|\$\$?\{[A-Za-z_]\w*\}|\$env:[A-Za-z_]\w*|\{[A-Za-z_][\w.]*\}|\{\{[^{}]*\}\}|\$\([\w.]+\)|<[^<>]*>|\[[^\[\]]*\])$/i.test(inner) ||
     /^(?:\$\(|`)/.test(inner) ||
     (quote === "" && /^(?:[<>|&^\/*`-]|\d>|[\d.]+(?::\d+)+(?:\/(?:tcp|udp))?$)/.test(inner)) ||
-    (quote !== "" && /^\s*[&+]|[&+]\s*$/.test(inner))
+    (quote !== "" && /^\s*[&+.]\s|\s[&+.]\s*$|^\s+[&+]|[&+]\s+$/.test(inner))
   );
 }
 
@@ -445,6 +446,10 @@ function maskCliArgs(source: string, findings: MaskFinding[]): string {
     for (let c = inner.exec(segment); c !== null; c = inner.exec(segment)) {
       const name = c[1] ?? "";
       const at = c.index;
+      // ユーザー名・コンテナ名などの値(sudo -u mysql / docker run --name mysql)はコマンドではない
+      if (/(?:^|\s)(?:-[ugh]|--(?:user|group|name|hostname|host))[ \t]+$/.test(source.slice(Math.max(0, m.index + at - 40), m.index + at))) {
+        continue;
+      }
       CLI_ARGS.forEach(([kindName], kind) => {
         if (kindName.test(name) && !firsts.has(kind)) {
           firsts.set(kind, at);
@@ -453,7 +458,7 @@ function maskCliArgs(source: string, findings: MaskFinding[]): string {
     }
     for (const [kind, at] of firsts) {
       const tail = segment.slice(at);
-      if (kind === 0 && !/(?<=[\s"'\[,])-U(?![\w-])/.test(tail)) {
+      if (kind === 0 && !/(?<=[\s"'\[,])-U(?!-)/.test(tail)) {
         continue;
       }
       for (const pattern of CLI_ARGS[kind]?.[1] ?? []) {
@@ -483,6 +488,12 @@ function maskCliArgs(source: string, findings: MaskFinding[]): string {
   const userPassword = new RegExp(CLI_USER_PASSWORD.source, CLI_USER_PASSWORD.flags);
   for (let a = userPassword.exec(source); a !== null; a = userPassword.exec(source)) {
     const valueStart = a.index + (a[1] ?? "").length;
+    // PostgreSQL のコマンドの -P はパスワードではない(psql -P pager=off / createuser -P / pgbench -P 5)
+    const near = source.slice(Math.max(0, a.index - 300), a.index);
+    const lineHead = near.slice(near.lastIndexOf("\n") + 1);
+    if (/(?<![\w.-])(?:psql|createuser|createdb|pgbench|pg_dump|pg_dumpall|pg_restore|dropdb|dropuser|vacuumdb|reindexdb|clusterdb|pg_basebackup)(?:\.exe)?\b/i.test(lineHead)) {
+      continue;
+    }
     let value = a[2] ?? "";
     const quote = cliQuote(value);
     if (quote === "") {
@@ -525,7 +536,13 @@ function isBindMarkerFor(key: string, after: string, before: string): boolean {
   return (
     (name !== undefined && norm(name) === norm(key)) ||
     /^[ \t]*(?:,|where\b)/i.test(after.slice(m[0].length)) ||
-    /\bupdate\b/i.test(before)
+    /\bupdate\b/i.test(
+      before
+        .split(/\r?\n/)
+        .slice(-2)
+        .filter((line) => !/^\s*(?:@?rem\b|::)/i.test(line))
+        .join("\n"),
+    )
   );
 }
 
@@ -1399,7 +1416,7 @@ function maskGenericText(
       // SQL の UPDATE 表 [別名] SET col=...(コードの文字列の中のものも)と、値が列名に対応するバインド変数
       // (@name / :name / ?)の SET(UPDATE の次の行の SET col=:col, ...)はバッチの set ではない
       if (
-        /\bupdate[ \t]+(?:[\w.\[\]"`${}]+(?:[ \t]+(?:as[ \t]+)?(?!set\b)\w+)?[ \t]+)?$/i.test(source.slice(Math.max(before.lineStart, offset - 300), offset)) ||
+        /(?:\b(?:then|do)[ \t]+update[ \t]+|\bupdate[ \t]+[\w.\[\]"`${}]+(?:[ \t]+(?:as[ \t]+)?(?!set\b)\w+)?[ \t]+)$/i.test(source.slice(Math.max(before.lineStart, offset - 300), offset)) ||
         isBindMarkerFor(key, source.slice(valueStart, valueStart + 300), source.slice(Math.max(0, offset - 300), offset))
       ) {
         pattern.lastIndex = valueStart;

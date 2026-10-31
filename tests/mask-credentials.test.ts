@@ -869,6 +869,34 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
+  it("コマンドの引数のパスワード: -Usa の形・+ や & を含む値・$ で始まる値を伏せ、PostgreSQL の -P・オプションの値のコマンド名・パスの末尾の \\ は読まない", () => {
+    for (const [input, expected] of [
+      ["osql -Ssrv -Usa -PZq9xY2 -iinstall.sql", "osql -Ssrv -Usa -P[MASKED] -iinstall.sql"],
+      ["bcp db..t out t.dat -c -Usa -PZq9xY2 -Ssrv", "bcp db..t out t.dat -c -Usa -P[MASKED] -Ssrv"],
+      ['psi.Arguments = "-Ssrv -Usa -PZq9xY2"', 'psi.Arguments = "-Ssrv -Usa -P[MASKED]"'],
+      ['sqlcmd -S srv -U sa -P "Zq9xY2+" -i a.sql', 'sqlcmd -S srv -U sa -P "[MASKED]" -i a.sql'],
+      ['mysql -uroot -p"+Zq9&xY2&"', 'mysql -uroot -p"[MASKED]"'],
+      ["sqlcmd -S DBSRV01 -U sa -P $ecr3t2024 -i deploy.sql", "sqlcmd -S DBSRV01 -U sa -P [MASKED] -i deploy.sql"],
+      ["net use Z: \\\\fs01\\share $Passw0rd /user:x", "net use Z: \\\\fs01\\share [MASKED] /user:x"],
+      ["rem === update.bat : DB update ===\nset DB_PASSWORD=@dmin2024", "rem === update.bat : DB update ===\nset DB_PASSWORD=[MASKED]"],
+      ["if /i %MODE%==update set DB_PASSWORD=Zq9xY2!", "if /i %MODE%==update set DB_PASSWORD=[MASKED]"],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    for (const input of [
+      "psql -U postgres -P pager=off",
+      "createuser -U postgres -P newuser",
+      "pgbench -U postgres -P 5",
+      "sudo -u mysql cp -pr /a /b",
+      "net use Z: \\\\fs01\\share\\\nif errorlevel 1 goto err",
+      '$cmd = "mysql -u root -p" . $pass . " db";',
+      'var a = "-S srv -U sa -P " + pwd + " -i a.sql";',
+      "sqlcmd -S $Server -U $User -P $Password",
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
   it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
     const started = Date.now();
     for (const vbSource of [false, true]) {
