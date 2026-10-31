@@ -137,6 +137,16 @@ const PARTIAL_JWT =
   /(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:eyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])/g;
 const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
 
+/**
+ * 前の 2 つが伏せ字で、さらに「.」の区切りが続く並び(ホスト名など)。JWT は「.」で 3 つに区切られるので
+ * これはトークンの残りではない(高エントロピーのサブドメインを伏せた接続先のホスト名を伏せすぎない)
+ */
+function isDottedName(whole: string, offset: number, all: string): boolean {
+  if (!whole.startsWith(`${MASK}.${MASK}.`)) return false;
+  const after = all.slice(offset + whole.length, offset + whole.length + 2);
+  return all[offset - 1] === "." || /^\.[A-Za-z0-9]/.test(after);
+}
+
 /** 伏せ字を含み、伏せていない英数字も残っているか */
 function isPartlyMasked(token: string): boolean {
   return token.includes(MASK) && /[A-Za-z0-9]/.test(token.split(MASK).join(""));
@@ -512,7 +522,9 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
   );
   // 一部だけ伏せたトークンの残り(伏せ字がなければ探さない)
   if (result.includes(MASK)) {
-    result = result.replace(PARTIAL_JWT, (whole: string) => (isPartlyMasked(whole) ? MASK : whole));
+    result = result.replace(PARTIAL_JWT, (whole: string, offset: number, all: string) =>
+      isPartlyMasked(whole) && !isDottedName(whole, offset, all) ? MASK : whole,
+    );
     result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
       isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
     );

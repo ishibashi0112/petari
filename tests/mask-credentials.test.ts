@@ -325,5 +325,11 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
       "[MASKED].something.whatever",
     );
     assert.strictEqual(maskCredentials("x = [MASKED].Resource1.Designer", GENERIC).content, "x = [MASKED].Resource1.Designer");
+    // 高エントロピーのサブドメインを 2 つ伏せたホスト名は、残りを伏せない(JWT は 3 つに区切られる)
+    assert.strictEqual(
+      maskCredentials("Server=tcp:Xk3pQ9vLm2Rt7sWz8Yb4.Hq5nJ8cV1xKz6Tg3Lp0W.database.windows.net;", { ...GENERIC, strict: true })
+        .content,
+      "Server=tcp:[MASKED].[MASKED].database.windows.net;",
+    );
   });
 });
