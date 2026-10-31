@@ -7,7 +7,7 @@
  * - SEARCH の [MASKED] を「伏せた後の実ファイル」と照合する (伏せ字の行も変更できる)
  * - 書き込む行の [MASKED] を元の値に戻す。戻せなければ書かずに止める
  *
- * maskCredentials と maskLinesForDisplay は slnmix の src/services/credentialMasker.ts の写し
+ * maskCredentials / maskLinesForDisplay / maskedValuesForDisplay は slnmix の src/services/credentialMasker.ts の写し
  * (slnmix 0.22.2 時点)。判定を変えるときは両方を揃える (slnmix と petari の統合で 1 つに戻す。設計書 §25)。
  * I/O を持たない純粋ロジック。
  */
@@ -134,7 +134,7 @@ const BEARER_TOKEN = /\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi;
  * ことがある。伏せ字を含み、伏せていない英数字も残っているものを丸ごと伏せる
  */
 const PARTIAL_JWT =
-  /(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])(?:\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])){2}/g;
+  /(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:eyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])/g;
 const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
 
 /** 伏せ字を含み、伏せていない英数字も残っているか */
@@ -678,19 +678,45 @@ export interface MaskLinesOptions {
  * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
-export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
-  const text = lines.join("\n");
+/** 抜粋で伏せる範囲 (どの伏せ方でも伏せる範囲を合わせたもの)。対応づけられない伏せ方があれば null */
+function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | null {
   const all: MaskSpan[] = [];
   // 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
   // strict のときは両方の範囲を伏せる
   for (const mode of maskModes(options.path, (options.strict ?? true) ? [true, false] : [false])) {
     const spans = maskedSpans(text, mode);
-    if (spans === null) {
-      return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
-    }
-    all.push(...spans);
+    if (spans === null) return null;
+    // 伏せた範囲が多いファイル (大きな埋め込み画像など) で引数の上限を超えないよう 1 つずつ足す
+    for (const span of spans) all.push(span);
   }
-  return linesFromSpans(lines, text, mergeSpans(all)).map((l) => l.text);
+  return mergeSpans(all);
+}
+
+export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
+  const text = lines.join("\n");
+  const spans = displaySpans(text, options);
+  if (spans === null) {
+    return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
+  }
+  return linesFromSpans(lines, text, spans).map((l) => l.text);
+}
+
+/**
+ * 抜粋 (maskLinesForDisplay) で伏せる元の値 (行ごとに分け、前後の空白を除き、重複なし)。抜粋の外の
+ * 文面 (ビルドエラーの本文など) に同じ値が出たときに伏せるため。対応づけられない伏せ方があれば null
+ */
+export function maskedValuesForDisplay(lines: string[], options: MaskLinesOptions): string[] | null {
+  const text = lines.join("\n");
+  const spans = displaySpans(text, options);
+  if (spans === null) return null;
+  const values = new Set<string>();
+  for (const span of spans) {
+    for (const part of text.slice(span.start, span.end).split("\n")) {
+      const value = part.trim();
+      if (value !== "" && value !== MASK) values.add(value);
+    }
+  }
+  return [...values];
 }
 
 // ---------------------------------------------------------------------------
@@ -748,6 +774,8 @@ export type MaskRestoreResult =
       restored: number;
       /** literal の指定で [MASKED] の文字のまま書いた数 */
       literal: number;
+      /** 元の値に戻した行ごとの、戻す元にした行 (range の中の行番号)。戻していない行は null */
+      sources: (number | null)[];
     }
   | {
       ok: false;
@@ -775,7 +803,7 @@ export function restoreMaskedLines(
   options: { literal?: boolean } = {},
 ): MaskRestoreResult {
   // 範囲の伏せた行を、前後の空白を除いた表示ごとにまとめる (元の値の組の重複は除く)
-  const index = new Map<string, Map<string, string[] | null>>();
+  const index = new Map<string, Map<string, { values: string[] | null; source: number }>>();
   let hasRealValue = false;
   for (const view of views) {
     for (let i = Math.max(0, range.from); i < Math.min(range.to, view.length); i++) {
@@ -783,25 +811,29 @@ export function restoreMaskedLines(
       if (v === undefined || !hasMaskToken(v.text)) continue;
       if (v.values === null || v.values.some((value) => value !== MASK)) hasRealValue = true;
       const key = v.text.trim();
-      const candidates = index.get(key) ?? new Map<string, string[] | null>();
-      candidates.set(JSON.stringify(v.values), v.values);
+      const candidates = index.get(key) ?? new Map<string, { values: string[] | null; source: number }>();
+      const valuesKey = JSON.stringify(v.values);
+      if (!candidates.has(valuesKey)) candidates.set(valuesKey, { values: v.values, source: i });
       index.set(key, candidates);
     }
   }
   const literal = options.literal === true && !hasRealValue;
   const out: string[] = [];
+  const sources: (number | null)[] = [];
   const failures: MaskRestoreFailure[] = [];
   let restored = 0;
   let literalCount = 0;
   for (const line of lines) {
     if (!hasMaskToken(line)) {
       out.push(line);
+      sources.push(null);
       continue;
     }
     const candidates = [...(index.get(line.trim())?.values() ?? [])];
     if (candidates.length === 0) {
       if (literal) {
         out.push(line);
+        sources.push(null);
         literalCount += line.split(MASK).length - 1;
       } else {
         failures.push({ line, reason: "no-source" });
@@ -809,13 +841,14 @@ export function restoreMaskedLines(
       continue;
     }
     const only = candidates[0];
-    if (candidates.length > 1 || only === null || only === undefined) {
+    if (candidates.length > 1 || only === undefined || only.values === null) {
       failures.push({ line, reason: "ambiguous" });
       continue;
     }
-    out.push(fillMaskTokens(line, only));
+    out.push(fillMaskTokens(line, only.values));
+    sources.push(only.source);
     // 実ファイルにもともと [MASKED] という文字がある行は、その文字に戻る (数えない)
-    restored += only.filter((value) => value !== MASK).length;
+    restored += only.values.filter((value) => value !== MASK).length;
   }
   if (failures.length > 0) {
     return {
@@ -825,5 +858,5 @@ export function restoreMaskedLines(
       literalAllowed: !hasRealValue && failures.every((f) => f.reason === "no-source"),
     };
   }
-  return { ok: true, lines: out, restored, literal: literalCount };
+  return { ok: true, lines: out, restored, literal: literalCount, sources };
 }

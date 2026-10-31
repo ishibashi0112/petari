@@ -421,6 +421,39 @@ describe("applyCommand: 伏せ字 [MASKED] の案内", () => {
     expect(readFileSync(join(dir, "Db.vb"), "utf8")).toBe(REAL);
   });
 
+  it("ファイルの移動で伏せ字の行を書く変更には --literal-masked を勧めない", async () => {
+    const dir = setupProject();
+    writeFileSync(join(dir, "Db.vb"), REAL, "utf8");
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(
+      changesPath,
+      doc(
+        "## CHANGES",
+        "",
+        "概要",
+        "",
+        "### FILE: Db.vb (delete)",
+        "",
+        "### FILE: Data/Db.vb (create)",
+        "<<<<<<< CONTENT",
+        "Module Db",
+        '    Dim pwd As String = "[MASKED]"',
+        "End Module",
+        ">>>>>>> END",
+        "",
+      ),
+      "utf8",
+    );
+    const plain = await capture(() => applyCommand([changesPath, "--root", dir, "--yes"]));
+    expect(plain.code).toBe(1);
+    expect(plain.err).not.toContain("--literal-masked を付けると");
+    const flagged = await capture(() => applyCommand([changesPath, "--root", dir, "--yes", "--literal-masked"]));
+    expect(flagged.code).toBe(1);
+    expect(flagged.err).toContain("--literal-masked は使いませんでした");
+    expect(readFileSync(join(dir, "Db.vb"), "utf8")).toBe(REAL);
+    expect(existsSync(join(dir, "Data", "Db.vb"))).toBe(false);
+  });
+
   it("[MASKED] という文字を書くだけの変更には --literal-masked を案内し、レポートには書かない", async () => {
     const source = doc("Module Db", "    Sub A()", "    End Sub", "End Module", "");
     const { dir, changesPath } = setup(source, ["    Sub A()"], ["    Sub A()", '        Log("[MASKED]")']);

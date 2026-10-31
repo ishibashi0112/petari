@@ -313,4 +313,17 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
     assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
     assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
   });
+
+  it("JWT の形でないドット区切りの語は伏せすぎない", () => {
+    const url = "https://k7Qx9Pz2Lm4Vb8Nc3Rt.execute-api.ap-northeast-1.amazonaws.com";
+    assert.strictEqual(
+      maskCredentials(url, { ...GENERIC, strict: true }).content,
+      "https:[MASKED].execute-api.ap-northeast-1.amazonaws.com",
+    );
+    assert.strictEqual(
+      maskCredentials("AKIAIOSFODNN7EXAMPLE.something.whatever", GENERIC).content,
+      "[MASKED].something.whatever",
+    );
+    assert.strictEqual(maskCredentials("x = [MASKED].Resource1.Designer", GENERIC).content, "x = [MASKED].Resource1.Designer");
+  });
 });

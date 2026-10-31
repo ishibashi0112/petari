@@ -281,19 +281,22 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   const plan: Plan = planChangeSet(changeSet, states, resolveNewFile, {
     literalMasked: values["literal-masked"],
   });
-  // 伏せ字を戻せない失敗の補足は端末にだけ出す (AI に貼るレポートに書くと、AI が実際の値の行にも
-  // 指定を勧めかねないため)
   // --literal-masked の案内は端末にだけ出す (AI に貼るレポートには書かない。実際の値を伏せた行にまで
   // 指定を勧めさせないため)
   const literalHint = (): void => {
     const masked = plan.failures.filter((f) => f.kind === "masked-value");
     if (masked.some((f) => f.literalRefused === true)) {
       err(
-        "注: 変更する範囲に実際の値を伏せた [MASKED] の行があるため、--literal-masked は使いませんでした " +
-          "(実際の値を [MASKED] の文字で上書きしないため)\n",
+        "注: 実際の値を伏せた [MASKED] の行を変える・移す変更のため、--literal-masked は使いませんでした " +
+          "(実際の値を [MASKED] の文字で置き換えないため)\n",
       );
     }
-    if (values["literal-masked"] !== true && masked.some((f) => f.literalAllowed === true)) {
+    // 指定すれば本当に書けるときだけ案内する (指定しても使われない変更に勧めない)
+    const literalWorks = (): boolean =>
+      !planChangeSet(changeSet, states, resolveNewFile, { literalMasked: true }).failures.some(
+        (f) => f.kind === "masked-value",
+      );
+    if (values["literal-masked"] !== true && masked.some((f) => f.literalAllowed === true) && literalWorks()) {
       err(
         "注: [MASKED] という文字そのものを書く変更 (伏せ字を扱うコード) なら、--literal-masked を付けると" +
           "そのまま書き込めます。実際の値を伏せた行には使わないでください\n",
@@ -333,6 +336,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       return 0;
     }
     err("petari: 適用できる変更がありません。\n");
+    literalHint();
     await emitReport(
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
     );

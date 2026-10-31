@@ -125,7 +125,13 @@ describe("restoreMaskedLines", () => {
 
   it("同じ文字列の伏せた行から値を戻す (インデントは書き込む側のまま)", () => {
     const r = restoreMaskedLines(['    pwd = "[MASKED]"', "Log()"], views, { from: 0, to: 3 });
-    expect(r).toEqual({ ok: true, lines: ['    pwd = "s3cret"', "Log()"], restored: 1, literal: 0 });
+    expect(r).toEqual({
+      ok: true,
+      lines: ['    pwd = "s3cret"', "Log()"],
+      restored: 1,
+      literal: 0,
+      sources: [0, null],
+    });
   });
 
   it("書き換えた行は戻さない (値の取り違えを避ける)", () => {
@@ -170,7 +176,7 @@ describe("restoreMaskedLines", () => {
     const before = restoreMaskedLines(['Log("[MASKED]")'], plain, { from: 0, to: 2 });
     expect(before).toMatchObject({ ok: false, literalRefused: false, literalAllowed: true });
     const r = restoreMaskedLines(['Log("[MASKED]")'], plain, { from: 0, to: 2 }, { literal: true });
-    expect(r).toEqual({ ok: true, lines: ['Log("[MASKED]")'], restored: 0, literal: 1 });
+    expect(r).toEqual({ ok: true, lines: ['Log("[MASKED]")'], restored: 0, literal: 1, sources: [null] });
   });
 
   it("literal でも範囲に実際の値を伏せた行があれば使わない (実際の値を [MASKED] で上書きしない)", () => {
@@ -674,6 +680,150 @@ describe("applier: 伏せ字で値を取り違えない・ファイルを壊さ�
     expect(message).toContain('Dim pwd As String = "[MASKED]" \' 本番');
     expect(message).toContain('Console.WriteLine("pwd=[MASKED]")');
     expect(message).not.toContain("Hunter2Secret");
+  });
+});
+
+describe("applier: 先のブロックの変更のあとも、元のファイルで伏せた値は伏せたまま扱う", () => {
+  const CONST_VB = [
+    "Module Db",
+    "    Private Const DB_PASSWORD As String = _",
+    '        "Hunter2Pass"',
+    "    Sub Connect()",
+    "        Open(DB_PASSWORD)",
+    "    End Sub",
+    "End Module",
+    "",
+  ].join("\n");
+  const plan = (src: string, ...blocks: ReplaceBlock[]) =>
+    planChangeSet(cs(replace("Db.vb", ...blocks)), new Map([["Db.vb", state(src)]]), NEW_FILE);
+
+  it("前の行を書き換えて伏せる条件が変わっても、次のブロックは伏せた表示で照合し、抜粋に値を載せない", () => {
+    const p = plan(
+      CONST_VB,
+      block(["    Private Const DB_PASSWORD As String = _"], ["    Private ReadOnly DB_PASSWORD As String = Decrypt( _"], 1),
+      block(['        "[MASKED]"', "    Sub Connect()"], ['        "[MASKED]")', "    Sub Connect()"], 2),
+    );
+    expect(p.ok).toBe(false);
+    // 2 つ目は一致したうえで、伏せ字の行を書き換えているため止まる
+    expect(p.failures.map((f) => f.kind)).toEqual(["masked-value"]);
+    expect(buildFailureReport(p.failures, { outcomes: p.outcomes })).not.toContain("Hunter2Pass");
+  });
+
+  it("前の行を書き換えたあとの失敗したブロックの抜粋にも値を載せない", () => {
+    const p = plan(
+      CONST_VB,
+      block(["    Private Const DB_PASSWORD As String = _"], ["    Private ReadOnly DB_PASSWORD As String = Decrypt( _"], 1),
+      block(["    Sub Conect()"], ["    Sub Connect(timeout As Integer)"], 2),
+    );
+    expect(p.failures.map((f) => f.kind)).toEqual(["block-not-found"]);
+    expect(buildFailureReport(p.failures, { outcomes: p.outcomes })).not.toContain("Hunter2Pass");
+  });
+
+  it("伏せ字の行を残して書いた行も、次のブロックでは伏せたまま扱う", () => {
+    const p = plan(
+      CONST_VB,
+      block(
+        ["    Private Const DB_PASSWORD As String = _", '        "[MASKED]"'],
+        ["    Private Const DB_PW As String = _", '        "[MASKED]"'],
+        1,
+      ),
+      block(["        Opn(DB_PASSWORD)"], ["        Open(DB_PW)"], 2),
+    );
+    expect(p.failures.map((f) => f.kind)).toEqual(["block-not-found"]);
+    expect(buildFailureReport(p.failures, { outcomes: p.outcomes })).not.toContain("Hunter2Pass");
+    const ok = plan(
+      CONST_VB,
+      block(
+        ["    Private Const DB_PASSWORD As String = _", '        "[MASKED]"'],
+        ["    Private Const DB_PW As String = _", '        "[MASKED]"'],
+        1,
+      ),
+      block(['        "[MASKED]"', "    Sub Connect()", "        Open(DB_PASSWORD)"], ['        "[MASKED]"', "    Sub Connect()", "        Open(DB_PW)"], 2),
+    );
+    expect(ok.ok).toBe(true);
+    expect(text(ok.outcomes[0]?.afterBytes ?? null)).toContain('    Private Const DB_PW As String = _\n        "Hunter2Pass"\n    Sub Connect()\n        Open(DB_PW)');
+  });
+
+  it("伏せると同じに見える別の値の箇所を、先のブロックの変更のあとでも「適用済み」としない", () => {
+    const src = [
+      "Module Db",
+      "    Sub ConnectProd()",
+      '        Dim pwd As String = "ProdPass1"',
+      "        Open(pwd)",
+      "    End Sub",
+      "    Sub ConnectTest()",
+      '        Dim pwd As String = "TestPass2"',
+      "        Open(pwd)",
+      "    End Sub",
+      "End Module",
+      "",
+    ].join("\n");
+    const p = plan(
+      src,
+      block(
+        ["    Sub ConnectProd()", '        Dim pwd As String = "[MASKED]"', "        Open(pwd)"],
+        ["    Sub ConnectProd()", '        Dim pwd As String = "[MASKED]"', "        Open(pwd, 30)"],
+        1,
+      ),
+      block(
+        ['        Dim pwd As String = "[MASKED]"', "        Open(pwd )", "    End Sub"],
+        ['        Dim pwd As String = "[MASKED]"', "        Open(pwd, 30)", "    End Sub"],
+        2,
+      ),
+    );
+    expect(p.ok).toBe(false);
+    expect(p.outcomes[0]?.alreadyAppliedBlocks).toEqual([]);
+    expect(p.failures.map((f) => f.kind)).toEqual(["block-not-found"]);
+  });
+});
+
+describe("applier: --literal-masked で実際の値を [MASKED] の文字に置き換えない", () => {
+  const OLD = ["Module Db", '    Public Const DB_PASSWORD As String = "Hunter2Pass"', "End Module", ""].join("\n");
+
+  it("ファイルの移動 (delete + create) で伏せ字の行を書くときは使わない", () => {
+    const change = cs(
+      { op: "delete", path: "Db.vb", line: 1 },
+      { op: "create", path: "Data/Db.vb", line: 1, content: ["Module Db", '    Public Const DB_PASSWORD As String = "[MASKED]"', "End Module"] },
+    );
+    const states = new Map<string, FileState>([
+      ["Db.vb", state(OLD)],
+      ["Data/Db.vb", { exists: false, symlink: false, bytes: null }],
+    ]);
+    const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
+    expect(p.ok).toBe(false);
+    expect(p.failures.map((f) => [f.kind, f.literalRefused, f.literalAllowed])).toEqual([["masked-value", true, undefined]]);
+  });
+
+  it("同じファイルの中で伏せ字の行を移すときも使わない", () => {
+    const src = ["Module Db", '    Public Const DB_PASSWORD As String = "Hunter2Pass"', "    Sub A()", "    End Sub", "End Module", ""].join("\n");
+    const p = planChangeSet(
+      cs(
+        replace(
+          "Db.vb",
+          block(["Module Db", '    Public Const DB_PASSWORD As String = "[MASKED]"', "    Sub A()"], ["Module Db", "    Sub A()"], 1),
+          block(["    End Sub", "End Module"], ["    End Sub", '    Public Const DB_PASSWORD As String = "[MASKED]"', "End Module"], 2),
+        ),
+      ),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+      { literalMasked: true },
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.literalRefused).toBe(true);
+  });
+
+  it("伏せた値が消えない変更なら、ほかのファイルに伏せ字があっても使う", () => {
+    const change = cs(
+      replace("Db.vb", block(["End Module"], ["    Sub A()", "    End Sub", "End Module"])),
+      { op: "create", path: "Mask.vb", line: 1, content: ['Module Mask', '    Public Const TOKEN As String = "[MASKED]"', "End Module"] },
+    );
+    const states = new Map<string, FileState>([
+      ["Db.vb", state(OLD)],
+      ["Mask.vb", { exists: false, symlink: false, bytes: null }],
+    ]);
+    const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[1]?.afterBytes ?? null)).toContain('"[MASKED]"');
   });
 });
 
