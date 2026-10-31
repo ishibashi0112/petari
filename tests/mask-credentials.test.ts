@@ -215,6 +215,74 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(lexer, LOOSE).content, lexer);
   });
 
+  it("ODBC の {...} で囲んだ値は伏せ、番号の差し込み({0})だけの値は伏せない", () => {
+    assert.strictEqual(
+      maskCredentials("Driver={SQL Server};Server=db;Uid={sa};Pwd={Hunter2Secret};", LOOSE).content,
+      "Driver={SQL Server};Server=db;Uid=[MASKED];Pwd=[MASKED];",
+    );
+    assert.strictEqual(
+      maskCredentials('password="{Hunter2}"\nconn = "Server=x;Password={0};User ID={1,-8}"', LOOSE).content,
+      'password="[MASKED]"\nconn = "Server=x;Password={0};User ID={1,-8}"',
+    );
+    assert.strictEqual(
+      maskCredentials('Dim cs = "Driver={SQL Server};Pwd={Hunter2Secret};"', { vbSource: true, strict: false }).content,
+      'Dim cs = "Driver={SQL Server};Pwd=[MASKED];"',
+    );
+  });
+
+  it("前に語が付いたキーの空白を含む値(パスフレーズ)も伏せる", () => {
+    const code = [
+      'csb.Password = "correct horse battery";',
+      'options.Password = "パスワード2024";',
+      '--password="my secret phrase"',
+      'spring.datasource.password="correct horse"',
+    ].join("\n");
+    assert.strictEqual(
+      maskCredentials(code, LOOSE).content,
+      ['csb.Password = "[MASKED]";', 'options.Password = "[MASKED]";', '--password="[MASKED]"', 'spring.datasource.password="[MASKED]"'].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("空の文字列が 2 つ並ぶ行を 1 つの値と読まない・同じ値を二重に数えない", () => {
+    const code = [
+      'If password = "" OrElse userId = "" Then',
+      'def connect(host="localhost", user="", password="", db=""):',
+      'public void Login(string password = "", string domain = "") {}',
+      '<input pwd="" class="">',
+      'type = hidden ? "password" : "text";',
+      'x = cond ? password : "text";',
+    ].join("\n");
+    assert.strictEqual(maskCredentials(code, LOOSE).content, code);
+    const env = maskCredentials('secret=Hunter2\npassword="Hunter2"\nPassword=Hunter2;Server=x', LOOSE);
+    assert.strictEqual(env.content, 'secret=[MASKED]\npassword="[MASKED]"\nPassword=[MASKED];Server=x');
+    assert.strictEqual(env.findings.length, 3);
+    assert.strictEqual(maskCredentials('password = @"ab""cdefgh";', LOOSE).content, 'password = @"[MASKED]";');
+  });
+
+  it("C# / JSON の文字列の中で \\\" で囲んだ接続文字列の値も伏せる", () => {
+    assert.strictEqual(
+      maskCredentials('var cs = "Server=x;Password=\\"Hun;ter2\\";Database=y";', LOOSE).content,
+      'var cs = "Server=x;Password=\\"[MASKED]\\";Database=y";',
+    );
+  });
+
+  it("リソース(.resx)の秘密系の名前の値を伏せる(表示の文言は除く)", () => {
+    const resx = [
+      '<data name="DbPassword" xml:space="preserve">',
+      "  <value>Hunter2Secret</value>",
+      "</data>",
+      '<data name="Password" xml:space="preserve">',
+      "  <value>パスワード</value>",
+      "</data>",
+      '<data name="lblPassword.Text" xml:space="preserve">',
+      "  <value>Hunter2</value>",
+      "</data>",
+    ].join("\n");
+    assert.strictEqual(maskCredentials(resx, LOOSE).content, resx.replace("Hunter2Secret", "[MASKED]"));
+  });
+
   it("C# の逐語的・補間文字列の値も伏せる", () => {
     assert.strictEqual(
       maskCredentials('var pwd = @"Zq9\\Secret";\nvar password = $"Zq9{x}";\nvar uid = @"sa";', LOOSE).content,
@@ -232,8 +300,8 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       "GITHUB_TOKEN=[MASKED]\nTOKEN_TYPE=bearer\nAUTH_TOKEN=short",
     );
     assert.strictEqual(
-      maskCredentials('this.db_password = "x"; cfg.access_token = "a1b2c3d4e5f6"; this.username = "sa";', LOOSE).content,
-      'this.db_password = "[MASKED]"; cfg.access_token = "[MASKED]"; this.username = "[MASKED]";',
+      maskCredentials('this.db_password = "x"; cfg.access_token = "a1b2c3d4e5f6"; this.username = "sa"; x.token="abc123"', LOOSE).content,
+      'this.db_password = "[MASKED]"; cfg.access_token = "[MASKED]"; this.username = "[MASKED]"; x.token="[MASKED]"',
     );
   });
 
@@ -303,12 +371,19 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
         'cs = "Server=x;Password=" & ";Database=y"',
       ].join("\n"),
     );
+    // 汎用テキストとして伏せるときも、閉じた引用符の後の連結を値と取り違えない
+    const split = 'cs = "Server=x;Password=" & _\n    "Hunter2;Pooling=true"';
+    assert.strictEqual(maskCredentials(split, { vbSource: false, strict: false }).content, split);
     // SQL の条件は続きとみなさない(; の後のキーでない)
     const sql = ['sql = "SELECT * FROM t WHERE pwd=1" & " AND a=2"', 'sql = "WHERE pwd=" & "\'x\'" & " AND a=2"'].join("\n");
     assert.strictEqual(
       maskCredentials(sql, LOOSE_VB).content,
       ['sql = "SELECT * FROM t WHERE pwd=[MASKED]" & " AND a=2"', 'sql = "WHERE pwd=" & "[MASKED]" & " AND a=2"'].join("\n"),
     );
+    const quoteOnly = 'sql = "UPDATE Users SET Password=" & _\n    "\'" & newPwd & "\'"';
+    assert.strictEqual(maskCredentials(quoteOnly, LOOSE_VB).content, quoteOnly);
+    const message = ['msg = "Password=" & vbCrLf & "Please enter"', 'strSQL &= " AND PASSWORD = " & "\'" & txt.Text & "\'"'].join("\n");
+    assert.strictEqual(maskCredentials(message, LOOSE_VB).content, message);
   });
 });
 

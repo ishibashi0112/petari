@@ -473,6 +473,72 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(p.failures[0]?.message).toContain("元より多く");
   });
 
+  it("キーが別の行にある高エントロピーの値の行を写して足した回答も書かずに止める", () => {
+    const token = "q8Xz2LmP4vR7tY1wK9sB3nD6";
+    const src = ['<setting name="ApiToken" serializeAs="String">', `  <value>${token}</value>`, "</setting>", ""].join("\n");
+    const packed = maskCredentials(src, { vbSource: false, strict: true }).content.split("\n");
+    expect(packed[1]).toBe("  <value>[MASKED]</value>");
+    const p = planChangeSet(
+      cs(
+        replace(
+          "App.config",
+          block(packed.slice(0, 3), [
+            ...packed.slice(0, 3),
+            '<setting name="LogLevel" serializeAs="String">',
+            "  <value>[MASKED]</value>",
+            "</setting>",
+          ]),
+        ),
+      ),
+      new Map([["App.config", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("masked-value");
+    const vb = ["Dim apiKey As String = _", `    "${token}"`, "Dim title As String = Nothing", ""].join("\n");
+    const vbPacked = maskCredentials(vb, { vbSource: true, strict: true }).content.split("\n");
+    expect(vbPacked[1]).toBe('    "[MASKED]"');
+    const q = planChangeSet(
+      cs(
+        replace(
+          "M.vb",
+          block(vbPacked.slice(0, 3), [vbPacked[0] as string, vbPacked[1] as string, "Dim title As String = _", vbPacked[1] as string]),
+        ),
+      ),
+      new Map([["M.vb", state(vb)]]),
+      NEW_FILE,
+    );
+    expect(q.ok).toBe(false);
+    expect(q.failures[0]?.kind).toBe("masked-value");
+  });
+
+  it("連結で続く接続文字列の値の行をそのまま残す回答は元の値に戻して書く", () => {
+    const src = [
+      "Module Db",
+      '    Const CS As String = "Server=srv;Database=db;Password=" & _',
+      '        "Hunter2Secret;Pooling=true"',
+      "End Module",
+      "",
+    ].join("\n");
+    const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    expect(packed[2]).toBe('        "[MASKED];Pooling=true"');
+    const states = new Map([["Db.vb", state(src)]]);
+    const p = planChangeSet(
+      cs(replace("Db.vb", block(packed.slice(1, 3), [...packed.slice(1, 3), "    ' note"]))),
+      states,
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(true);
+    expect(text(p.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("Pooling=true\"\n", "Pooling=true\"\n    ' note\n"));
+    const r = planChangeSet(
+      { header: "x", files: [{ op: "rewrite", path: "Db.vb", line: 1, content: ["' note", ...packed.slice(0, 4)] }] } as never,
+      states,
+      NEW_FILE,
+    );
+    expect(r.ok).toBe(true);
+    expect(text(r.outcomes[0]?.afterBytes ?? null)).toBe(`' note\n${src}`);
+  });
+
   it("キーが別の行にある値の行もそのまま残すなら元の値に戻す", () => {
     const src = ['Dim pwd As String = _', '    "Hunter2Secret"', "Dim other As String = Nothing", ""].join("\n");
     const packed = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
