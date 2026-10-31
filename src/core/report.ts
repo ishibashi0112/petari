@@ -6,7 +6,8 @@
  * - petari の照合仕様 (空白・エンコーディング差は吸収済み = 失敗は文字内容の差) の明記
  * - 全ファイル・全ブロックの検証結果一覧 (どこが通りどこが落ちたかの対比が診断の鍵)
  * - all-or-nothing で未書き込みであることの明記 (端末表示はチャットに貼られないため)
- * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)
+ * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)。
+ *   抜粋は伏せた表示 (mask.ts) から作り、認証情報らしき値は [MASKED] で載せる
  */
 import type { Failure } from "./applier.ts";
 import type { FileOutcome } from "./applier.ts";
@@ -26,6 +27,8 @@ const MATCH_SPEC_NOTE = [
   "  (抜粋では実ファイル側にだけある行を + で示します)",
   "- 行内空白や空行の調整・ASCII 行だけへの縮小・別アンカーへの乗り換えでは解決しません。各失敗に",
   "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
+  "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] のままコピーすれば照合でき、REPLACE でも",
+  "  [MASKED] を残せば petari が元の値に戻して書き込みます (値を推測して書かないでください)",
 ];
 
 const RE_REQUEST = `## 依頼
@@ -88,7 +91,9 @@ function outcomeSummary(outcomes: FileOutcome[]): string[] {
           ? "NG 複数箇所に一致 (一意でない)"
           : f.kind === "unencodable"
             ? "NG 変換できない文字を含む"
-            : "NG SEARCH 不一致 (詳細は下記)";
+            : f.kind === "masked-value"
+              ? "NG 伏せ字を元の値に戻せない (詳細は下記)"
+              : "NG SEARCH 不一致 (詳細は下記)";
       byIndex.set(f.block.index, label);
     }
     for (const [index, status] of [...byIndex.entries()].sort((a, b) => a[0] - b[0])) {
@@ -141,6 +146,21 @@ export function buildBlankInsensitiveNote(outcomes: FileOutcome[]): string | nul
   }
   if (count === 0) return null;
   return `注: ${count} 件のブロックは空行の差を吸収して適用しました (git diff で空行の並びを確認してください)`;
+}
+
+/**
+ * 伏せ字 [MASKED] を元の値に戻して適用したブロックがあるときの注記。
+ * 伏せ字の行を照合・書き込みしたことを dry-run と適用サマリの末尾で知らせる。
+ * 該当ブロックが無ければ null。
+ */
+export function buildMaskRestoreNote(outcomes: FileOutcome[], written: boolean): string | null {
+  let count = 0;
+  for (const o of outcomes) {
+    count += o.restoredMasks ?? 0;
+    for (const b of o.appliedBlocks) count += b.restoredMasks ?? 0;
+  }
+  if (count === 0) return null;
+  return `注: 伏せ字 [MASKED] ${count} 箇所は元の値に戻して${written ? "書き込みました" : "書き込みます"} (git diff で確認してください)`;
 }
 
 /** 検証失敗 (マッチング・パス・エンコーディング) のレポート */

@@ -20,6 +20,7 @@ import { fixedNewFile, resolveNewFileStyle } from "../core/new-file-style.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
 import {
   buildBlankInsensitiveNote,
+  buildMaskRestoreNote,
   buildFailureReport,
   buildParseErrorReport,
 } from "../core/report.ts";
@@ -335,6 +336,8 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     printAlreadyApplied(plan.outcomes);
     const dryRunNote = buildBlankInsensitiveNote(plan.outcomes);
     if (dryRunNote !== null) out(dryRunNote);
+    const dryRunMaskNote = buildMaskRestoreNote(plan.outcomes, false);
+    if (dryRunMaskNote !== null) out(dryRunMaskNote);
     if (plan.failures.length > 0) {
       out("");
       await emitReport(
@@ -456,6 +459,8 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   printAlreadyApplied(plan.outcomes);
   const appliedNote = buildBlankInsensitiveNote(plan.outcomes);
   if (appliedNote !== null) out(appliedNote);
+  const maskNote = buildMaskRestoreNote(plan.outcomes, true);
+  if (maskNote !== null) out(maskNote);
   if (plan.failures.length > 0) {
     out(`スキップした失敗 ${plan.failures.length} 件のレポート:`);
     out("");

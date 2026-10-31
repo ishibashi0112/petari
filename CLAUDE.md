@@ -188,6 +188,30 @@
   `--partial` / `--force` は受け付けない (確認なしの部分適用・再適用をしない)。
   SIGINT は once で受けて現在の適用の完了後に抜ける (2 回目の Ctrl+C は即終了)
 
+### 伏せ字 [MASKED] の扱い (2026-10-31, v0.14.0)
+
+slnmix のマスク機能の確認 (2026-10-31) で、AI の SEARCH に `[MASKED]` が入ると必ず不一致になり、
+失敗レポートの近傍抜粋 (AI に貼る前提で自動コピー) に**実際の値がそのまま出る**こと、
+rewrite / REPLACE が `[MASKED]` をそのまま書いて実際の値を消すことを再現した (ユーザー承認の上で修正)。
+
+- core/mask.ts の maskCredentials は slnmix の src/services/credentialMasker.ts の写し
+  (タブ → 2 スペースと noUncheckedIndexedAccess 対応のみ)。判定を変えるときは両方を揃え、
+  tests/mask-credentials.test.ts も slnmix のテストの写しとして保つ。統合 (slnmix 設計書 §25) で 1 つに戻す
+- 伏せた表示 (maskedLines) は**行数と位置を保つ**: 秘密鍵ブロックの本文を先に 1 行ずつ伏せ、
+  それでも行数が変わる (複数行の属性値) ときは行ごとに伏せる。nearest / ambiguous の行番号が実ファイルと揃う
+- 失敗レポートの近傍抜粋 (SEARCH / REPLACE の両方) は常に伏せた表示から作る (SEARCH に伏せ字がなくても前後の行に値があり得る)
+- SEARCH に `[MASKED]` があり実ファイルで不一致のときだけ、伏せた表示で照合し直す (既存 4 段の挙動は不変)。
+  適用済み判定 (findContentStage) も REPLACE に伏せ字があれば伏せた表示で行う
+- 書き込む行の `[MASKED]` は restoreMaskedLines で元の値に戻す。replace は SEARCH の一致範囲の伏せた行から
+  (同じ文字列の行を優先、なければ伏せ字の数が同じ行。値が 1 通りに決まるときだけ)、rewrite は
+  ファイル全体の**同じ文字列の行だけ**から (全文で推定すると別の値を入れ得るため)。create は戻す元がない。
+  戻せなければ FailureKind "masked-value" で止める (all-or-nothing に乗る)。戻した数は
+  AppliedBlockInfo / FileOutcome の restoredMasks に記録し、buildMaskRestoreNote で注記
+- 実ファイルにもともと `[MASKED]` という文字がある (伏せる処理の実装やそのテスト) ときは照合も復元もしない
+  (正当な書き込みと区別できないため)。create はこの判定ができないので、`[MASKED]` を含む新規ファイルは常に止まる
+- 失敗レポートの照合仕様の節に「抜粋の [MASKED] はそのままコピー・REPLACE でも残す」を追記 (規約文は変えない。
+  slnmix の手順文 (初版から) に「[MASKED] はそのまま残し、値を推測しない」が既にある)
+
 ### slnmix 設計書 §11 の実装 (2026-09-12, v0.9.0)
 
 設計正本は slnmix リポジトリの `docs/HANDOFF-slnmix-petari-2026-09.md` §11 (petari の改修)。
@@ -287,7 +311,8 @@
   あわせて macOS / Linux で npx petari が何もせず終わる不具合 (bin の symlink 起動) を修正。
   **ただし v0.13.0 の tarball には削除したソースの古いビルド (dist/infra/diff-server.js 等 3 件) が
   残っている** (下記。どこからも import されないため動作には影響なし) /
-  v0.13.1: 2026-10-29 build が dist/ を消してから tsc するよう修正した再公開)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.13.1: 2026-10-29 build が dist/ を消してから tsc するよう修正した再公開 /
+  v0.14.0: 2026-10-31 伏せ字 [MASKED] の扱い — 失敗レポートの抜粋を伏せる + 伏せ字の行の照合と元の値への復元)。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
@@ -315,7 +340,8 @@
   2026-09-12 .vbproj 自動登録 + newFile auto 追加後の再実行: diff-server writeHead の既知
   誤検知のみで、新規コード (vbproj / new-file-style / vbproj-register) への指摘なし。
   2026-10-28 v0.13.0 (ブラウザ編集の削除) 後の再実行: diff-server.ts の削除で writeHead の
-  誤検知族は消え、clipboard spawn の既知誤検知のみ)
+  誤検知族は消え、clipboard spawn の既知誤検知のみ。2026-10-31 v0.14.0 (伏せ字の扱い) 後の再実行も
+  clipboard spawn の既知誤検知のみで、新規コード (mask / applier の変更) への指摘なし)
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
   自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
   Known Folder / Start-Process の動作確認が未了
