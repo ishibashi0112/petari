@@ -812,6 +812,52 @@ describe("applier: --literal-masked で実際の値を [MASKED] の文字に置�
     expect(p.failures[0]?.literalRefused).toBe(true);
   });
 
+  it("秘密鍵のファイルの移動 (複数行の値) でも使わない", () => {
+    const pem = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "KUPBAoGBAOp8tQi7aXOm1pcbHs2Oe7AcHqwKmk3yyp7wNnB0dD9uSaGaJYAGRx9e",
+      "-----END RSA PRIVATE KEY-----",
+      "",
+    ].join("\n");
+    const change = cs(
+      { op: "delete", path: "certs/old.pem", line: 1 },
+      {
+        op: "create",
+        path: "certs/new.pem",
+        line: 1,
+        content: ["-----BEGIN RSA PRIVATE KEY-----", "[MASKED]", "-----END RSA PRIVATE KEY-----"],
+      },
+    );
+    const states = new Map<string, FileState>([
+      ["certs/old.pem", state(pem)],
+      ["certs/new.pem", { exists: false, symlink: false, bytes: null }],
+    ]);
+    const p = planChangeSet(change, states, NEW_FILE, { literalMasked: true });
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.literalRefused).toBe(true);
+  });
+
+  it("先のブロックで書いた [MASKED] という文字の行を、次のブロックで残してもそのまま書く", () => {
+    const src = ["Sub A()", "    x = 1", "End Sub", "Sub B()", '    Dim pwd As String = "Hunter2Secret"', "End Sub", ""].join("\n");
+    const p = planChangeSet(
+      cs(
+        replace(
+          "M.vb",
+          block(["    x = 1"], ["    x = 1", '    msg = "[MASKED]"'], 1),
+          block(['    msg = "[MASKED]"'], ['    msg = "[MASKED]"', "    y = 2"], 2),
+        ),
+      ),
+      new Map([["M.vb", state(src)]]),
+      NEW_FILE,
+      { literalMasked: true },
+    );
+    expect(p.ok).toBe(true);
+    const written = text(p.outcomes[0]?.afterBytes ?? null);
+    expect(written).toContain('    x = 1\n    msg = "[MASKED]"\n    y = 2');
+    expect(written).toContain('"Hunter2Secret"');
+  });
+
   it("伏せた値が消えない変更なら、ほかのファイルに伏せ字があっても使う", () => {
     const change = cs(
       replace("Db.vb", block(["End Module"], ["    Sub A()", "    End Sub", "End Module"])),

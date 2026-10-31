@@ -752,6 +752,24 @@ export function maskedViews(lines: string[], path: string): MaskedLine[][] {
   return views;
 }
 
+/**
+ * 伏せる元の値ごとの数 (抜粋と同じ伏せ方で、行ごとに分け前後の空白を除いたもの)。変更の前後で伏せた
+ * 値が減るかを数えるため。対応づけられない伏せ方があれば null
+ */
+export function maskedValueCounts(lines: string[], path: string): Map<string, number> | null {
+  const text = lines.join("\n");
+  const spans = displaySpans(text, { path });
+  if (spans === null) return null;
+  const counts = new Map<string, number>();
+  for (const span of spans) {
+    for (const part of text.slice(span.start, span.end).split("\n")) {
+      const value = part.trim();
+      if (value !== "" && value !== MASK) counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 function fillMaskTokens(line: string, values: string[]): string {
   const segments = line.split(MASK);
   let out = segments[0] ?? "";
@@ -841,7 +859,12 @@ export function restoreMaskedLines(
       continue;
     }
     const only = candidates[0];
-    if (candidates.length > 1 || only === undefined || only.values === null) {
+    if (
+      candidates.length > 1 ||
+      only === undefined ||
+      only.values === null ||
+      only.values.length !== line.split(MASK).length - 1
+    ) {
       failures.push({ line, reason: "ambiguous" });
       continue;
     }

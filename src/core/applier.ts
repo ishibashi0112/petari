@@ -27,6 +27,7 @@ import {
   MASK_TOKEN,
   hasMaskToken,
   maskLinesForDisplay,
+  maskedValueCounts,
   maskedViews,
   restoreMaskedLines,
   type MaskRestoreResult,
@@ -274,7 +275,10 @@ function planReplace(
           textLines.map((text, i): MaskedLine => {
             const p = provenance[i];
             const src = p === null || p === undefined ? undefined : view[p];
-            if (p === null || p === undefined || src === undefined) return { text, values: [], wrapped: false };
+            // この計画で書いた行の伏せ字は、--literal-masked で書いた [MASKED] という文字そのもの
+            if (p === null || p === undefined || src === undefined) {
+              return { text, values: text.split(MASK_TOKEN).slice(1).map(() => MASK_TOKEN), wrapped: false };
+            }
             return text === original[p] ? src : { ...src, text: sameIndent(text, src.text) };
           }),
         ));
@@ -662,47 +666,49 @@ function writesLiteralMask(plan: Plan): boolean {
 }
 
 /**
- * 変更する既存ファイルで伏せていた実際の値のどれかが、変更の後に数を減らすか。
- * 変更の前後で、変更するファイル (replace / rewrite / delete) と新しく作るファイルの全体で数える
+ * 変更する既存ファイルで伏せていた実際の値のどれかが、変更の後に数を減らすか。変更するファイル
+ * (replace / rewrite / delete) と新しく作るファイルの全体で、変更の前後の伏せた値 (抜粋と同じ伏せ方。
+ * 複数行にまたがる値は行ごと) を数えて比べる。伏せ方を対応づけられないファイルがあれば、減るものとして扱う
  */
 function losesMaskedValue(changeSet: ChangeSet, states: Map<string, FileState>, plan: Plan): boolean {
-  const before = new Map<string, string>();
-  const values = new Set<string>();
+  const add = (total: Map<string, number>, counts: Map<string, number>): void => {
+    for (const [value, n] of counts) total.set(value, (total.get(value) ?? 0) + n);
+  };
+  const linesOf = (bytes: Uint8Array): string[] | null => {
+    try {
+      return decodeFile(bytes).lines.map((l) => l.text);
+    } catch {
+      return null;
+    }
+  };
+  const before = new Map<string, number>();
+  const seen = new Set<string>();
   for (const change of changeSet.files) {
     const state = states.get(change.path);
-    if (state === undefined || !state.exists || state.bytes === null || before.has(change.path)) continue;
-    let lines: string[];
-    try {
-      lines = decodeFile(state.bytes).lines.map((l) => l.text);
-    } catch {
-      continue;
-    }
-    before.set(change.path, lines.join("\n"));
-    for (const view of maskedViews(lines, change.path)) {
-      for (const l of view) {
-        for (const value of l.values ?? []) if (value !== MASK_TOKEN && value.trim() !== "") values.add(value);
-      }
-    }
+    if (state === undefined || !state.exists || state.bytes === null || seen.has(change.path)) continue;
+    seen.add(change.path);
+    const lines = linesOf(state.bytes);
+    if (lines === null) continue;
+    const counts = maskedValueCounts(lines, change.path);
+    if (counts === null) return true;
+    add(before, counts);
   }
-  if (values.size === 0) return false;
-  const after = new Map(before);
+  if (before.size === 0) return false;
+  const after = new Map<string, number>();
   for (const o of plan.outcomes) {
-    if (o.change.op === "delete" && o.failures.length === 0) after.set(o.change.path, "");
-    else if (o.afterBytes !== null) {
-      try {
-        after.set(o.change.path, decodeFile(o.afterBytes).lines.map((l) => l.text).join("\n"));
-      } catch {
-        // 作った内容は読めるはず。読めなければ数えない
-      }
-    }
+    const path = o.change.path;
+    if (o.change.op === "delete" && o.failures.length === 0) continue;
+    const state = states.get(path);
+    const bytes = o.afterBytes ?? (state?.exists === true ? state.bytes : null);
+    if (bytes === null || bytes === undefined) continue;
+    const lines = linesOf(bytes);
+    if (lines === null) continue;
+    const counts = maskedValueCounts(lines, path);
+    if (counts === null) return true;
+    add(after, counts);
   }
-  const count = (texts: Iterable<string>, value: string): number => {
-    let n = 0;
-    for (const t of texts) n += t.split(value).length - 1;
-    return n;
-  };
-  for (const value of values) {
-    if (count(after.values(), value) < count(before.values(), value)) return true;
+  for (const [value, n] of before) {
+    if ((after.get(value) ?? 0) < n) return true;
   }
   return false;
 }
