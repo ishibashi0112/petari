@@ -30,6 +30,7 @@ import {
   maskedValueCounts,
   maskedViews,
   restoreMaskedLines,
+  type MaskRestoreFailure,
   type MaskRestoreResult,
   type MaskedLine,
 } from "./mask.ts";
@@ -172,7 +173,16 @@ export interface PlanOptions {
 
 /** 伏せ字を戻せなかったときの説明 (失敗レポートとして AI に貼られる前提の文面) */
 function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }): string {
-  const shown = r.failures.slice(0, 5).map((f) => {
+  // 同じ行・同じ理由は 1 つにまとめる (写して足した行は同じ行が並ぶため)
+  const grouped = new Map<string, { failure: MaskRestoreFailure; count: number }>();
+  for (const f of r.failures) {
+    const key = `${f.reason}\n${f.line.trim()}`;
+    const known = grouped.get(key);
+    if (known === undefined) grouped.set(key, { failure: f, count: 1 });
+    else known.count += 1;
+  }
+  const entries = [...grouped.values()];
+  const shown = entries.slice(0, 5).map(({ failure: f, count }) => {
     const what =
       f.reason === "ambiguous"
         ? "同じ表示の伏せ字の行が複数あり、どの値か決まりません"
@@ -181,9 +191,10 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
           : f.reason === "unseparable"
             ? "複数行にまたがる値 (秘密鍵など) の一部か、1 つに伏せた複数の値の行で、元の値に戻せません。この行を含まない範囲の SEARCH / REPLACE で変更してください"
             : "伏せる前の同じ行が見つかりません";
-    return `「${f.line.trim()}」(${what})`;
+    return `「${f.line.trim()}」${count > 1 ? ` × ${count}` : ""}(${what})`;
   });
-  const more = r.failures.length > 5 ? ` 他 ${r.failures.length - 5} 行` : "";
+  const rest = entries.slice(5).reduce((sum, e) => sum + e.count, 0);
+  const more = rest > 0 ? ` 他 ${rest} 行` : "";
   return (
     `${prefix}伏せ字 ${MASK_TOKEN} を元の値に戻せないため書き込めません: ${shown.join("、")}${more}。` +
     `${MASK_TOKEN} は実際の値を伏せた印で、petari が元の値に戻せるのは、伏せ字を含む行を一字も変えずに残したときだけです。` +

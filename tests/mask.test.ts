@@ -470,6 +470,44 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(buildFailureReport(r.failures)).not.toContain("ProdSecret1");
   });
 
+  it("伏せ方の違う 2 つの表示から同じ行を 2 回書く回答も、写して足したとして止める", () => {
+    const src = ["Module M", '    Dim pass As String = "Hunter2Secret" : Dim t = "Zx9Qw8Er7Ty6Ui5Op4As3Df2"', "End Module", ""].join("\n");
+    const strict = maskCredentials(src, { vbSource: true, strict: true }).content.split("\n");
+    const loose = maskCredentials(src, { vbSource: true, strict: false }).content.split("\n");
+    expect(strict[1]).not.toBe(loose[1]);
+    const p = planChangeSet(
+      cs(replace("M.vb", block(strict.slice(0, 3), [strict[0] as string, strict[1] as string, "    ' backup", loose[1] as string, "End Module"]))),
+      new Map([["M.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    expect(p.failures[0]?.kind).toBe("masked-value");
+    expect(p.failures[0]?.message).toContain("元より多く");
+    // どちらか一方の表示で残すだけなら戻す
+    const q = planChangeSet(
+      cs(replace("M.vb", block(strict.slice(0, 3), [strict[0] as string, "    ' note", loose[1] as string, "End Module"]))),
+      new Map([["M.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(q.ok).toBe(true);
+    expect(text(q.outcomes[0]?.afterBytes ?? null)).toContain('"Hunter2Secret"');
+  });
+
+  it("戻せない理由は同じ行を 1 つにまとめて数を添える", () => {
+    const ini = "[prod]\npassword=ProdSecret1\n";
+    const packed = maskCredentials(ini, { vbSource: false, strict: true }).content.split("\n");
+    const p = planChangeSet(
+      cs(replace("app.ini", block(packed.slice(0, 2), [...packed.slice(0, 2), "[a]", packed[1] as string, "[b]", packed[1] as string]))),
+      new Map([["app.ini", state(ini)]]),
+      NEW_FILE,
+    );
+    expect(p.ok).toBe(false);
+    const message = p.failures[0]?.message ?? "";
+    expect(message).toContain("「password=[MASKED]」 × 3");
+    expect(message.split("「password=[MASKED]」").length - 1).toBe(1);
+    expect(message).not.toContain("ProdSecret1");
+  });
+
   it("並べ替え・字下げの変更・まわりの行の編集は止めない (伏せ字の行の数が元と同じなら戻す)", () => {
     const ini = "[prod]\nserver=prod\npassword=ProdSecret1\nuser=sa\n";
     const packed = maskCredentials(ini, { vbSource: false, strict: true }).content.split("\n");
