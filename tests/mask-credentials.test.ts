@@ -630,12 +630,100 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
+  it("VB のコメントの値の \"\" の後ろも伏せる・型文字つきの宣言も伏せる", () => {
+    const LV = { vbSource: true, strict: false };
+    for (const input of [
+      "' Dim strUserDb As String = \"Server=x;User ID=sa;Password=\"\"p;ss99\"\";\"",
+      "' strPwd = \"ab\"\"cd99\"",
+    ]) {
+      const masked = maskCredentials(input, LV).content;
+      assert.ok(!masked.includes("ss99") && !masked.includes("cd99"), masked);
+    }
+    assert.strictEqual(maskCredentials('Dim strPwd$ = "Hunter2x"', LV).content, 'Dim strPwd$ = "[MASKED]"');
+    assert.strictEqual(maskCredentials('Const DB_PASSWORD$ = "Hunter2x"', LV).content, 'Const DB_PASSWORD$ = "[MASKED]"');
+    assert.strictEqual(maskCredentials("' Dim strPwd$ = \"Hunter2x\"", LV).content, "' Dim strPwd$ = \"[MASKED]\"");
+    const name = 'Dim strName$ = "Taro"';
+    assert.strictEqual(maskCredentials(name, LV).content, name);
+  });
+
+  it(".env の行末コメント・Dockerfile の ENV / ARG・compose の一覧・docker の -e の値を伏せる", () => {
+    for (const [input, expected] of [
+      ["DB_PASSWORD=Prod123x # prod", "DB_PASSWORD=[MASKED] # prod"],
+      ['DB_PASSWORD="Prod123x" # prod', 'DB_PASSWORD="[MASKED]" # prod'],
+      ["DB_PASSWORD=Prod#123x", "DB_PASSWORD=[MASKED]"],
+      ['ENV DB_HOST=db DB_PASSWORD=Prod123x API_KEY="ab c1"', 'ENV DB_HOST=db DB_PASSWORD=[MASKED] API_KEY="[MASKED]"'],
+      ["ARG TOKEN=ghp_abc123def", "ARG TOKEN=[MASKED]"],
+      ["      - POSTGRES_PASSWORD=Prod123x", "      - POSTGRES_PASSWORD=[MASKED]"],
+      ['      - "POSTGRES_PASSWORD=Prod123x"', '      - "POSTGRES_PASSWORD=[MASKED]"'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    const run = maskCredentials('docker run -e DB_PASSWORD=Prod123x -e "API_KEY=abc 123" img', LOOSE).content;
+    assert.strictEqual(run, 'docker run -e DB_PASSWORD=[MASKED] -e "API_KEY=[MASKED]" img');
+  });
+
+  it("URL の文字参照・$ で始まるパスワード、波括弧・接頭辞つきの値の後ろも伏せる", () => {
+    for (const [input, expected] of [
+      ['<add key="RedisUrl" value="redis://:p&amp;ssw0rd@cache:6379" />', '<add key="RedisUrl" value="redis://:[MASKED]@cache:6379" />'],
+      ["postgres://admin:$ecretPass1@db/app", "postgres://admin:[MASKED]@db/app"],
+      ["Server=x;Pwd=r'x'.Q9zz;", "Server=x;Pwd=[MASKED];"],
+      ["Server=x;Password={abc} xyz;", "Server=x;Password=[MASKED];"],
+      ["x Pwd={a;b})", "x Pwd=[MASKED])"],
+      // コードの接頭辞つきの文字列に続くメソッドの呼び出しは、接頭辞を残して文字列の中を伏せる
+      ['password = b"Hunter2xyz".decode()', 'password = b"[MASKED]".decode()'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    for (const input of [
+      "postgres://admin:$PGPASSWORD@db/app",
+      "`mongodb://${user}:${encodeURIComponent(pass)}@${host}`",
+      'this.pass1 = "first"',
+      'token = b".".join(parts)',
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
+  it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
+    const started = Date.now();
+    for (const vbSource of [false, true]) {
+      maskCredentials("pwd={a;".repeat(150000), { vbSource, strict: true });
+      maskCredentials('token: "' + "A".repeat(500000) + '1"', { vbSource, strict: true });
+      maskCredentials('"' + "A".repeat(500000) + 'Token": "abc12345"', { vbSource, strict: true });
+      maskCredentials("ENV " + "A=b ".repeat(200000), { vbSource, strict: true });
+      maskCredentials("redis://:" + "&amp;".repeat(200000), { vbSource, strict: true });
+    }
+    assert.ok(Date.now() - started < 15000);
+  });
+
   it("バッチファイルの set の値を伏せる", () => {
     assert.strictEqual(maskCredentials("set DB_PASSWORD=Hunter2", LOOSE).content, "set DB_PASSWORD=[MASKED]");
     assert.strictEqual(maskCredentials('  set "API_SECRET=Hunter2xyz"', LOOSE).content, '  set "API_SECRET=[MASKED]"');
     assert.strictEqual(maskCredentials("SET PASSWORD=abc123\r\necho done", LOOSE).content, "SET PASSWORD=[MASKED]\r\necho done");
     const user = "set DB_HOST=localhost";
     assert.strictEqual(maskCredentials(user, LOOSE).content, user);
+    for (const [input, expected] of [
+      ["set DB_PASSWORD=Prod123x & set DB_USER=sa", "set DB_PASSWORD=[MASKED] & set DB_USER=[MASKED]"],
+      ["set DB_PASSWORD=Prod123x&& call deploy.bat", "set DB_PASSWORD=[MASKED]&& call deploy.bat"],
+      ['set "DB_PASSWORD=Prod123x" & call deploy.bat', 'set "DB_PASSWORD=[MASKED]" & call deploy.bat'],
+      ['if "%ENV%"=="prod" set DB_PASSWORD=Prod123x', 'if "%ENV%"=="prod" set DB_PASSWORD=[MASKED]'],
+      ["@set DB_PASSWORD=Prod123x", "@set DB_PASSWORD=[MASKED]"],
+      ["set DB_PASSWORD=my pass word", "set DB_PASSWORD=[MASKED]"],
+      // 引用符の中・^ の後の & は値のうち。引用符の前の @ などで値を切らない
+      ['set password=@"Zq9xWvK2"', "set password=[MASKED]"],
+      ['set PASSWORD=a"b&c"d & echo x', "set PASSWORD=[MASKED] & echo x"],
+      ["set PASSWORD=a^&b9zz", "set PASSWORD=[MASKED]"],
+      ['set "A=x" & set "DB_PASSWORD=Prod123x" & call y', 'set "A=x" & set "DB_PASSWORD=[MASKED]" & call y'],
+      // MSBuild の Exec・ビルド後イベントに書いたもの
+      ['<Exec Command="set &quot;DB_PASSWORD=Prod123x&quot; &amp; call y" />', '<Exec Command="set &quot;DB_PASSWORD=[MASKED]&quot; &amp; call y" />'],
+      ["<PostBuildEvent>set DB_PASSWORD=Prod123x &amp;&amp; call deploy.bat</PostBuildEvent>", "<PostBuildEvent>set DB_PASSWORD=[MASKED] &amp;&amp; call deploy.bat</PostBuildEvent>"],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    // 引数・空の値は伏せず、空の値の後ろの行まで伏せない
+    for (const input of ["set DB_PASSWORD=%1", 'set "PASSWORD="\necho "done"', "set /p DB_PASSWORD=Enter password:"]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
   });
 });
 

@@ -66,11 +66,12 @@ const IDENT_BODY = `${IDENT_HEAD}0-9.\\uFF10-\\uFF19`;
  * 引用符内は文字列リテラルとして別途(高エントロピー判定で)扱う。ただし引用符で閉じた値
  * (接続文字列の `Password='a;b'`('' は ' のエスケープ)・VB の文字列の中の `Password=""a;b""`・
  * XML の属性の中の `Password=&quot;a;b&quot;`・C# / JSON の文字列の中の `Password=\"a;b\"`)は引用符の中を伏せる
- * (引用符は残す)。ODBC の波括弧で囲んだ値(`Pwd={a;b}`。`}}` は `}` のエスケープ)は波括弧ごと伏せる。
+ * (引用符は残す)。ODBC の波括弧で囲んだ値(`Pwd={a;b}`。`}}` は `}` のエスケープ)は、閉じた波括弧の後が
+ * ; ・引用符・行末などなら波括弧ごと伏せる(後ろに続きがあれば区切りまで伏せる)。
  * Python の接頭辞つきの文字列(username=b"..." / password = u"...")は接頭辞を残して引用符の中を伏せる
  */
 const CONNSTR_SECRET =
-  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|`\u0080-\uffff]|$)|'(?:[^'\r\n]|'')+'(?!')[^;"&<>\r\n]*|\{(?:[^}"\r\n]|\}\})*\}(?=[;"'&<>\s\\]|$)|[rRuUbBfF]{1,2}(?:"(?:[^"\\\r\n]|\\.)+"|'(?:[^'\\\r\n]|\\.)+')(?![A-Za-z0-9_'"\u0080-￿])|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|`\u0080-\uffff]|$)|'(?:[^'\r\n]|'')+'(?!')[^;"&<>\r\n]*|\{(?:[^{}"\r\n]|\}\})*\}(?=[ \t]*(?:[;"'\\<),\r\n]|&(?:quot|apos|amp);|$))|[rRuUbBfF]{1,2}(?:"(?:[^"\\\r\n]|\\.)+"|'(?:[^'\\\r\n]|\\.)+')(?![A-Za-z0-9_'"\u0080-\uffff.@])|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /** 接続文字列のキーそのもの(行頭の Password=x;Server=y は接続文字列として扱う) */
 const CONNSTR_KEY_NAME =
@@ -78,16 +79,46 @@ const CONNSTR_KEY_NAME =
 
 /**
  * URL の利用者情報のパスワード(postgres://user:PASS@host / redis://:PASS@host)。パスワードは最後の @ まで
- * (符号化していない @ を含むもの)。スキームは語の途中から始めない(長い語で各位置から読み直さないように)
+ * (符号化していない @ を含むもの。XML の &amp; なども)。スキームは語の途中から始めない(長い語で各位置から読み直さないように)
  */
-const URL_USERINFO = /(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:\/?#@"'<>;]*:)([^\s\/?#"'<>;]+)@/g;
+const URL_USERINFO = /(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:\/?#@"'<>;]*:)((?:&(?:[A-Za-z]+|#[0-9]+);|[^\s\/?#"'<>;])+)@/g;
 
-/** URL のパスワードの位置の差し込み・伏せ字(${PASS} / $PASS / {pass} / {{pass}} / %(pass)s / {0} / %s / ***) */
+/**
+ * URL のパスワードの位置の差し込み・伏せ字(${pass} / ${encodeURIComponent(pass)} / $PASS / {pass} / #{pass} /
+ * {{pass}} / %(pass)s / %PASS% / {0} / %s / ***)。$ で始まる名前は大文字だけのもの($ecretPass1 は値)
+ */
 function isUrlPlaceholder(value: string): boolean {
   return (
     isPlaceholderOnly(value) ||
-    /^(?:\$[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_.]*\}|\{\{[^{}]*\}\}|%\([A-Za-z_][A-Za-z0-9_]*\)s|\*+)$/.test(value)
+    isShellVariable(value) ||
+    /^(?:[$#]?\{[^{}\r\n]*\}|\{\{[^{}]*\}\}|%\([A-Za-z_][A-Za-z0-9_]*\)s|\*+)$/.test(value)
   );
+}
+
+/**
+ * 環境変数の形の KEY=value の value を伏せた表示(伏せないものは undefined)。引用符で囲んだ値は引用符を残す。
+ * 変数の参照だけの値($DB_PASS / %DB_PASS% / %1)・書式の差し込みは伏せない
+ */
+function maskedEnvValue(key: string, value: string, labels: boolean): string | undefined {
+  const kind = kindForConfigKey(key);
+  const quote = value.charAt(0);
+  const quoted = value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote);
+  const inner = quoted ? value.slice(1, -1) : value;
+  if (
+    kind === undefined ||
+    inner.trim() === "" ||
+    inner === MASK ||
+    isShellVariable(inner) ||
+    (kind === KIND_PASSWORD ? !isSecretPair(key, inner, labels) : isPlaceholderOnly(inner))
+  ) {
+    return undefined;
+  }
+  return quoted ? `${quote}${MASK}${quote}` : MASK;
+}
+
+/** シェル・バッチの変数の参照だけの値($DB_PASS / ${DB_PASS} / %DB_PASS% / %1 / %~1 / %%a / !DB_PASS!) */
+function isShellVariable(value: string): boolean {
+  return /^(?:\$[A-Z_][A-Z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%~?[0-9*]|%%~?[A-Za-z]|%[A-Za-z_][A-Za-z0-9_]*%|![A-Za-z_][A-Za-z0-9_]*!)$/.test(value);
 }
 
 /** 接続文字列の値を囲む引用符(長いものから) */
@@ -96,7 +127,7 @@ const CONNSTR_QUOTES = ["&quot;", "&apos;", '\\"', '""', "'"];
 /** 接続文字列のユーザー系キー(User ID / UID など明確なもののみ)。
  *  値の先頭 : は SQL バインド変数(UID = :UID 等)のため対象外 */
 const CONNSTR_USER =
-  /\b(user\s*id|userid|username|uid)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|`\u0080-\uffff]|$)|'(?:[^'\r\n]|'')+'(?!')[^;"&<>\r\n]*|\{(?:[^}"\r\n]|\}\})*\}(?=[;"'&<>\s\\]|$)|[rRuUbBfF]{1,2}(?:"(?:[^"\\\r\n]|\\.)+"|'(?:[^'\\\r\n]|\\.)+')(?![A-Za-z0-9_'"\u0080-￿])|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /\b(user\s*id|userid|username|uid)(\s*=\s*)(""(?![\s,;)&+|])(?:(?!"")[^\r\n])+(?<!\s)""|&quot;(?:(?!&quot;)[^"\r\n])+&quot;|&apos;(?:(?!&apos;)[^"\r\n])+&apos;|\\"(?:(?!\\")[^"\r\n])+\\"|'(?:[^'\r\n]|'')+'(?!')(?=[;"&<>\s),.\]}+|`\u0080-\uffff]|$)|'(?:[^'\r\n]|'')+'(?!')[^;"&<>\r\n]*|\{(?:[^{}"\r\n]|\}\})*\}(?=[ \t]*(?:[;"'\\<),\r\n]|&(?:quot|apos|amp);|$))|[rRuUbBfF]{1,2}(?:"(?:[^"\\\r\n]|\\.)+"|'(?:[^'\\\r\n]|\\.)+')(?![A-Za-z0-9_'"\u0080-\uffff.@])|(?![@$]{1,2}"|\\")[^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /**
  * 日本語キー=値(設定ファイル・接続文字列・リテラル内)。
@@ -148,10 +179,26 @@ const SETTING_NAME = /\bname\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 /**
  * .env / .properties 形式の行(`DB_PASSWORD=...`。行頭から始まり = の前後に空白がないもの。字下げした
  * 行はコードの引数(credentials=None, など)が多いため対象外)。値は行末まで
- * (接続文字列の区切り ; & < > を含んでも途中で止めない)。キーの判定は置き換えの中で行う。
- * バッチファイルの set DB_PASSWORD=... / set "DB_PASSWORD=..." も(if の中で字下げした行も)
+ * (接続文字列の区切り ; & < > を含んでも途中で止めない。空白の後の # からは行末のコメント)。
+ * キーの判定は置き換えの中で行う。Dockerfile の ENV / ARG(1 行に KEY=value を並べたものも)・
+ * docker-compose のリストの項目(- DB_PASSWORD=... / - "DB_PASSWORD=...")も
  */
-const ENV_LINE = /^((?:export[ \t]+|[ \t]*[Ss][Ee][Tt][ \t]+"?)?)([A-Za-z0-9_.-]+)(=)([^\r\n]*)/gm;
+const ENV_LINE = /^((?:export[ \t]+|(?:ENV|ARG)[ \t]+|[ \t]*-[ \t]+"?)?)([A-Za-z0-9_.-]+)(=)([^\r\n]*)/gm;
+
+/** Dockerfile の ENV / ARG の行の KEY=value(値は空白まで。引用符で囲んだものは引用符まで) */
+const DOCKER_PAIR = /(?<![^ \t])([A-Za-z_][A-Za-z0-9_.-]*)(=)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']*)/g;
+
+/**
+ * バッチファイルの set(set DB_PASSWORD=... / set "DB_PASSWORD=..." / @set / if ... set / ... & set。字下げした行も)。
+ * set "K=V" の値は閉じる " まで。set K=V の値は引用符の外の & | < > か行末まで(値の中の空白・引用符も値のうち。
+ * ^ の後の文字はそのままの文字)。MSBuild の Exec などの XML に書いたもの(&quot; / &apos; / &amp;)も同じに読む
+ */
+const BATCH_SET =
+  /(?<=^|[ \t@(&|;"'>])(?:([Ss][Ee][Tt][ \t]+(?:"|&quot;))([A-Za-z0-9_.-]+)(=)((?:(?!&quot;)[^"\r\n])*)|([Ss][Ee][Tt][ \t]+)([A-Za-z0-9_.-]+)(=)((?:"[^"\r\n]*"?|&quot;(?:(?!&quot;)[^"\r\n])*(?:&quot;)?|&apos;|\^[^\r\n]|[^\r\n&|<>"^])*))/gm;
+
+/** コマンドの引数の環境変数(docker run -e DB_PASSWORD=... / --env "DB_PASSWORD=...") */
+const SHELL_ENV_ARG =
+  /(?<=[ \t])((?:-e|--env)(?:[ \t]+|=))("[^"\r\n]*"|'[^'\r\n]*'|[A-Za-z_][A-Za-z0-9_]*=(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"']*))/g;
 
 /** キーの値の文字列(C# の @"..." / $"..." / $@"..."、Python の u"..." / r'...' / f"..." / b"..." なども) */
 const KEY_VALUE = String.raw`((?:\$?@|@\$)"(?:[^"\r\n]|"")*"|(?:\$|[rRuUbBfF]{1,2})?"(?:[^"\\\r\n]|\\.)*"|(?:[rRuUbBfF]{1,2})?'(?:[^'\\\r\n]|\\.)*')`;
@@ -277,7 +324,7 @@ function isSecretPair(key: string, value: string, labels = true): boolean {
 function looksLikeWords(value: string): boolean {
   const words = value
     .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1 ")
     .split(/[^A-Za-z]+/)
     .filter((word) => word !== "");
   return (
@@ -303,12 +350,12 @@ function hasStrongSecretWord(key: string): boolean {
 function keyWords(key: string): string[] {
   return key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1 ")
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.toLowerCase())
     // 番号・版の語は除き、語の末尾の番号も除く(Password2 / DB_PASSWORD_2 / password_v2 / SMTP_PASS1)
-    // (小文字の pass1 / pass2 だけのキーはコードの処理の段のことが多いため除かない)
-    .map((word) => (/^v?\d+$/.test(word) ? "" : /^pass\d+$/.test(key) ? word : word.replace(/(?<=[a-z])\d+$/, "")))
+    // (小文字の pass1 / pass2 だけのキー(this.pass1 も)はコードの処理の段のことが多いため除かない)
+    .map((word) => (/^v?\d+$/.test(word) ? "" : /(?:^|\.)pass\d+$/.test(key) ? word : word.replace(/(?<=[a-z])\d+$/, "")))
     .filter((word) => word !== "");
 }
 
@@ -350,11 +397,11 @@ const JP_ATTR_SECRET =
   /(パスワード|ﾊﾟｽﾜｰﾄﾞ|暗証番号|ユーザー?(?:ID|ID|名)|ﾕｰｻﾞｰ?ID)(\s*[==]\s*")([^"]+)(")/g;
 
 /**
- * 直前のコードが「変数 = 」で終わっているか(行継続 `_` 対応)。
+ * 直前のコードが「変数 = 」で終わっているか(行継続 `_` 対応。型文字の付いた Dim strPwd$ = も)。
  * 文字列リテラルの直前コンテキスト判定に使う
  */
 const ASSIGNMENT_TAIL = new RegExp(
-  `([${IDENT_HEAD}][${IDENT_BODY}]*)\\s*(?:As\\s+String\\s*)?[&+]?=\\s*(?:_\\s*)?(?:\\(\\s*(?:_\\s*)?)*$`,
+  `([${IDENT_HEAD}][${IDENT_BODY}]*)[$%&!#@]?\\s*(?:As\\s+String\\s*)?[&+]?=\\s*(?:_\\s*)?(?:\\(\\s*(?:_\\s*)?)*$`,
 );
 
 /** 名前付き引数(Foo(password:="x"))の直前コンテキスト */
@@ -396,7 +443,8 @@ const COMMENT_ASSIGN = new RegExp(
   // 識別子の途中からは始めない(長い語のコメントで各位置から語の終わりまでを読み直さないように)
   // (.Password / 1.pwd のように . や数字から始まる語もそのまま識別子として読む)
   // VB の宣言(Dim strPwd As String = "..." / Const DB_PASSWORD As String = "...")・名前付き引数(password:="...")も
-  `(?<![${IDENT_BODY}])([${IDENT_BODY}]+)(\\s*(?:[Aa][Ss]\\s+[${IDENT_HEAD}][${IDENT_BODY}]*(?:\\(\\))?\\s*)?:?=\\s*")([^"\\r\\n]+)(")`,
+  // 値の "" は VB の文字列の中の " (Server=x;Password=""a;b"";)。型文字(Dim strPwd$ = "...")も
+  `(?<![${IDENT_BODY}])([${IDENT_BODY}]+)([$%&!#@]?\\s*(?:[Aa][Ss]\\s+[${IDENT_HEAD}][${IDENT_BODY}]*(?:\\(\\))?\\s*)?:?=\\s*")((?:[^"\\r\\n]|"")+)("(?!"))`,
   "g",
 );
 
@@ -551,6 +599,11 @@ function maskConnstrText(
       // コードの Python の接頭辞(username=b"..." / password = u'...')は残す(; の後の接続文字列の値は丸ごと伏せる)
       const code = !/;[ \t]*$/.test(source.slice(Math.max(0, offset - 20), offset));
       const prefix = code ? (/^([rRuUbBfF]{1,2})(?:"(?:[^"\\\r\n]|\\.)+"|'(?:[^'\\\r\n]|\\.)+')$/.exec(value)?.[1] ?? "") : "";
+      // コードの接頭辞つきの文字列に続くメソッドの呼び出し(password = b"...".decode())は、接頭辞だけを値と読むため
+      // ここでは伏せない(文字列はコードのリテラルとして伏せる)
+      if (code && /^[rRuUbBfF]{1,2}$/.test(value) && /^["']/.test(source.charAt(offset + whole.length))) {
+        return whole;
+      }
       const body = value.slice(prefix.length);
       const quote =
         prefix !== ""
@@ -932,11 +985,31 @@ function maskGenericText(
   
   // .env / .properties 形式の行(値は行末まで。引用符で囲んだ値は引用符を残す)
   result = result.replace(ENV_LINE, (whole, lead: string, key: string, eq: string, line: string, offset: number) => {
+    // Dockerfile の ENV / ARG は KEY=value を空白で区切って並べられる
+    if (/^(?:ENV|ARG)[ \t]/.test(lead)) {
+      let kindFound: string | undefined;
+      const pairs = `${key}${eq}${line}`.replace(DOCKER_PAIR, (pair, k: string, e: string, v: string) => {
+        const shown = maskedEnvValue(k, v, true);
+        if (shown === undefined) {
+          return pair;
+        }
+        kindFound ??= kindForConfigKey(k);
+        return `${k}${e}${shown}`;
+      });
+      if (kindFound !== undefined) {
+        findings.push({ line: lineOf(result, offset), kind: kindFound });
+      }
+      return `${lead}${pairs}`;
+    }
     const kind = kindForConfigKey(key);
-    // set "KEY=value" の閉じる引用符は値に含めない
+    // - "KEY=value" の閉じる引用符は値に含めない
     const closing = lead.endsWith('"') ? (/"[ \t]*$/.exec(line)?.[0] ?? "") : "";
     const rest = line.slice(0, line.length - closing.length);
-    const value = rest.trim();
+    const trimmed = rest.trim();
+    // 空白の後の # からは行末のコメント(.env)。引用符で囲んだ値は閉じる引用符の後のコメント
+    const quotedHead = trimmed.includes("#") ? /^(["'])(?:(?!\1)[^\r\n])*\1(?=[ \t]+#)/.exec(trimmed) : null;
+    const value =
+      quotedHead !== null ? quotedHead[0] : trimmed.includes("#") ? trimmed.replace(/(?<![ \t])[ \t]+#.*$/, "") : trimmed;
     const quote = value.charAt(0);
     const quoted = value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote);
     const inner = quoted ? value.slice(1, -1) : value;
@@ -949,6 +1022,7 @@ function maskGenericText(
       inner === "" ||
       inner === MASK ||
       (listed && (head.includes("=") || CONNSTR_KEY_NAME.test(key))) ||
+      isShellVariable(head) ||
       (kind === KIND_PASSWORD ? !isSecretPair(key, head) : isPlaceholderOnly(head))
     ) {
       return whole;
@@ -958,6 +1032,37 @@ function maskGenericText(
     const shown = quoted ? `${quote}${MASK}${quote}` : MASK;
     return `${lead}${key}${eq}${rest.slice(0, at)}${shown}${rest.slice(at + value.length)}${closing}`;
   });
+  // バッチファイルの set(値の空白も値のうちなので表示の文言とはみなさない)
+  result = result.replace(BATCH_SET, (whole, ...groups: unknown[]) => {
+    const quotedForm = typeof groups[0] === "string";
+    const part = (i: number): string => {
+      const g = groups[quotedForm ? i : i + 4];
+      return typeof g === "string" ? g : "";
+    };
+    const [head, key, eq, value] = [part(0), part(1), part(2), part(3)];
+    const offset = typeof groups[8] === "number" ? groups[8] : 0;
+    const inner = value.trim();
+    const shown = maskedEnvValue(key, inner, false);
+    if (shown === undefined) {
+      return whole;
+    }
+    findings.push({ line: lineOf(result, offset), kind: kindForConfigKey(key) ?? KIND_PASSWORD });
+    const at = value.indexOf(inner);
+    return `${head}${key}${eq}${value.slice(0, at)}${shown}${value.slice(at + inner.length)}`;
+  });
+  // コマンドの引数の環境変数(docker run -e DB_PASSWORD=...)
+  result = result.replace(SHELL_ENV_ARG, (whole, flag: string, arg: string, offset: number) => {
+    const quote = /^["']/.test(arg) ? arg.charAt(0) : "";
+    const body = quote === "" ? arg : arg.slice(1, -1);
+    const pair = /^([A-Za-z_][A-Za-z0-9_]*)=([^\r\n]*)$/.exec(body);
+    const key = pair?.[1] ?? "";
+    const shown = pair === null ? undefined : maskedEnvValue(key, pair[2] ?? "", false);
+    if (shown === undefined) {
+      return whole;
+    }
+    findings.push({ line: lineOf(result, offset), kind: kindForConfigKey(key) ?? KIND_PASSWORD });
+    return `${flag}${quote}${key}=${shown}${quote}`;
+  });
   // XML 属性形式(値が引用符で囲まれるため接続文字列パターンでは拾えない)
   for (const regex of [ATTR_SECRET, ATTR_SECRET_SINGLE]) {
     result = result.replace(
@@ -966,6 +1071,11 @@ function maskGenericText(
         // 値が空白・書式の差し込みだけのもの・先に伏せたもの、閉じた引用符の後のコードの連結("Password=" & _ の
         // 次の行の " まで / "Password="+password; の後の次の行の " まで)は伏せない
         if (value.trim() === "" || value === MASK || isPlaceholderOnly(value) || isConcatenation(value)) {
+          return whole;
+        }
+        // バッチファイルの set "KEY=" の " は値の引用符ではない(空の値の set "DB_PASSWORD=" の後の行まで読まない)
+        const lineHead = /[^\r\n]*$/.exec(result.slice(Math.max(0, offset - 200), offset))?.[0] ?? "";
+        if (/(?:^|[ \t@(&|])set[ \t]+"[A-Za-z0-9_.-]*$/i.test(lineHead)) {
           return whole;
         }
         const kind = /user|uid/i.test(key) ? KIND_USER : KIND_PASSWORD;
