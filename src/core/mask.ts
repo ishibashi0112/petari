@@ -510,10 +510,13 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
       return `${prefix}${MASK}`;
     },
   );
-  result = result.replace(PARTIAL_JWT, (whole: string) => (isPartlyMasked(whole) ? MASK : whole));
-  result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
-    isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
-  );
+  // 一部だけ伏せたトークンの残り(伏せ字がなければ探さない)
+  if (result.includes(MASK)) {
+    result = result.replace(PARTIAL_JWT, (whole: string) => (isPartlyMasked(whole) ? MASK : whole));
+    result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
+      isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
+    );
+  }
 
   // 大きい文字列を控えに残したままにしない
   lineIndexText = undefined;
