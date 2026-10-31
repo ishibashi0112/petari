@@ -44,7 +44,7 @@ export interface WindowLine {
   note?: string;
   /**
    * 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行 (applier が付ける)。
-   * "always" = 伏せ字を含む行で、SEARCH に含めると一致しない。"with-mask" = 伏せ字を含まない範囲の端の行
+   * "always" = 伏せ字を含む行で、SEARCH に含めると一致しない。"with-mask" = 伏せ字を含まない行
    * (字下げした鍵の END の行など) で、伏せ字を含む行と同じ SEARCH に入れると一致しない
    */
   wrapped?: "always" | "with-mask";
@@ -376,10 +376,10 @@ const WRAPPED_LINE_NOTE =
   "複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行です。SEARCH に含めると一致しないため、" +
   "これらの行を含まない連続した範囲 (前か後ろの行) で一意に特定してください";
 
-/** 複数行にまたがる値を伏せた範囲の端の行 (伏せ字を含まない) の注記 */
+/** 複数行にまたがる値を伏せた範囲にかかる、伏せ字を含まない行 (END の行など) の注記 */
 const WRAPPED_EDGE_NOTE =
-  "複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行です。[MASKED] を含む行と同じ SEARCH に入れると一致しません " +
-  "([MASKED] を含まない範囲なら含められます)";
+  "[MASKED] を含む行と一緒に使えない行です (複数行にまたがる値 (秘密鍵など) を伏せた範囲にかかる、[MASKED] を含まない行。" +
+  "END の行など)。[MASKED] を含む行と同じ SEARCH に入れると一致しません ([MASKED] を含まない範囲なら含められます)";
 
 const MARK: Record<LineVerdict, string> = { match: "=", "ws-only": "~", differ: "!", extra: "+" };
 
@@ -409,6 +409,15 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
       }
       const range = last === line ? `${line.lineNo}` : `${line.lineNo}〜${last.lineNo}`;
       out.push(`- ${range} 行目: ${kind === "always" ? WRAPPED_LINE_NOTE : WRAPPED_EDGE_NOTE}`);
+      // 伏せ字のない範囲では写せる行なので、見分けにくい文字などの注記は残す (含めるよう勧める注記は除く)
+      if (kind === "with-mask") {
+        for (let k = w.lines.indexOf(line); k <= i; k++) {
+          const l = w.lines[k] as WindowLine;
+          if (l.note !== undefined && !(l.verdict === "extra" && l.text.trim() !== "")) {
+            out.push(`- ${l.lineNo} 行目: ${l.note}`);
+          }
+        }
+      }
     } else if (line.note !== undefined) {
       out.push(`- ${line.lineNo} 行目: ${line.note}`);
     }

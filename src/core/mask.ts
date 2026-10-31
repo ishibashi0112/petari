@@ -63,15 +63,17 @@ const IDENT_BODY = `${IDENT_HEAD}0-9.\\uFF10-\\uFF19`;
  * 接続文字列・設定のキー=値(パスワード系)。
  * 値は ; " & < > 改行 まで(接続文字列のセパレータで停止)。値の先頭が
  * 空白・引用符のもの(`KEY = "..."` のようなコードの代入)は対象外にし、
- * 引用符内は文字列リテラルとして別途(高エントロピー判定で)扱う
+ * 引用符内は文字列リテラルとして別途(高エントロピー判定で)扱う。ただし単一引用符で囲んだ値
+ * (接続文字列の `Password='a;b'`)は引用符の中を伏せる(引用符は残す)。キーの前は英数字以外
+ * (DB_PASSWORD= / db.password= も)
  */
 const CONNSTR_SECRET =
-  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)([^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)('[^'\r\n]+'|[^;"'&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /** 接続文字列のユーザー系キー(User ID / UID など明確なもののみ)。
  *  値の先頭 : は SQL バインド変数(UID = :UID 等)のため対象外 */
 const CONNSTR_USER =
-  /\b(user\s*id|userid|username|uid)(\s*=\s*)([^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
+  /(?<![A-Za-z0-9])(user\s*id|userid|username|uid)(\s*=\s*)('[^'\r\n]+'|[^;"'&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /**
  * 日本語キー=値(設定ファイル・接続文字列・リテラル内)。
@@ -84,9 +86,49 @@ const JP_KEY_SECRET =
 const JP_KEY_USER =
   /(ユーザー?(?:ID|ID|名)|ﾕｰｻﾞｰ?ID|アカウント(?:ID|ID|名)?)(\s*[==]\s*)([^;"&<>\r\n\s][^;"&<>\r\n]*)/g;
 
-/** XML 属性形式: password="..." など(非 VB ファイル用) */
+/**
+ * XML 属性形式: password="..." など(非 VB ファイル用)。キーの前は英数字以外(DB_PASSWORD= / db.password= も)。
+ * 単一引用符の値は行内で閉じるものだけ(英文の ' を引用と取り違えて先まで伏せないように)
+ */
 const ATTR_SECRET =
-  /\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*")([^"]+)(")/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*")([^"]+)(")/gi;
+const ATTR_SECRET_SINGLE =
+  /(?<![A-Za-z0-9])(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token|user\s*id|userid|username|uid)(\s*=\s*')([^'\r\n]+)(')/gi;
+
+/**
+ * XML の開始タグの属性の並び(引用符の中の > も含める)。長さに上限を設けるのは、閉じていないタグが
+ * 続いても遅くならないように
+ */
+const TAG_BODY = `(?:[^<>"]|"[^"]{0,4000}"){0,2000}`;
+
+/** .NET の設定ファイルの appSettings: <add key="DbPassword" value="..." />(key と value の順はどちらでも) */
+const CONFIG_ADD = new RegExp(`<add\\b${TAG_BODY}>`, "gi");
+const CONFIG_ATTR = /\b(key|value)(\s*=\s*")([^"]*)(")/gi;
+
+/**
+ * .NET の設定(My.Settings): <setting name="DbPassword" ...><value>...</value>(app.config)と
+ * <Setting Name="DbPassword" ...><Value Profile="(Default)">...</Value>(Settings.settings)
+ */
+const SETTING_VALUE = new RegExp(
+  `(<setting\\b${TAG_BODY}>)(\\s*<value\\b${TAG_BODY}(?<!\\/)>)([^<]*)(<\\/value>)`,
+  "gi",
+);
+const SETTING_NAME = /\bname\s*=\s*"([^"]*)"/i;
+
+/**
+ * JSON などの "password": "..."(キーに秘密系の語を含む。キーと値は同じ種類の引用符)。キーの判定は
+ * 置き換えの中で行う(正規表現に入れると、秘密系の語を多く含む長い文字列で遅くなるため)
+ */
+const JSON_PAIR = /"([^"\r\n]*)"(\s*:\s*")((?:[^"\\\r\n]|\\.)+)(")/g;
+const JSON_PAIR_SINGLE = /'([^'\r\n]*)'(\s*:\s*')((?:[^'\\\r\n]|\\.)+)(')/g;
+
+/** 設定のキー名から種別を決める(秘密系・ユーザー ID 系。該当なしは undefined) */
+function kindForConfigKey(key: string): string | undefined {
+  if (SECRET_NAME_HINT.test(key)) {
+    return KIND_PASSWORD;
+  }
+  return /user\s*id|userid|username|(?<![A-Za-z])uid(?![A-Za-z])/i.test(key) ? KIND_USER : undefined;
+}
 
 /** XML 属性形式の日本語キー: パスワード="..." など(非 VB ファイル用) */
 const JP_ATTR_SECRET =
@@ -104,6 +146,13 @@ const ASSIGNMENT_TAIL = new RegExp(
 const NAMED_ARG_TAIL = new RegExp(
   `([${IDENT_HEAD}][${IDENT_BODY}]*)\\s*:=\\s*(?:_\\s*)?$`,
 );
+
+/**
+ * 秘密として丸ごと伏せたリテラルと、連結で続くリテラルの間(& / + と空白・行継続・改行の定数だけ)。
+ * `pwd = "abc" & _` の次の行の `"def"` も同じ値の続き
+ */
+const CONCAT_GAP =
+  /^(?:[ \t]|_[ \t]*\r?\n|\r?\n|[&+]|vbCrLf|vbCr|vbLf|vbNewLine|vbTab|ControlChars\.[A-Za-z]+|Environment\.NewLine)*$/;
 
 /** 開き括弧の直前のメソッド名(callArgKind 用) */
 const CALLEE_TAIL = new RegExp(`([${IDENT_HEAD}][${IDENT_BODY}]*)\\s*$`);
@@ -141,13 +190,16 @@ const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
  * 前の 2 つが伏せ字で、残りが短い(20 文字未満)並び。高エントロピーのサブドメインを伏せたホスト名
  * (`[MASKED].[MASKED].database.windows.net` など)で、トークンの残りではない。JWT の署名は 43 文字以上
  * あるため、伏せ損ねて残るのは長い並び(それは伏せる)。ただし文字列の連結(`" & _` / `" +`)や
- * 伏せ字が続くときは、署名が途中で切れている(続きがある)ので伏せる
+ * 伏せ字が続くときは、署名が途中で切れている(続きがある)ので伏せる。連結が続いても、残りが
+ * 小文字・数字・- だけならホスト名のラベル(`...internal" & ";Database=..."`)なので伏せない
  */
 function isShortTail(whole: string, offset: number, all: string): boolean {
   const head = `${MASK}.${MASK}.`;
   if (!whole.startsWith(head) || whole.length - head.length >= 20) return false;
   const after = all.slice(offset + whole.length, offset + whole.length + 40);
-  return !/^(?:"\s*[&+]|\.\[MASKED\])/.test(after);
+  if (after.startsWith(`.${MASK}`)) return false;
+  // 小文字・数字・- だけの残りはホスト名のラベル(連結が続いても伏せない)
+  return !/^"\s*[&+]/.test(after) || /^[a-z0-9-]+$/.test(whole.slice(head.length));
 }
 
 /** 伏せ字を含み、伏せていない英数字も残っているか */
@@ -256,20 +308,18 @@ function maskConnstrText(
   findings: MaskFinding[],
   toLine: (indexInText: number) => number,
 ): string {
-  let result = text.replace(
-    CONNSTR_SECRET,
-    (whole, key: string, eq: string, _value: string, offset: number) => {
-      findings.push({ line: toLine(offset), kind: KIND_PASSWORD });
-      return `${key}${eq}${MASK}`;
-    },
-  );
-  result = result.replace(
-    CONNSTR_USER,
-    (whole, key: string, eq: string, _value: string, offset: number) => {
-      findings.push({ line: toLine(offset), kind: KIND_USER });
-      return `${key}${eq}${MASK}`;
-    },
-  );
+  const maskValue =
+    (kind: string) =>
+    (whole: string, key: string, eq: string, value: string, offset: number): string => {
+      // 先に伏せた値(単一引用符の属性など)は数え直さない
+      if (value === `'${MASK}'`) {
+        return whole;
+      }
+      findings.push({ line: toLine(offset), kind });
+      return value.startsWith("'") ? `${key}${eq}'${MASK}'` : `${key}${eq}${MASK}`;
+    };
+  let result = text.replace(CONNSTR_SECRET, maskValue(KIND_PASSWORD));
+  result = result.replace(CONNSTR_USER, maskValue(KIND_USER));
   result = result.replace(
     JP_KEY_SECRET,
     (whole, key: string, eq: string, _value: string, offset: number) => {
@@ -367,11 +417,20 @@ function maskVbSource(
   // 直前のコード(out の末尾)の控え。out を毎回切り出すと、大きいファイルで
   // 文字列全体の複製が文字列リテラルごとに起きて遅くなるため
   let recent = "";
+  // 秘密として丸ごと伏せた直前のリテラルの種別と、その後に出したコード(連結で続くリテラルの判定用)
+  let secretKind: string | undefined;
+  let sinceSecret = "";
   const emit = (piece: string): void => {
     out += piece;
     recent += piece;
     if (recent.length > 400) {
       recent = recent.slice(-200);
+    }
+    if (secretKind !== undefined) {
+      sinceSecret += piece;
+      if (sinceSecret.length > 200) {
+        secretKind = undefined;
+      }
     }
   };
   let i = 0;
@@ -417,10 +476,16 @@ function maskVbSource(
               ? kindForIdentifier(namedArg[1] ?? "")
               : callArgKind(tail);
         }
+        // 秘密として伏せたリテラルに連結で続くリテラル
+        if (kind === undefined && secretKind !== undefined && /[&+]/.test(sinceSecret) && CONCAT_GAP.test(sinceSecret)) {
+          kind = secretKind;
+        }
       }
       if (kind !== undefined) {
         findings.push({ line: lineOf(content, i), kind });
         emit(`"${MASK}"`);
+        secretKind = kind;
+        sinceSecret = "";
         i = j + 1;
         continue;
       }
@@ -464,15 +529,53 @@ function maskGenericText(
   findings: MaskFinding[],
   strict: boolean,
 ): string {
-  // XML 属性形式(値が引用符で囲まれるため接続文字列パターンでは拾えない)
-  let result = content.replace(
-    ATTR_SECRET,
-    (whole, key: string, eq: string, _value: string, closeQuote: string, offset: number) => {
-      const kind = /user|uid/i.test(key) ? KIND_USER : KIND_PASSWORD;
-      findings.push({ line: lineOf(content, offset), kind });
-      return `${key}${eq}${MASK}${closeQuote}`;
+  // .NET の設定ファイルの appSettings / My.Settings(キー名と値が別の属性・要素にある)
+  let result = content.replace(CONFIG_ADD, (tag: string, offset: number) => {
+    let key: string | undefined;
+    let hasValue = false;
+    for (const attr of tag.matchAll(CONFIG_ATTR)) {
+      if (attr[1]?.toLowerCase() === "key") {
+        key ??= attr[3];
+      } else if ((attr[3] ?? "").trim() !== "") {
+        hasValue = true;
+      }
+    }
+    const kind = key === undefined ? undefined : kindForConfigKey(key);
+    if (kind === undefined || !hasValue) {
+      return tag;
+    }
+    findings.push({ line: lineOf(content, offset), kind });
+    return tag.replace(CONFIG_ATTR, (attr: string, name: string, eq: string, value: string, close: string) =>
+      name.toLowerCase() === "value" && value.trim() !== "" ? `${name}${eq}${MASK}${close}` : attr,
+    );
+  });
+  result = result.replace(
+    SETTING_VALUE,
+    (whole, open: string, middle: string, value: string, close: string, offset: number) => {
+      const name = SETTING_NAME.exec(open)?.[1];
+      const kind = name === undefined ? undefined : kindForConfigKey(name);
+      const inner = value.trim();
+      if (kind === undefined || inner === "") {
+        return whole;
+      }
+      findings.push({ line: lineOf(result, offset), kind });
+      // 値の前後の空白(改行・字下げ)は残す
+      const lead = value.slice(0, value.indexOf(inner));
+      const trail = value.slice(lead.length + inner.length);
+      return `${open}${middle}${lead}${MASK}${trail}${close}`;
     },
   );
+  // XML 属性形式(値が引用符で囲まれるため接続文字列パターンでは拾えない)
+  for (const regex of [ATTR_SECRET, ATTR_SECRET_SINGLE]) {
+    result = result.replace(
+      regex,
+      (whole, key: string, eq: string, _value: string, closeQuote: string, offset: number) => {
+        const kind = /user|uid/i.test(key) ? KIND_USER : KIND_PASSWORD;
+        findings.push({ line: lineOf(result, offset), kind });
+        return `${key}${eq}${MASK}${closeQuote}`;
+      },
+    );
+  }
   result = result.replace(
     JP_ATTR_SECRET,
     (whole, key: string, eq: string, _value: string, closeQuote: string, offset: number) => {
@@ -481,6 +584,17 @@ function maskGenericText(
       return `${key}${eq}${MASK}${closeQuote}`;
     },
   );
+  // JSON などのキーと値("password": "...")
+  for (const regex of [JSON_PAIR, JSON_PAIR_SINGLE]) {
+    result = result.replace(regex, (whole, key: string, sep: string, _value: string, close: string, offset: number) => {
+      if (!SECRET_NAME_HINT.test(key)) {
+        return whole;
+      }
+      findings.push({ line: lineOf(result, offset), kind: KIND_PASSWORD });
+      const quote = whole.charAt(0);
+      return `${quote}${key}${quote}${sep}${MASK}${close}`;
+    });
+  }
   result = maskConnstrText(result, findings, (index) => lineOf(result, index));
   if (strict) {
     result = maskEntropyText(result, findings, (index) => lineOf(result, index));

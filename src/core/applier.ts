@@ -421,8 +421,9 @@ function planReplace(
               "一意に特定してください"
             : "") +
           (edges.length > 0
-            ? `。抜粋の ${formatLineRanges(edges)} 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行で、` +
-              "[MASKED] を含む行と同じ SEARCH に入れると一致しません ([MASKED] を含まない範囲なら含められます)"
+            ? `。抜粋の ${formatLineRanges(edges)} 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲にかかる、[MASKED] を` +
+              "含まない行 (END の行など) で、[MASKED] を含む行と同じ SEARCH に入れると一致しません ([MASKED] を含まない範囲" +
+              "なら含められます)"
             : ""),
         block,
         nearest: marked,

@@ -33,8 +33,12 @@ const MATCH_SPEC_NOTE = [
 const WRAPPED_REQUEST_LINES = [
   "",
   "- ただし、抜粋の注記で「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず、",
-  "  その行を含まない連続した範囲にしてください。「範囲の端の行」とした行は、[MASKED] を含む行と同じ",
-  "  SEARCH には入れないでください",
+  "  その行を含まない連続した範囲にしてください",
+].join("\n");
+const EDGE_REQUEST_LINES = [
+  "",
+  "- 抜粋の注記で「[MASKED] を含む行と一緒に使えない行」とした行は、[MASKED] を含む行と同じ SEARCH には",
+  "  入れないでください",
 ].join("\n");
 
 /** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
@@ -42,18 +46,24 @@ const MASK_SPEC_NOTE = [
   "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] を含む行は SEARCH にも REPLACE にも一字も",
   "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
   "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
+];
+/** 照合仕様の伏せ字の項のうち、複数行にまたがる値を伏せた範囲の行 (抜粋にその行があるときだけ載せる) */
+const WRAPPED_SPEC_NOTE = [
   "- 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行は SEARCH に含めると一致しません。その行を",
-  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください (抜粋で「範囲の端の行」とした行は、",
-  "  [MASKED] を含む行と同じ SEARCH に入れなければ含められます)",
+  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください",
+];
+const EDGE_SPEC_NOTE = [
+  "- その範囲にかかる、[MASKED] を含まない行 (END の行など) は、[MASKED] を含む行と同じ SEARCH に入れると",
+  "  一致しません ([MASKED] を含まない範囲なら含められます)",
 ];
 
-const reRequest = (wrapped: boolean): string => `## 依頼
+const reRequest = (wrapped: { always: boolean; edge: boolean }): string => `## 依頼
 
 上記の失敗した各ブロックについて、SEARCH 部分を現在のファイル内容と完全に一致するよう修正し、
 changes.md 全体を元の規約フォーマット (## CHANGES から始まる形式) で再出力してください。
 - SEARCH の修正には「実ファイルの該当箇所」の抜粋を使い、「│」より右側を一字一句そのまま
   コピーしてください (行頭の「! ~ = +」の記号と行番号は含めません。+ の行 (空行含む) も
-  SEARCH に含めます)${wrapped ? WRAPPED_REQUEST_LINES : ""}
+  SEARCH に含めます)${wrapped.always ? WRAPPED_REQUEST_LINES : ""}${wrapped.edge ? EDGE_REQUEST_LINES : ""}
 - SEARCH ブロックにはファイル内で一意に特定できる範囲を含めてください
 - 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください
 - 抜粋にも SEARCH に相当する行が見当たらない場合は、推測で書き換えず、その旨を報告して
@@ -227,12 +237,20 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
       parts.push("", ...renderNearestReplace(f.nearestReplace));
     }
   }
+  const hasKind = (kind: "always" | "with-mask"): boolean =>
+    failures.some((f) =>
+      [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped === kind) === true),
+    );
+  const wrapped = { always: hasKind("always"), edge: hasKind("with-mask") };
   if (parts.slice(specAt).some((l) => l.includes("[MASKED]"))) {
-    parts.splice(specAt, 0, ...MASK_SPEC_NOTE);
+    parts.splice(
+      specAt,
+      0,
+      ...MASK_SPEC_NOTE,
+      ...(wrapped.always || wrapped.edge ? WRAPPED_SPEC_NOTE : []),
+      ...(wrapped.edge ? EDGE_SPEC_NOTE : []),
+    );
   }
-  const wrapped = failures.some((f) =>
-    [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped !== undefined) === true),
-  );
   parts.push("", reRequest(wrapped), "");
   return parts.join("\n");
 }

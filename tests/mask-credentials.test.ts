@@ -101,6 +101,137 @@ describe("credentialMasker: 非 VB ファイル(config / XML)", () => {
   });
 });
 
+describe("credentialMasker: 設定ファイルのキーと値", () => {
+  const LOOSE = { vbSource: false, strict: false };
+
+  it("appSettings の秘密系キーの値を伏せる(key と value の順はどちらでも)", () => {
+    const config = [
+      "<appSettings>",
+      '  <add key="DbPassword" value="Hunter2Secret" />',
+      '  <add value="Tok3nValue" key="ApiToken"/>',
+      '  <add key="SmtpUserId" value="mailer" />',
+      '  <add key="Theme" value="Dark" />',
+      '  <add key="Password" value="" />',
+      '  <add key="Password"',
+      '       value="Hunter2',
+      '  Secret" />',
+      "</appSettings>",
+    ].join("\n");
+    const result = maskCredentials(config, LOOSE);
+    assert.strictEqual(
+      result.content,
+      [
+        "<appSettings>",
+        '  <add key="DbPassword" value="[MASKED]" />',
+        '  <add value="[MASKED]" key="ApiToken"/>',
+        '  <add key="SmtpUserId" value="[MASKED]" />',
+        '  <add key="Theme" value="Dark" />',
+        '  <add key="Password" value="" />',
+        '  <add key="Password"',
+        '       value="[MASKED]" />',
+        "</appSettings>",
+      ].join("\n"),
+    );
+    assert.strictEqual(result.findings.length, 4);
+  });
+
+  it("My.Settings(app.config / Settings.settings)の秘密系の設定の値を伏せる", () => {
+    const config = [
+      '<setting name="DbPassword" serializeAs="String">',
+      "  <value>Hunter2Secret</value>",
+      "</setting>",
+      '<setting name="Title" serializeAs="String">',
+      "  <value>Sales</value>",
+      "</setting>",
+      '<Setting Name="ApiKey" Type="System.String" Scope="Application">',
+      '  <Value Profile="(Default)">',
+      "    k3yV4lu3",
+      "  </Value>",
+      "</Setting>",
+      '<setting name="Password" serializeAs="String">',
+      "  <value />",
+      "</setting>",
+    ].join("\n");
+    assert.strictEqual(
+      maskCredentials(config, LOOSE).content,
+      [
+        '<setting name="DbPassword" serializeAs="String">',
+        "  <value>[MASKED]</value>",
+        "</setting>",
+        '<setting name="Title" serializeAs="String">',
+        "  <value>Sales</value>",
+        "</setting>",
+        '<Setting Name="ApiKey" Type="System.String" Scope="Application">',
+        '  <Value Profile="(Default)">',
+        "    [MASKED]",
+        "  </Value>",
+        "</Setting>",
+        '<setting name="Password" serializeAs="String">',
+        "  <value />",
+        "</setting>",
+      ].join("\n"),
+    );
+  });
+
+  it("前に英数字以外が付いたキー(DB_PASSWORD= など)と単一引用符の値も伏せる", () => {
+    const env = ["DB_PASSWORD=Hunter2", "export SECRET_TOKEN=zzz", "COMPASS=north", "BYPASS=1", "MY_UID=42"].join("\n");
+    assert.strictEqual(
+      maskCredentials(env, LOOSE).content,
+      ["DB_PASSWORD=[MASKED]", "export SECRET_TOKEN=[MASKED]", "COMPASS=north", "BYPASS=1", "MY_UID=[MASKED]"].join("\n"),
+    );
+    assert.strictEqual(
+      maskCredentials("DB_PASSWORD = 'Hunter2'\nname = 'it''s'\nprint('pass=' + x)", LOOSE).content,
+      "DB_PASSWORD = '[MASKED]'\nname = 'it''s'\nprint('pass=' + x)",
+    );
+  });
+
+  it("JSON などの秘密系キーの文字列の値を伏せる", () => {
+    const json = '{ "Password": "Hun\\"ter2", "ApiKey": "abc123", "Name": "x", "tokenTtl": 30, \'db_pass\': \'p@ss\' }';
+    assert.strictEqual(
+      maskCredentials(json, LOOSE).content,
+      '{ "Password": "[MASKED]", "ApiKey": "[MASKED]", "Name": "x", "tokenTtl": 30, \'db_pass\': \'[MASKED]\' }',
+    );
+  });
+});
+
+describe("credentialMasker: VB の連結で続く秘密の値", () => {
+  const LOOSE_VB = { vbSource: true, strict: false };
+
+  it("秘密として伏せたリテラルに連結で続くリテラルも伏せる", () => {
+    const vb = [
+      'Dim password As String = "Hunter2Secret" & _',
+      '    "morepart"',
+      'pwd = "abc" & vbCrLf & "def" + "ghi"',
+      "apiKey = \"part1\" _",
+      '    & "part2"',
+    ].join("\n");
+    assert.strictEqual(
+      maskCredentials(vb, LOOSE_VB).content,
+      [
+        'Dim password As String = "[MASKED]" & _',
+        '    "[MASKED]"',
+        'pwd = "[MASKED]" & vbCrLf & "[MASKED]" + "[MASKED]"',
+        'apiKey = "[MASKED]" _',
+        '    & "[MASKED]"',
+      ].join("\n"),
+    );
+  });
+
+  it("間に変数や別の文があれば続きとみなさない", () => {
+    const vb = [
+      'pwd = "abc" & userName & "def"',
+      'pwd = "abc"',
+      'title = "Sales"',
+      'msg = "Hello" & _',
+      '    "World"',
+    ].join("\n");
+    assert.strictEqual(
+      maskCredentials(vb, LOOSE_VB).content,
+      ['pwd = "[MASKED]" & userName & "def"', 'pwd = "[MASKED]"', 'title = "Sales"', 'msg = "Hello" & _', '    "World"'].join("\n"),
+    );
+  });
+});
+
 describe("credentialMasker: 汎用シークレット形式", () => {
   it("AWS アクセスキーをマスクする", () => {
     const result = maskCredentials("key = AKIAIOSFODNN7EXAMPLE", GENERIC);
@@ -337,8 +468,16 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
     );
     // 署名が文字列の連結で途中で切れているときは、短い残りも伏せる
     assert.strictEqual(
-      maskCredentials('t = "[MASKED].[MASKED].abcdefghijklmno" & _', GENERIC).content,
+      maskCredentials('t = "[MASKED].[MASKED].SflKxwRJSMeKKF2" & _', GENERIC).content,
       't = "[MASKED]" & _',
+    );
+    // 連結が続いても、小文字・数字・- だけの残りはホスト名のラベルなので伏せない
+    assert.strictEqual(
+      maskCredentials('"Server=tcp:Xk3pQ9vLm2Rt7sWz8Yb4.Hq5nJ8cV1xKz6Tg3Lp0W.internal" & ";Database=App"', {
+        ...GENERIC,
+        strict: true,
+      }).content,
+      '"Server=tcp:[MASKED].[MASKED].internal" & ";Database=App"',
     );
     // 残りが署名のように長ければは (URL の末尾の拡張子が続いても) 伏せる
     assert.strictEqual(
