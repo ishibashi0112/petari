@@ -188,6 +188,13 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
 
 type BlockMatch = ReturnType<typeof matchBlock>;
 
+/** 抜粋の行のうち、複数行にまたがる値を伏せた範囲にかかる行に印を付ける */
+function markWrapped(a: NearestAnalysis, isWrapped: (lineNo: number) => boolean): NearestAnalysis {
+  if (a.window === null) return a;
+  const lines = a.window.lines.map((l) => (isWrapped(l.lineNo) ? { ...l, wrapped: true } : l));
+  return { ...a, window: { ...a.window, lines } };
+}
+
 /** 行番号の一覧を「3〜5, 9」の形にする */
 function formatLineRanges(lineNos: number[]): string {
   const sorted = [...new Set(lineNos)].sort((a, b) => a - b);
@@ -383,24 +390,27 @@ function planReplace(
           nearestReplace = byReplace;
         }
       }
-      // 複数行にまたがる値を伏せた行は、SEARCH に含めると一致しない (パックでは 1 行にまとめて見えるため、
-      // 一致に含めない)。抜粋をそのまま写して同じ失敗を繰り返さないよう、その行を名指しする
-      const wrappedLines = [nearest, nearestReplace].flatMap((a) =>
-        (a?.window?.lines ?? [])
-          .map((l) => l.lineNo)
-          .filter((n) => views().some((view) => view[n - 1]?.wrapped === true)),
+      // 複数行にまたがる値を伏せた範囲にかかる行は、SEARCH に含めると一致しない (パックでは 1 行にまとめて
+      // 見えるため、一致に含めない)。抜粋をそのまま写して同じ失敗を繰り返さないよう、その行を名指しし、
+      // 抜粋の注記・修正のヒントでも写すよう勧めない
+      const isWrapped = (lineNo: number): boolean => views().some((view) => view[lineNo - 1]?.wrapped === true);
+      const marked = markWrapped(nearest, isWrapped);
+      const markedReplace = nearestReplace === undefined ? undefined : markWrapped(nearestReplace, isWrapped);
+      const wrappedLines = [marked, markedReplace].flatMap((a) =>
+        (a?.window?.lines ?? []).filter((l) => l.wrapped === true).map((l) => l.lineNo),
       );
       failures.push({
         path: change.path,
         kind: "block-not-found",
         message:
           wrappedLines.length > 0
-            ? `${message}。抜粋の ${formatLineRanges(wrappedLines)} 行目は複数行にまたがる値 (秘密鍵の本文など) を伏せた行で、` +
-              "SEARCH に含めると一致しません。その前後の行だけで一意に特定できる範囲にしてください"
+            ? `${message}。抜粋の ${formatLineRanges(wrappedLines)} 行目は複数行にまたがる値 (秘密鍵の本文など) を伏せた` +
+              "範囲にかかる行で、SEARCH に含めると一致しません。その行を含まない連続した範囲 (その行より前か後ろの行) で" +
+              "一意に特定してください"
             : message,
         block,
-        nearest,
-        ...(nearestReplace !== undefined ? { nearestReplace } : {}),
+        nearest: marked,
+        ...(markedReplace !== undefined ? { nearestReplace: markedReplace } : {}),
       });
       continue;
     }

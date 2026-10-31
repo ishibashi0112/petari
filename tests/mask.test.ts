@@ -929,6 +929,53 @@ describe("applier: 複数行の値・空行の差", () => {
     expect(report).not.toContain("Secret99");
   });
 
+  it("パックから写した字下げした秘密鍵の SEARCH には、抜粋を写すよう勧めず END の行も名指しする", () => {
+    const src = [
+      "service:",
+      "  key: |",
+      "    -----BEGIN RSA PRIVATE KEY-----",
+      "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "    VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK",
+      "    -----END RSA PRIVATE KEY-----",
+      "  token: ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+      "  port: 80",
+      "",
+    ].join("\n");
+    // パックでは鍵の本文が 1 行の [MASKED] になり、END の行の字下げも伏せた範囲に入る
+    const search = maskCredentials(src, { vbSource: false, strict: true }).content.split("\n").slice(1, 8);
+    expect(search).toContain("-----END RSA PRIVATE KEY-----");
+    const p = planChangeSet(
+      cs(replace("svc.yaml", block(search, [...search, "  host: x"]))),
+      new Map([["svc.yaml", state(src)]]),
+      NEW_FILE,
+    );
+    expect(p.failures[0]?.message).toContain("抜粋の 4〜6 行目は複数行にまたがる値");
+    const report = buildFailureReport(p.failures);
+    expect(report).toContain("- 4〜6 行目: 複数行にまたがる値");
+    expect(report).not.toContain("修正のヒント");
+    expect(report).not.toContain("この行も含めてコピーしてください");
+    expect(report).toContain("「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず");
+    expect(report).not.toContain("MIIEow");
+    expect(report).not.toContain("ghp_A1b2");
+    // 名指しした行を含まない範囲なら一致する
+    const ok = planChangeSet(
+      cs(replace("svc.yaml", block(["  token: [MASKED]", "  port: 80"], ["  token: [MASKED]", "  port: 8080"]))),
+      new Map([["svc.yaml", state(src)]]),
+      NEW_FILE,
+    );
+    expect(ok.ok).toBe(true);
+    expect(text(ok.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("port: 80", "port: 8080"));
+  });
+
+  it("複数行にまたがる値のない失敗の依頼には、伏せた範囲の行の例外を載せない", () => {
+    const p = planChangeSet(
+      cs(replace("a.vb", block(["Sub B()"], ["x"]))),
+      new Map([["a.vb", state("Sub A()\nEnd Sub\n")]]),
+      NEW_FILE,
+    );
+    expect(buildFailureReport(p.failures)).not.toContain("伏せた範囲にかかる行");
+  });
+
   it("伏せ字を含む REPLACE が空行の差だけで見つかっても「適用済み」にしない", () => {
     const src = ["Sub A()", '    pwd = "Hunter2Secret"', "    Open(pwd)", "End Sub", ""].join("\n");
     const p = planChangeSet(

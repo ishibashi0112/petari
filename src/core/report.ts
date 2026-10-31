@@ -29,22 +29,29 @@ const MATCH_SPEC_NOTE = [
   "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
 ];
 
+/** 依頼のうち、複数行にまたがる値を伏せた範囲の行の例外 (抜粋にその行があるときだけ載せる) */
+const WRAPPED_REQUEST_LINES = [
+  "",
+  "- ただし、抜粋の注記で「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず、",
+  "  その行を含まない連続した範囲にしてください",
+].join("\n");
+
 /** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
 const MASK_SPEC_NOTE = [
   "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] を含む行は SEARCH にも REPLACE にも一字も",
   "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
   "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
-  "- 複数行にまたがる値 (秘密鍵の本文など) を伏せた行は SEARCH に含めると一致しません。その前後の行だけで",
-  "  一意に特定できる範囲にしてください",
+  "- 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行は SEARCH に含めると一致しません。その行を",
+  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください",
 ];
 
-const RE_REQUEST = `## 依頼
+const reRequest = (wrapped: boolean): string => `## 依頼
 
 上記の失敗した各ブロックについて、SEARCH 部分を現在のファイル内容と完全に一致するよう修正し、
 changes.md 全体を元の規約フォーマット (## CHANGES から始まる形式) で再出力してください。
 - SEARCH の修正には「実ファイルの該当箇所」の抜粋を使い、「│」より右側を一字一句そのまま
   コピーしてください (行頭の「! ~ = +」の記号と行番号は含めません。+ の行 (空行含む) も
-  SEARCH に含めます)
+  SEARCH に含めます)${wrapped ? WRAPPED_REQUEST_LINES : ""}
 - SEARCH ブロックにはファイル内で一意に特定できる範囲を含めてください
 - 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください
 - 抜粋にも SEARCH に相当する行が見当たらない場合は、推測で書き換えず、その旨を報告して
@@ -221,7 +228,10 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
   if (parts.slice(specAt).some((l) => l.includes("[MASKED]"))) {
     parts.splice(specAt, 0, ...MASK_SPEC_NOTE);
   }
-  parts.push("", RE_REQUEST, "");
+  const wrapped = failures.some((f) =>
+    [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped === true) === true),
+  );
+  parts.push("", reRequest(wrapped), "");
   return parts.join("\n");
 }
 

@@ -42,6 +42,11 @@ export interface WindowLine {
   verdict: LineVerdict | null;
   /** 不一致行の補足説明 (空行の欠落・空白の個数差・不可視文字の差など) */
   note?: string;
+  /**
+   * 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行 (applier が付ける)。
+   * SEARCH に含めると一致しないため、写すよう勧める注記・ヒントを出さない
+   */
+  wrapped?: boolean;
 }
 
 /** アラインメントの結果、この領域に対応する行が無かった SEARCH 側の行 */
@@ -365,6 +370,11 @@ export function analyzeNearest(
   };
 }
 
+/** 複数行にまたがる値を伏せた範囲にかかる行の注記 */
+const WRAPPED_LINE_NOTE =
+  "複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行です。SEARCH に含めると一致しないため、" +
+  "これらの行を含まない連続した範囲 (前か後ろの行) で一意に特定してください";
+
 const MARK: Record<LineVerdict, string> = { match: "=", "ws-only": "~", differ: "!", extra: "+" };
 
 /** 抜粋 (コードブロック + 凡例 + 行ごとの注記)。SEARCH / REPLACE 両方の診断で共用 */
@@ -381,8 +391,20 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
     "```",
     `凡例: ! = ${subject} と内容が異なる行 / ~ = 空白の個数のみ異なる行 / + = 実ファイルにあるが ${subject} にない行 / = = 一致した行 / 無印 = 前後の文脈`,
   );
-  for (const line of w.lines) {
-    if (line.note !== undefined) out.push(`- ${line.lineNo} 行目: ${line.note}`);
+  for (let i = 0; i < w.lines.length; i++) {
+    const line = w.lines[i] as WindowLine;
+    if (line.wrapped === true) {
+      // 続く行はまとめて 1 つの注記にする
+      let last = line;
+      while (w.lines[i + 1]?.wrapped === true && w.lines[i + 1]?.lineNo === last.lineNo + 1) {
+        i++;
+        last = w.lines[i] as WindowLine;
+      }
+      const range = last === line ? `${line.lineNo}` : `${line.lineNo}〜${last.lineNo}`;
+      out.push(`- ${range} 行目: ${WRAPPED_LINE_NOTE}`);
+    } else if (line.note !== undefined) {
+      out.push(`- ${line.lineNo} 行目: ${line.note}`);
+    }
   }
   for (const u of w.unmatchedSearch) {
     out.push(
@@ -402,6 +424,8 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
  */
 function buildHint(w: NearestWindow): string[] {
   if (w.extraCount === 0 || w.unmatchedSearch.length > 0) return [];
+  // 抜粋をそのまま写しても、複数行にまたがる値を伏せた範囲の行は一致しない
+  if (w.lines.some((l) => l.wrapped === true)) return [];
   if (w.lines.some((l) => l.verdict === "differ")) return [];
   const hasWsOnly = w.lines.some((l) => l.verdict === "ws-only");
   const head =
