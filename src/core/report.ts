@@ -6,7 +6,8 @@
  * - petari の照合仕様 (空白・エンコーディング差は吸収済み = 失敗は文字内容の差) の明記
  * - 全ファイル・全ブロックの検証結果一覧 (どこが通りどこが落ちたかの対比が診断の鍵)
  * - all-or-nothing で未書き込みであることの明記 (端末表示はチャットに貼られないため)
- * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)
+ * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)。
+ *   抜粋は伏せた表示 (mask.ts) から作り、認証情報らしき値は [MASKED] で載せる
  */
 import type { Failure } from "./applier.ts";
 import type { FileOutcome } from "./applier.ts";
@@ -28,13 +29,41 @@ const MATCH_SPEC_NOTE = [
   "  添付した「実ファイルの該当箇所」の抜粋から、行をそのままコピーしてください",
 ];
 
-const RE_REQUEST = `## 依頼
+/** 依頼のうち、複数行にまたがる値を伏せた範囲の行の例外 (抜粋にその行があるときだけ載せる) */
+const WRAPPED_REQUEST_LINES = [
+  "",
+  "- ただし、抜粋の注記で「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず、",
+  "  その行を含まない連続した範囲にしてください",
+].join("\n");
+const EDGE_REQUEST_LINES = [
+  "",
+  "- 抜粋の注記で「[MASKED] を含む行と一緒に使えない行」とした行は、[MASKED] を含む行と同じ SEARCH には",
+  "  入れないでください",
+].join("\n");
+
+/** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
+const MASK_SPEC_NOTE = [
+  "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] を含む行は SEARCH にも REPLACE にも一字も",
+  "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
+  "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
+];
+/** 照合仕様の伏せ字の項のうち、複数行にまたがる値を伏せた範囲の行 (抜粋にその行があるときだけ載せる) */
+const WRAPPED_SPEC_NOTE = [
+  "- 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行は SEARCH に含めると一致しません。その行を",
+  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください",
+];
+const EDGE_SPEC_NOTE = [
+  "- その範囲にかかる、[MASKED] を含まない行 (END の行など) は、[MASKED] を含む行と同じ SEARCH に入れると",
+  "  一致しません ([MASKED] を含まない範囲なら含められます)",
+];
+
+const reRequest = (wrapped: { always: boolean; edge: boolean }): string => `## 依頼
 
 上記の失敗した各ブロックについて、SEARCH 部分を現在のファイル内容と完全に一致するよう修正し、
 changes.md 全体を元の規約フォーマット (## CHANGES から始まる形式) で再出力してください。
 - SEARCH の修正には「実ファイルの該当箇所」の抜粋を使い、「│」より右側を一字一句そのまま
   コピーしてください (行頭の「! ~ = +」の記号と行番号は含めません。+ の行 (空行含む) も
-  SEARCH に含めます)
+  SEARCH に含めます)${wrapped.always ? WRAPPED_REQUEST_LINES : ""}${wrapped.edge ? EDGE_REQUEST_LINES : ""}
 - SEARCH ブロックにはファイル内で一意に特定できる範囲を含めてください
 - 失敗していないファイル・ブロックも含めた完全な changes.md を出力してください
 - 抜粋にも SEARCH に相当する行が見当たらない場合は、推測で書き換えず、その旨を報告して
@@ -88,7 +117,9 @@ function outcomeSummary(outcomes: FileOutcome[]): string[] {
           ? "NG 複数箇所に一致 (一意でない)"
           : f.kind === "unencodable"
             ? "NG 変換できない文字を含む"
-            : "NG SEARCH 不一致 (詳細は下記)";
+            : f.kind === "masked-value"
+              ? "NG 伏せ字を元の値に戻せない (詳細は下記)"
+              : "NG SEARCH 不一致 (詳細は下記)";
       byIndex.set(f.block.index, label);
     }
     for (const [index, status] of [...byIndex.entries()].sort((a, b) => a[0] - b[0])) {
@@ -143,6 +174,31 @@ export function buildBlankInsensitiveNote(outcomes: FileOutcome[]): string | nul
   return `注: ${count} 件のブロックは空行の差を吸収して適用しました (git diff で空行の並びを確認してください)`;
 }
 
+/**
+ * 伏せ字 [MASKED] を元の値に戻して適用したブロックがあるときの注記。
+ * 伏せ字の行を照合・書き込みしたことを dry-run と適用サマリの末尾で知らせる。
+ * 該当ブロックが無ければ null。
+ */
+export function buildMaskRestoreNote(outcomes: FileOutcome[], written: boolean): string | null {
+  let count = 0;
+  let literal = 0;
+  for (const o of outcomes) {
+    count += o.restoredMasks ?? 0;
+    literal += o.literalMasks ?? 0;
+    for (const b of o.appliedBlocks) {
+      count += b.restoredMasks ?? 0;
+      literal += b.literalMasks ?? 0;
+    }
+  }
+  const verb = written ? "書き込みました" : "書き込みます";
+  const notes: string[] = [];
+  if (count > 0) notes.push(`注: 伏せ字 [MASKED] ${count} 箇所は元の値に戻して${verb} (git diff で確認してください)`);
+  if (literal > 0) {
+    notes.push(`注: [MASKED] という文字 ${literal} 箇所を、--literal-masked の指定どおりそのまま${verb} (git diff で確認してください)`);
+  }
+  return notes.length > 0 ? notes.join("\n") : null;
+}
+
 /** 検証失敗 (マッチング・パス・エンコーディング) のレポート */
 export function buildFailureReport(failures: Failure[], ctx: FailureReportContext = {}): string {
   const parts: string[] = ["以下の変更ブロックが現在のコードベースに適用できませんでした。"];
@@ -155,6 +211,7 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
     );
   }
   parts.push("", ...MATCH_SPEC_NOTE);
+  const specAt = parts.length;
   if (ctx.outcomes !== undefined) {
     parts.push("", ...outcomeSummary(ctx.outcomes));
   }
@@ -180,7 +237,21 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
       parts.push("", ...renderNearestReplace(f.nearestReplace));
     }
   }
-  parts.push("", RE_REQUEST, "");
+  const hasKind = (kind: "always" | "with-mask"): boolean =>
+    failures.some((f) =>
+      [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped === kind) === true),
+    );
+  const wrapped = { always: hasKind("always"), edge: hasKind("with-mask") };
+  if (parts.slice(specAt).some((l) => l.includes("[MASKED]"))) {
+    parts.splice(
+      specAt,
+      0,
+      ...MASK_SPEC_NOTE,
+      ...(wrapped.always || wrapped.edge ? WRAPPED_SPEC_NOTE : []),
+      ...(wrapped.edge ? EDGE_SPEC_NOTE : []),
+    );
+  }
+  parts.push("", reRequest(wrapped), "");
   return parts.join("\n");
 }
 

@@ -371,3 +371,99 @@ describe("applyCommand: 二重適用の防止 (§6.1)", () => {
     expect(form(dir)).toBe(APPENDED);
   });
 });
+
+describe("applyCommand: 伏せ字 [MASKED] の案内", () => {
+  /** 実行中の stdout / stderr を捕まえる */
+  async function capture(run: () => Promise<number>): Promise<{ code: number; out: string; err: string }> {
+    const outs: string[] = [];
+    const errs: string[] = [];
+    const o = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      outs.push(String(chunk));
+      return true;
+    });
+    const e = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      errs.push(String(chunk));
+      return true;
+    });
+    try {
+      return { code: await run(), out: outs.join(""), err: errs.join("") };
+    } finally {
+      o.mockRestore();
+      e.mockRestore();
+    }
+  }
+
+  function setup(source: string, search: string[], replace: string[]): { dir: string; changesPath: string } {
+    const dir = setupProject();
+    writeFileSync(join(dir, "Db.vb"), source, "utf8");
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(
+      changesPath,
+      doc("## CHANGES", "", "概要", "", "### FILE: Db.vb (replace)", "<<<<<<< SEARCH", ...search, "=======", ...replace, ">>>>>>> REPLACE", ""),
+      "utf8",
+    );
+    return { dir, changesPath };
+  }
+
+  const REAL = doc("Module Db", '    Dim pwd As String = "Hunter2Secret"', "    Sub A()", "    End Sub", "End Module", "");
+
+  it("実際の値を伏せた範囲では --literal-masked を勧めず、指定されても使わない (端末に理由を出す)", async () => {
+    const search = ['    Dim pwd As String = "[MASKED]"'];
+    const replace = ['    Dim pwd As String = "[MASKED]" \' 本番'];
+    const { dir, changesPath } = setup(REAL, search, replace);
+    const plain = await capture(() => applyCommand([changesPath, "--root", dir, "--yes"]));
+    expect(plain.code).toBe(1);
+    expect(plain.err).not.toContain("--literal-masked");
+    expect(plain.out).not.toContain("Hunter2Secret");
+    const flagged = await capture(() => applyCommand([changesPath, "--root", dir, "--yes", "--literal-masked"]));
+    expect(flagged.code).toBe(1);
+    expect(flagged.err).toContain("--literal-masked は使いませんでした");
+    expect(readFileSync(join(dir, "Db.vb"), "utf8")).toBe(REAL);
+  });
+
+  it("ファイルの移動で伏せ字の行を書く変更には --literal-masked を勧めない", async () => {
+    const dir = setupProject();
+    writeFileSync(join(dir, "Db.vb"), REAL, "utf8");
+    const changesPath = join(dir, "changes.md");
+    writeFileSync(
+      changesPath,
+      doc(
+        "## CHANGES",
+        "",
+        "概要",
+        "",
+        "### FILE: Db.vb (delete)",
+        "",
+        "### FILE: Data/Db.vb (create)",
+        "<<<<<<< CONTENT",
+        "Module Db",
+        '    Dim pwd As String = "[MASKED]"',
+        "End Module",
+        ">>>>>>> END",
+        "",
+      ),
+      "utf8",
+    );
+    const plain = await capture(() => applyCommand([changesPath, "--root", dir, "--yes"]));
+    expect(plain.code).toBe(1);
+    expect(plain.err).not.toContain("--literal-masked を付けると");
+    const flagged = await capture(() => applyCommand([changesPath, "--root", dir, "--yes", "--literal-masked"]));
+    expect(flagged.code).toBe(1);
+    expect(flagged.err).toContain("--literal-masked は使いませんでした");
+    expect(readFileSync(join(dir, "Db.vb"), "utf8")).toBe(REAL);
+    expect(existsSync(join(dir, "Data", "Db.vb"))).toBe(false);
+  });
+
+  it("[MASKED] という文字を書くだけの変更には --literal-masked を案内し、レポートには書かない", async () => {
+    const source = doc("Module Db", "    Sub A()", "    End Sub", "End Module", "");
+    const { dir, changesPath } = setup(source, ["    Sub A()"], ["    Sub A()", '        Log("[MASKED]")']);
+    const plain = await capture(() => applyCommand([changesPath, "--root", dir, "--yes"]));
+    expect(plain.code).toBe(1);
+    expect(plain.err).toContain("--literal-masked を付けると");
+    expect(plain.out).not.toContain("--literal-masked");
+    const flagged = await capture(() => applyCommand([changesPath, "--root", dir, "--yes", "--literal-masked"]));
+    expect(flagged.code).toBe(0);
+    expect(flagged.out).toContain("--literal-masked の指定どおりそのまま書き込みました");
+    expect(readFileSync(join(dir, "Db.vb"), "utf8")).toContain('        Log("[MASKED]")');
+  });
+});
