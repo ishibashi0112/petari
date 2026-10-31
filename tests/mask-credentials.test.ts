@@ -331,5 +331,10 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
         .content,
       "Server=tcp:[MASKED].[MASKED].database.windows.net;",
     );
+    // 残りが署名のように長ければ、「.」が続いても (URL の末尾の拡張子など) 伏せる
+    assert.strictEqual(
+      maskCredentials("cb/[MASKED].[MASKED].aaaaaaaaaabbbbbbbbbbcccccccccc.json", GENERIC).content,
+      "cb/[MASKED].json",
+    );
   });
 });

@@ -425,7 +425,9 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
 function buildHint(w: NearestWindow): string[] {
   if (w.extraCount === 0 || w.unmatchedSearch.length > 0) return [];
   // 抜粋をそのまま写しても、複数行にまたがる値を伏せた範囲の行は一致しない
-  if (w.lines.some((l) => l.wrapped === true)) return [];
+  if (w.lines.some((l) => l.wrapped === true && l.verdict !== null)) return [];
+  // 前後の文脈にその行があるときは、写すのは記号の付いた行だけだと明記する
+  const contextWrapped = w.lines.some((l) => l.wrapped === true);
   if (w.lines.some((l) => l.verdict === "differ")) return [];
   const hasWsOnly = w.lines.some((l) => l.verdict === "ws-only");
   const head =
@@ -437,7 +439,9 @@ function buildHint(w: NearestWindow): string[] {
   return [
     "",
     head,
-    "上の抜粋の「│」より右側を、+ の行も含めてそのままコピーした SEARCH に置き換えれば一致します。",
+    contextWrapped
+      ? "上の抜粋の記号 (= ~ +) の付いた行の「│」より右側を、+ の行も含めてそのままコピーした SEARCH に置き換えれば一致します (記号のない前後の文脈の行は含めません)。"
+      : "上の抜粋の「│」より右側を、+ の行も含めてそのままコピーした SEARCH に置き換えれば一致します。",
   ];
 }
 
