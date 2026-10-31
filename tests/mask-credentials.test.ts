@@ -792,6 +792,83 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
+  it("コマンドの引数のパスワード: /user の後の net use・引用符で囲んだ値・行の継続・MSBuild・VB の文字列", () => {
+    for (const [input, expected] of [
+      ["net use Z: \\\\srv\\share /user:CORP\\deploy Secr3t!", "net use Z: \\\\srv\\share /user:CORP\\deploy [MASKED]"],
+      ['NET USE \\\\srv\\share /u:deploy "Secr3t 1" /persistent:no', 'NET USE \\\\srv\\share /u:deploy "[MASKED]" /persistent:no'],
+      ["mysql -uroot -p'Secr3t!' -e \"show databases\"", "mysql -uroot -p'[MASKED]' -e \"show databases\""],
+      ["mysqladmin -u root -pOld1 password New2", "mysqladmin -u root -p[MASKED] password [MASKED]"],
+      ['sqlcmd -S srv -U sa -P"Secr3t 1" -i a.sql', 'sqlcmd -S srv -U sa -P"[MASKED]" -i a.sql'],
+      ["subprocess.run(['sqlcmd', '-U', 'sa', '-P', 'Secr3t!'])", "subprocess.run(['sqlcmd', '-U', 'sa', '-P', '[MASKED]'])"],
+      ['test: ["CMD", "sqlcmd", "-U", "sa", "-P", "Pa\\"ss9x"]', 'test: ["CMD", "sqlcmd", "-U", "sa", "-P", "[MASKED]"]'],
+      [
+        '<Exec Command="&quot;C:\\Program Files\\SQL\\SQLCMD.EXE&quot; -S srv -U sa -P Secr3t! -i x.sql" />',
+        '<Exec Command="&quot;C:\\Program Files\\SQL\\SQLCMD.EXE&quot; -S srv -U sa -P [MASKED] -i x.sql" />',
+      ],
+      ['<Exec Command="sqlcmd -S srv -U sa -P &quot;Secr3t!&quot;" />', '<Exec Command="sqlcmd -S srv -U sa -P &quot;[MASKED]&quot;" />'],
+      ["%SQLCMD% -S srv -U sa -P Secr3t! -i a.sql", "%SQLCMD% -S srv -U sa -P [MASKED] -i a.sql"],
+      ["sqlcmd -S srv ^\n  -U sa -P Secr3t!^\n  -i a.sql", "sqlcmd -S srv ^\n  -U sa -P [MASKED]^\n  -i a.sql"],
+      ["net use Z: \\\\srv\\share ^\n  Secr3t! /user:x", "net use Z: \\\\srv\\share ^\n  [MASKED] /user:x"],
+      ["mysql \\\n  -u root \\\n  -pSecr3t! mydb", "mysql \\\n  -u root \\\n  -p[MASKED] mydb"],
+      ['psi.Arguments = "-S srv -U sa -P Secr3t! -i a.sql"', 'psi.Arguments = "-S srv -U sa -P [MASKED] -i a.sql"'],
+      ["@sqlcmd -S srv -U sa -P Secr3t!>>log.txt", "@sqlcmd -S srv -U sa -P [MASKED]>>log.txt"],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+    // VB の文字列の中のコマンド
+    for (const [input, expected] of [
+      ['Shell("net use Z: \\\\srv\\share Secr3t! /user:x")', 'Shell("net use Z: \\\\srv\\share [MASKED] /user:x")'],
+      ['Process.Start("sqlcmd.exe", "-S srv -U sa -P Secr3t! -i a.sql")', 'Process.Start("sqlcmd.exe", "-S srv -U sa -P [MASKED] -i a.sql")'],
+      ['Process.Start("sqlcmd.exe", "-S srv -U sa -P " & pwd & " -i a.sql")', 'Process.Start("sqlcmd.exe", "-S srv -U sa -P " & pwd & " -i a.sql")'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, { vbSource: true, strict: false }).content, expected);
+    }
+    // リダイレクト・変数の参照・説明文・ほかのコマンドの引数は伏せない
+    for (const input of [
+      "net use Z: \\\\srv\\share >nul 2>&1",
+      "net use \\\\srv\\share 2>nul || goto :error",
+      "net use Z: \\\\srv\\share && echo mapped",
+      "net use Z: \\\\srv\\share /user:deploy /savecred",
+      "Run `net use \\\\srv\\share` first, then copy the files.",
+      "Connect with `mysql -u root -p` and enter the password.",
+      "sqlcmd -S $Server -U $User -P $Password -i $File",
+      'cmd = f"sqlcmd -S {srv} -U {user} -P {password} -i {path}"',
+      'mysql -u "$DB_USER" -p"$db_pass" "$DB_NAME" < dump.sql',
+      "mysql -uroot -p$(cat /run/secrets/db) -e x",
+      '    test: ["CMD", "mysqladmin", "ping", "-p$$MYSQL_ROOT_PASSWORD"]',
+      "mysqldump -u root -p\"$MYSQL_ROOT_PASSWORD\" --all-databases | ssh -p2222 backup@host",
+      "cp -pr /var/lib/mysql /backup/ && cp -pr /etc/mysql /backup/etc",
+      "docker run --name mysql -p3306:3306 -d mysql:8",
+      "// Convert to a BCP 47 language tag, see rfc -Pending",
+      "sqlcmd -S localhost -U SA -P '<YourStrong@Passw0rd>'",
+      "schtasks /Create /XML task.xml /TN job /RU svc /RP",
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+  });
+
+  it("SQL の SET のバインド変数・UPDATE の別名・MERGE の UPDATE SET を伏せない(バッチの set の @ で始まる値は伏せる)", () => {
+    for (const input of [
+      "UPDATE T_USER\n   SET USER_PWD=:1\nWHERE USER_ID=:2",
+      '"UPDATE Config " +\n"SET SmtpPassword=@p1 WHERE Id=1"',
+      'sb.AppendLine("   SET LOGIN_PASSWORD=@NEW_PWD,");',
+      "UPDATE users AS u SET password=:pw",
+      "const q = `UPDATE ${table} SET smtp_password=$1 WHERE id=$2`;",
+      'cur.execute("""\n    UPDATE users\n    SET password=%s\n    WHERE id=%s\n""", (hashed, uid))',
+    ]) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, input);
+    }
+    for (const [input, expected] of [
+      ["set ADMIN_PASSWORD=@admin", "set ADMIN_PASSWORD=[MASKED]"],
+      ["MERGE Users AS t USING s ON t.Id=s.Id WHEN MATCHED THEN UPDATE SET Password=s.Password;", "MERGE Users AS t USING s ON t.Id=s.Id WHEN MATCHED THEN UPDATE SET Password=[MASKED];"],
+      ["SET PASSWORD='newpass';", "SET PASSWORD='[MASKED]';"],
+      ['docker run -e "SA_PASSWORD=Pa55w0rd\\" -d mssql', 'docker run -e "SA_PASSWORD=[MASKED]" -d mssql'],
+      ['ENV DB_PASSWORD="Pa55w0rd\\" APP_ENV=prod', 'ENV DB_PASSWORD="[MASKED]" APP_ENV=prod'],
+    ] as const) {
+      assert.strictEqual(maskCredentials(input, LOOSE).content, expected);
+    }
+  });
+
   it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
     const started = Date.now();
     for (const vbSource of [false, true]) {
@@ -807,6 +884,10 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
       maskCredentials("UPDATE t SET a=1 ".repeat(100000), { vbSource, strict: true });
       maskCredentials('x("set A=b") '.repeat(100000), { vbSource, strict: true });
       maskCredentials("pass" + "1".repeat(200000) + "_a".repeat(100000) + "=x", { vbSource, strict: true });
+      maskCredentials("sqlcmd -U a -P b ".repeat(100000), { vbSource, strict: true });
+      maskCredentials("-U a -P b ".repeat(150000), { vbSource, strict: true });
+      maskCredentials("schtasks /p ".repeat(150000), { vbSource, strict: true });
+      maskCredentials("net use \\\\a\\b " + "/u:x ".repeat(300000), { vbSource, strict: true });
     }
     assert.ok(Date.now() - started < 15000);
   });

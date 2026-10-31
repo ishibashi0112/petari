@@ -299,7 +299,7 @@ const ENV_LINE = /^((?:export[ \t]+|[ \t]*-[ \t]+["']?)?)([A-Za-z0-9_.-]+)(=)([^
 const DOCKER_ENV = /^((?:ENV|ARG)[ \t]+)((?:[^\r\n]*\\[ \t]*\r?\n)*[^\r\n]*)/gm;
 
 /** Dockerfile の ENV / ARG の KEY=value(値は空白まで。\ の後の空白は値のうち。引用符で囲んだものは引用符まで) */
-const DOCKER_PAIR = /(?<![^ \t\r\n])([A-Za-z_][A-Za-z0-9_.-]*)(=)("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|(?:\\[^\r\n]|[^\s"'\\])*)/g;
+const DOCKER_PAIR = /(?<![^ \t\r\n])([A-Za-z_][A-Za-z0-9_.-]*)(=)("(?:[^"\\\r\n]|\\.)*"|"[^"\r\n]*"|'[^'\r\n]*'|(?:\\[^\r\n]|[^\s"'\\])*)/g;
 
 /**
  * バッチファイルの set の始まり(set DB_PASSWORD= / set "DB_PASSWORD= / @set / if ... set / ... & set。字下げした行も。
@@ -308,41 +308,230 @@ const DOCKER_PAIR = /(?<![^ \t\r\n])([A-Za-z_][A-Za-z0-9_.-]*)(=)("(?:[^"\\\r\n]
 const BATCH_SET = /(?<=^|[ \t@(&|;"'>])([Ss][Ee][Tt][ \t]+)(\\"|""|"|&quot;)?([A-Za-z0-9_.-]+)(=)/gm;
 
 /**
- * パスワードを引数で渡すコマンドの行(sqlcmd / osql / isql / bcp の -P、mysql 系の -p...、net use の共有の後の引数、
- * schtasks の /RP・/P)。行を見つけてから、その行の中の引数を伏せる
+ * パスワードを引数で渡すコマンドの名前(sqlcmd / osql / isql / bcp の -P、mysql 系の -p... / --password=、
+ * net use の共有の後の引数、schtasks の /RP・/P)。パスの途中の語・別の拡張子のファイル名
+ * (/var/lib/mysql/・mysql.py・MySql.Data)は除く。MSBuild の &quot;...\SQLCMD.EXE&quot; と %SQLCMD% も読む
  */
-const CLI_SECRET_LINE =
-  /^[^\r\n]*(?<![\w.-])(?:sqlcmd|osql|isql|bcp|mysql|mysqldump|mysqladmin|mysqlimport|net[ \t]+use|schtasks)(?:\.exe)?(?=["'\s,\]]|$)[^\r\n]*/gim;
+const CLI_COMMAND =
+  /(?<![\w.-])(sqlcmd|osql|isql|bcp|mysql|mysqldump|mysqladmin|mysqlimport|net[ \t]+use|schtasks)(?:\.exe)?(?=["'\s,\]%!]|&(?:quot|apos);|$)/gi;
+/** 引数の区切りの空白(行の継続(バッチの ^ / シェルの \ の後の改行)も) */
+const CLI_SP = String.raw`(?:[ \t]|[\^\\]\r?\n)+`;
+/** 引用符で囲まない値の文字(行の継続の ^ / \ は値に含めない) */
+const CLI_BARE = (excluded: string): string => String.raw`(?:[^\s"'` + "`" + String.raw`^\\${excluded}]|[\^\\](?![\r\n]|$))+`;
+/** 引用符で囲んだ値("..." / '...' / MSBuild の &quot;...&quot;) */
+const CLI_QUOTED = String.raw`"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|&quot;(?:(?!&quot;)[^\r\n])*&quot;`;
+const CLI_VALUE = `${CLI_QUOTED}|${CLI_BARE("")}`;
+/** コマンドの種類ごとの、パスワードの引数(lead = 値の前、value = 値) */
+const CLI_ARGS: ReadonlyArray<readonly [RegExp, readonly RegExp[]]> = [
+  [
+    // -P は SQL Server 認証のパスワードなので -U と一緒に使う(説明文の BCP 47 ... -Pending などは除く)
+    /^(?:sqlcmd|osql|isql|bcp)$/i,
+    [
+      // -P value / "-P", "value"(JSON・YAML の一覧)/ '-P', 'value'(Python の一覧)/ -P"value" / -Pvalue
+      new RegExp(String.raw`((?<=[\s"'\[,;])-P${CLI_SP})(${CLI_VALUE})`, "g"),
+      /((?<=[\s"'\[,])-P"[ \t]*,[ \t]*")((?:[^"\\\r\n]|\\.)*)/g,
+      /((?<=[\s'\[,])-P'[ \t]*,[ \t]*')([^'\r\n]*)/g,
+      new RegExp(String.raw`((?<=[\s;])-P)(${CLI_QUOTED})`, "g"),
+      new RegExp(String.raw`((?<=[\s"';])-P)(${CLI_BARE(",\\]")})`, "g"),
+    ],
+  ],
+  [
+    /^mysql(?:dump|admin|import)?$/i,
+    [
+      new RegExp(String.raw`((?<=[\s"';])-p)(${CLI_VALUE})`, "g"),
+      new RegExp(String.raw`((?<=[\s"';])--password=)(${CLI_VALUE})`, "g"),
+    ],
+  ],
+  // mysqladmin password 新しいパスワード
+  [/^mysqladmin$/i, [new RegExp(String.raw`((?<=\s)password${CLI_SP})(${CLI_VALUE})`, "g")]],
+  [
+    /^net[ \t]+use$/i,
+    [
+      // net use [Z: | *] \\srv\share [/user:x ...] パスワード
+      new RegExp(
+        String.raw`(^net[ \t]+use(?:${CLI_SP}(?:[A-Za-z]:|\*))?${CLI_SP}(?:"\\\\[^"\r\n]*"|&quot;\\\\(?:(?!&quot;)[^\r\n])*&quot;|\\\\[^\s"` +
+          "`" +
+          String.raw`]+)(?:${CLI_SP}\/[A-Za-z]+(?::(?:"[^"\r\n]*"|[^\s"]*))?)*${CLI_SP})(?![\/*])(${CLI_VALUE})`,
+        "i",
+      ),
+    ],
+  ],
+  [/^schtasks$/i, [new RegExp(String.raw`((?<=\s)\/(?:rp|p)${CLI_SP})(?!\/)(${CLI_VALUE})`, "gi")]],
+];
+/** コマンド名のない引数の文字列(ProcessStartInfo.Arguments = "-S srv -U sa -P ...")の -U ユーザー -P パスワード */
+const CLI_USER_PASSWORD = new RegExp(
+  String.raw`((?<=[\s"'])-U[ \t]+(?:${CLI_QUOTED}|[^\s"'` + "`" + String.raw`]+)[ \t]+-P[ \t]*)(${CLI_VALUE})`,
+  "g",
+);
 
 /**
- * SQL の SET col=... の値が列名に対応するバインド変数(`:LOGIN_PASSWORD` / `@NewPwd` / `?`)か。
- * 名前が列名と関係しないもの(`set password=:Zq9x`)はバッチの値として伏せる
+ * コマンドの引数の終わり(引用符の外の | & < > と、空白が続く ;、継続しない改行の前)。&quot; は引用符、
+ * &amp; / &lt; / &gt; は区切り(MSBuild の Exec の属性)。^ は次の文字をそのまま読む(バッチ)
  */
-function isBindMarkerFor(key: string, text: string): boolean {
-  const m = /^(?:[@:]([A-Za-z_]\w*)|\?)(?=[\s,)]|$)/.exec(text);
+function cliCommandEnd(text: string, start: number, limit = text.length): number {
+  let quoted = false;
+  const stop = Math.min(limit, text.length);
+  for (let i = start; i < stop; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\n" || ch === "\r") {
+      const prev = text.charAt(i - 1);
+      if (i > start && (prev === "^" || prev === "\\")) {
+        if (ch === "\r" && text.charAt(i + 1) === "\n") {
+          i += 1;
+        }
+        continue;
+      }
+      return i;
+    }
+    if (ch === '"') {
+      quoted = !quoted;
+    } else if (ch === "&" && text.startsWith("&quot;", i)) {
+      quoted = !quoted;
+      i += 5;
+    } else if (quoted) {
+      continue;
+    } else if (ch === "^") {
+      if (text.charAt(i + 1) !== "\r" && text.charAt(i + 1) !== "\n") {
+        i += 1;
+      }
+    } else if (ch === "&" && text.startsWith("&apos;", i)) {
+      i += 5;
+    } else if (ch === "<" || ch === ">") {
+      // 2>nul / 1>&2 の番号はリダイレクトのうち
+      return /[ \t][0-9]$/.test(text.slice(Math.max(start, i - 2), i)) ? i - 1 : i;
+    } else if (ch === "|" || ch === "&" || ch === "`" || (ch === ";" && /^(?:\s|$)/.test(text.charAt(i + 1)))) {
+      return i;
+    }
+  }
+  return stop;
+}
+
+/** コマンドの引数の値のうち伏せないもの(変数の参照・差し込み・入力を求める * ・リダイレクトなどの記号・ポートの指定・連結) */
+function cliQuote(value: string): string {
+  if (value.length >= 12 && value.startsWith("&quot;") && value.endsWith("&quot;")) {
+    return "&quot;";
+  }
+  return /^["']/.test(value) && value.length >= 2 && value.endsWith(value.charAt(0)) ? value.charAt(0) : "";
+}
+
+function isCliNonSecret(value: string): boolean {
+  const quote = cliQuote(value);
+  const inner = quote === "" ? value : value.slice(quote.length, -quote.length);
+  return (
+    inner.trim() === "" ||
+    inner === MASK ||
+    inner === "*" ||
+    isShellVariable(inner, true) ||
+    isPlaceholderOnly(inner) ||
+    // $Password(PowerShell)/ $$MYSQL_PASSWORD(compose)/ $env:X / ${x} / {password}(f 文字列)/ {{ x }} / $(Prop)(MSBuild)/
+    // $(cat ...) ・ `...`(コマンドの置き換え)/ <password> ・ [password](説明文の書き方)
+    /^(?:\$\$?\{?[A-Za-z_]\w*\}?|\$env:[A-Za-z_]\w*|\{[A-Za-z_][\w.]*\}|\{\{[^{}]*\}\}|\$\([\w.]+\)|<[^<>]*>|\[[^\[\]]*\])$/i.test(inner) ||
+    /^(?:\$\(|`)/.test(inner) ||
+    (quote === "" && /^(?:[<>|&^\/*`-]|\d>|[\d.]+(?::\d+)+(?:\/(?:tcp|udp))?$)/.test(inner)) ||
+    (quote !== "" && /^\s*[&+]|[&+]\s*$/.test(inner))
+  );
+}
+
+/** パスワードを引数で渡すコマンドの値を伏せる(コマンド名より後ろの、そのコマンドの引数だけを読む) */
+function maskCliArgs(source: string, findings: MaskFinding[]): string {
+  const spans: { start: number; end: number }[] = [];
+  const command = new RegExp(CLI_COMMAND.source, CLI_COMMAND.flags);
+  for (let m = command.exec(source); m !== null; m = command.exec(source)) {
+    const end = cliCommandEnd(source, m.index + m[0].length);
+    // 同じ区切りの中の各種類のコマンドの最初の位置から後ろを、その種類の引数として読む
+    const firsts = new Map<number, number>();
+    const inner = new RegExp(CLI_COMMAND.source, CLI_COMMAND.flags);
+    const segment = source.slice(m.index, end);
+    for (let c = inner.exec(segment); c !== null; c = inner.exec(segment)) {
+      const name = c[1] ?? "";
+      const at = c.index;
+      CLI_ARGS.forEach(([kindName], kind) => {
+        if (kindName.test(name) && !firsts.has(kind)) {
+          firsts.set(kind, at);
+        }
+      });
+    }
+    for (const [kind, at] of firsts) {
+      const tail = segment.slice(at);
+      if (kind === 0 && !/(?<=[\s"'\[,])-U(?![\w-])/.test(tail)) {
+        continue;
+      }
+      for (const pattern of CLI_ARGS[kind]?.[1] ?? []) {
+        const re = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+        for (let a = re.exec(tail); a !== null; a = re.exec(tail)) {
+          const lead = a[1] ?? "";
+          const value = a[2] ?? "";
+          if (a[0].length === 0) {
+            re.lastIndex += 1;
+            continue;
+          }
+          if (value === "^" || value === "\\" || isCliNonSecret(value)) {
+            continue;
+          }
+          const quote = cliQuote(value);
+          const start = m.index + at + a.index + lead.length + quote.length;
+          spans.push({ start, end: start + value.length - quote.length * 2 });
+          if (!pattern.flags.includes("g")) {
+            break;
+          }
+        }
+      }
+    }
+    command.lastIndex = Math.max(end, m.index + m[0].length);
+  }
+  // コマンド名のない引数の文字列の -U ユーザー -P パスワード
+  const userPassword = new RegExp(CLI_USER_PASSWORD.source, CLI_USER_PASSWORD.flags);
+  for (let a = userPassword.exec(source); a !== null; a = userPassword.exec(source)) {
+    const valueStart = a.index + (a[1] ?? "").length;
+    let value = a[2] ?? "";
+    const quote = cliQuote(value);
+    if (quote === "") {
+      // 引用符で囲まない値はリダイレクトなどの前まで(-P x>log.txt)
+      value = value.slice(0, Math.max(0, cliCommandEnd(source, valueStart, valueStart + value.length) - valueStart));
+    }
+    if (value === "" || value === "^" || value === "\\" || isCliNonSecret(value)) {
+      continue;
+    }
+    spans.push({ start: valueStart + quote.length, end: valueStart + value.length - quote.length });
+  }
+  if (spans.length === 0) {
+    return source;
+  }
+  spans.sort((x, y) => x.start - y.start);
+  let out = "";
+  let last = 0;
+  for (const span of spans) {
+    if (span.start < last) {
+      continue;
+    }
+    findings.push({ line: lineOf(source, span.start), kind: KIND_PASSWORD });
+    out += source.slice(last, span.start) + MASK;
+    last = span.end;
+  }
+  return out + source.slice(last);
+}
+
+/**
+ * SQL の SET col=... の値がバインド変数(`:LOGIN_PASSWORD` / `@p1` / `$1` / `?` / `%s`)か。名前が列名と同じもの、
+ * 後ろに , / WHERE が続くもの、前の行に UPDATE があるものだけ(バッチの set ADMIN_PASSWORD=@admin は値として伏せる)
+ */
+function isBindMarkerFor(key: string, after: string, before: string): boolean {
+  const m = /^(?:[@:]([A-Za-z_]\w*)|[@:$]\d+|\?|%s)(?=[\s,)"'`]|$)/.exec(after);
   if (m === null) {
     return false;
   }
-  const name = m[1];
-  if (name === undefined) {
-    return true;
-  }
   const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const k = norm(key);
-  const n = norm(name);
-  return n.length >= 3 && k.length >= 3 && (n.includes(k) || k.includes(n));
+  const name = m[1];
+  return (
+    (name !== undefined && norm(name) === norm(key)) ||
+    /^[ \t]*(?:,|where\b)/i.test(after.slice(m[0].length)) ||
+    /\bupdate\b/i.test(before)
+  );
 }
-
-/** コマンド名(パスの途中の語・別の拡張子のファイル名(/var/lib/mysql/・mysql.py)は除く) */
-const cliCommand = (names: string): RegExp => new RegExp(String.raw`(?<![\w.-])(?:${names})(?:\.exe)?(?=["'\s,\]]|$)`, "i");
-const CLI_SQLCMD = cliCommand("sqlcmd|osql|isql|bcp");
-const CLI_MYSQL = cliCommand("mysql|mysqldump|mysqladmin|mysqlimport");
-const CLI_NET_USE = cliCommand(String.raw`net[ \t]+use`);
-const CLI_SCHTASKS = cliCommand("schtasks");
 
 /** コマンドの引数の環境変数(docker run -e DB_PASSWORD=... / --env "DB_PASSWORD=...") */
 const SHELL_ENV_ARG =
-  /(?<=[ \t])((?:-e|--env)(?:[ \t]+|=))("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|(?:\\[^\r\n]|[^\s"'\\])*))/g;
+  /(?<=[ \t])((?:-e|--env)(?:[ \t]+|=))("(?:[^"\\\r\n]|\\.)*"|"[^"\r\n]*"|'[^'\r\n]*'|[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\\r\n]|\\.)*"|"[^"\r\n]*"|'[^'\r\n]*'|(?:\\[^\r\n]|[^\s"'\\])*))/g;
 
 /** キーの値の文字列(C# の @"..." / $"..." / $@"..."、Python の u"..." / r'...' / f"..." / b"..." なども) */
 const KEY_VALUE = String.raw`((?:\$?@|@\$)"(?:[^"\r\n]|"")*"|(?:\$|[rRuUbBfF]{1,2})?"(?:[^"\\\r\n]|\\.)*"|(?:[rRuUbBfF]{1,2})?'(?:[^'\\\r\n]|\\.)*')`;
@@ -1210,8 +1399,8 @@ function maskGenericText(
       // SQL の UPDATE 表 [別名] SET col=...(コードの文字列の中のものも)と、値が列名に対応するバインド変数
       // (@name / :name / ?)の SET(UPDATE の次の行の SET col=:col, ...)はバッチの set ではない
       if (
-        /\bupdate[ \t]+[\w.\[\]"`]+(?:[ \t]+(?!set\b)\w+)?[ \t]+$/i.test(source.slice(Math.max(before.lineStart, offset - 300), offset)) ||
-        isBindMarkerFor(key, source.slice(valueStart, valueStart + 300))
+        /\bupdate[ \t]+(?:[\w.\[\]"`${}]+(?:[ \t]+(?:as[ \t]+)?(?!set\b)\w+)?[ \t]+)?$/i.test(source.slice(Math.max(before.lineStart, offset - 300), offset)) ||
+        isBindMarkerFor(key, source.slice(valueStart, valueStart + 300), source.slice(Math.max(0, offset - 300), offset))
       ) {
         pattern.lastIndex = valueStart;
         continue;
@@ -1219,8 +1408,12 @@ function maskGenericText(
       const end = batchValueEnd(source, valueStart, quote, quote === "" && before.quotes % 2 === 1, quote === "" && before.depth > 0);
       pattern.lastIndex = Math.max(end, valueStart);
       const value = source.slice(valueStart, end);
-      const inner = value.trim();
-      const shown = maskedEnvValue(key, inner, false, true);
+      // 引用符で囲んだ値の後ろの ; / ,(SQL の SET PASSWORD='...';)は値に含めない
+      const trimmed = value.trim();
+      const trail = /^(["'])[^\r\n]*\1([;,]+)$/.exec(trimmed)?.[2] ?? "";
+      const inner = trimmed.slice(0, trimmed.length - trail.length);
+      // 先に伏せた値(接続文字列の形の SET PASSWORD='...'; は [MASKED]; になっている)は伏せ直さない
+      const shown = inner.startsWith(MASK) ? undefined : maskedEnvValue(key, inner, false, true);
       if (shown === undefined) {
         continue;
       }
@@ -1245,46 +1438,7 @@ function maskGenericText(
     return `${flag}${quote}${key}=${shown}${quote}`;
   });
   // パスワードを引数で渡すコマンド(sqlcmd -P ... / mysql -p... / net use \\srv\share ... / schtasks /RP ...)
-  result = result.replace(CLI_SECRET_LINE, (line: string, offset: number) => {
-    let count = 0;
-    const hide = (value: string): string | undefined => {
-      const quote = /^["']/.test(value) && value.length >= 2 && value.endsWith(value.charAt(0)) ? value.charAt(0) : "";
-      const inner = quote === "" ? value : value.slice(1, -1);
-      if (inner.trim() === "" || inner === MASK || inner === "*" || isShellVariable(inner, true) || /^\$\([\w.]+\)$/.test(inner) || isPlaceholderOnly(inner)) {
-        return undefined;
-      }
-      count++;
-      return `${quote}${MASK}${quote}`;
-    };
-    // 引数はコマンド名より後ろだけを読む
-    const args = (command: RegExp, patterns: readonly RegExp[]): void => {
-      const at = command.exec(shown);
-      if (at === null) {
-        return;
-      }
-      let tail = shown.slice(at.index);
-      for (const pattern of patterns) {
-        tail = tail.replace(pattern, (whole: string, lead: string, value: string) => {
-          const masked = hide(value);
-          return masked === undefined ? whole : `${lead}${masked}`;
-        });
-      }
-      shown = shown.slice(0, at.index) + tail;
-    };
-    let shown = line;
-    args(CLI_SQLCMD, [
-      /((?<=[ \t"'\[,])-P[ \t]+)("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[^\s"']+)/g,
-      /((?<=[ \t"'\[,])-P"[ \t]*,[ \t]*")([^"\r\n]*)/g,
-      /((?<=[ \t"'])-P)([^\s"',\]]+)/g,
-    ]);
-    args(CLI_MYSQL, [/((?<=[ \t"'])-p)("(?:[^"\\\r\n]|\\.)*"|[^\s"']+)/g]);
-    args(CLI_NET_USE, [/(^net[ \t]+use[ \t]+(?:[A-Za-z]:[ \t]+|\*[ \t]+)?(?:"\\\\[^"\r\n]*"|\\\\\S+)[ \t]+)("[^"\r\n]*"|[^\s"/*][^\s"]*)/i]);
-    args(CLI_SCHTASKS, [/((?<=[ \t])\/(?:rp|p)[ \t]+)("[^"\r\n]*"|[^\s"]+)/gi]);
-    if (count > 0) {
-      findings.push({ line: lineOf(result, offset), kind: KIND_PASSWORD });
-    }
-    return shown;
-  });
+  result = maskCliArgs(result, findings);
   // XML 属性形式(値が引用符で囲まれるため接続文字列パターンでは拾えない)
   for (const regex of [ATTR_SECRET, ATTR_SECRET_SINGLE]) {
     result = result.replace(
@@ -1377,6 +1531,10 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
   let result = options.vbSource
     ? maskVbSource(content, findings, strict)
     : maskGenericText(content, findings, strict);
+  if (options.vbSource) {
+    // VB の文字列の中のコマンド(Shell("net use ...") / Process.Start("sqlcmd.exe", "-S srv -P ..."))
+    result = maskCliArgs(result, findings);
+  }
 
   // ファイル種別によらない汎用シークレット形式
   result = result.replace(
