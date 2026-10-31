@@ -513,6 +513,16 @@ describe("applier: 設定ファイルの伏せた値", () => {
     expect(move.outcomes[0]?.withheld).toBe(true);
     expect(move.failures.map((f) => f.message).join("\n")).toContain("実際の値をファイルから消す");
     expect(move.failures.map((f) => f.message).join("\n")).toContain("1 つのブロック");
+    // rewrite はファイル全体なので、同じファイルの中で移す案内を出さない
+    const rewritten = packed.map((l) => l.replace("DbPassword", "DbPwd"));
+    const rw = planChangeSet(
+      cs({ op: "rewrite", path: "Db.vb", line: 1, content: rewritten } as FileChange),
+      new Map([["Db.vb", state(src)]]),
+      NEW_FILE,
+    );
+    expect(rw.ok).toBe(false);
+    expect(rw.failures.map((f) => f.kind)).toContain("masked-value");
+    expect(rw.failures.map((f) => f.message).join("\n")).not.toContain("同じファイルの別の位置へ移す");
     // ファイルの名前を変える回答 (delete + create)
     const rename = planChangeSet(
       cs({ op: "delete", path: "Db.vb", line: 1 } as FileChange, { op: "create", path: "Database.vb", line: 2, content: packed } as FileChange),

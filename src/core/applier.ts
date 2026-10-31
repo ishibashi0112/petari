@@ -648,7 +648,8 @@ function planFile(
           { literal: options.literalMasked === true },
         );
         if (!r.ok) {
-          const outcome = fileFailure(change, "masked-value", maskFailureMessage("", r));
+          // rewrite はファイル全体なので、同じファイルの中で移す案内は当てはまらない
+          const outcome = fileFailure(change, "masked-value", maskFailureMessage("", r, { moveHint: false }));
           for (const f of outcome.failures) {
             if (r.literalRefused) f.literalRefused = true;
             if (r.literalAllowed) f.literalAllowed = true;
