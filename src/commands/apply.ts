@@ -20,6 +20,7 @@ import { fixedNewFile, resolveNewFileStyle } from "../core/new-file-style.ts";
 import { parseChangesRecovering } from "../core/parser.ts";
 import {
   buildBlankInsensitiveNote,
+  buildMaskRestoreNote,
   buildFailureReport,
   buildParseErrorReport,
 } from "../core/report.ts";
@@ -49,7 +50,7 @@ import { formatVbprojPlan, planVbprojRegistrations, type VbprojPlan } from "./vb
 
 /** このファイルは書き込み対象か (適用済みのみのファイルは書き込み不要なので含めない) */
 function isApplicable(o: FileOutcome): boolean {
-  if (o.alreadyApplied) return false;
+  if (o.alreadyApplied || o.withheld === true) return false;
   if (o.change.op === "replace") return o.appliedBlocks.length > 0;
   return o.failures.length === 0;
 }
@@ -119,6 +120,8 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       "no-vbproj": { type: "boolean", default: false },
       // 履歴で適用済みの changes.md でも再適用する (二重適用防止の解除・§6.1)
       force: { type: "boolean", default: false },
+      // 元の値に戻せない [MASKED] をその文字のまま書く (伏せ字を扱うコードそのものを書く場合)
+      "literal-masked": { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -275,12 +278,39 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     if (r.basis !== null) newFileBasis.set(change.path, r.basis);
     return r.config;
   };
-  const plan: Plan = planChangeSet(changeSet, states, resolveNewFile);
+  const plan: Plan = planChangeSet(changeSet, states, resolveNewFile, {
+    literalMasked: values["literal-masked"],
+  });
+  // --literal-masked の案内は端末にだけ出す (AI に貼るレポートには書かない。実際の値を伏せた行にまで
+  // 指定を勧めさせないため)
+  const literalHint = (): void => {
+    const masked = plan.failures.filter((f) => f.kind === "masked-value");
+    if (masked.some((f) => f.literalRefused === true)) {
+      err(
+        "注: 実際の値を伏せた [MASKED] の行を変える・移す変更のため、--literal-masked は使いませんでした " +
+          "(実際の値を [MASKED] の文字で置き換えないため)\n",
+      );
+    }
+    // 指定すれば本当に書けるときだけ案内する (指定しても使われない変更に勧めない)
+    const literalWorks = (): boolean =>
+      !planChangeSet(changeSet, states, resolveNewFile, { literalMasked: true }).failures.some(
+        (f) => f.kind === "masked-value",
+      );
+    // petari watch は --literal-masked を受け付けないため案内しない
+    const canSpecify = detected === undefined && values["literal-masked"] !== true;
+    if (canSpecify && masked.some((f) => f.literalAllowed === true) && literalWorks()) {
+      err(
+        "注: [MASKED] という文字そのものを書く変更 (伏せ字を扱うコード) なら、--literal-masked を付けると" +
+          "そのまま書き込めます。実際の値を伏せた行には使わないでください\n",
+      );
+    }
+  };
 
   // 3. 失敗があれば何も書き込まずレポート (§4.1, §7)
   if (!plan.ok && !values.partial) {
     err(`petari: 検証に失敗しました (${plan.failures.length} 件)。何も書き込んでいません。\n`);
     if (previousNote !== null) err(`注: ${previousNote}。取り違えていないか確認してください\n`);
+    literalHint();
     await emitReport(
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
     );
@@ -308,6 +338,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       return 0;
     }
     err("petari: 適用できる変更がありません。\n");
+    literalHint();
     await emitReport(
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
     );
@@ -335,6 +366,8 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     printAlreadyApplied(plan.outcomes);
     const dryRunNote = buildBlankInsensitiveNote(plan.outcomes);
     if (dryRunNote !== null) out(dryRunNote);
+    const dryRunMaskNote = buildMaskRestoreNote(plan.outcomes, false);
+    if (dryRunMaskNote !== null) out(dryRunMaskNote);
     if (plan.failures.length > 0) {
       out("");
       await emitReport(
@@ -456,9 +489,12 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   printAlreadyApplied(plan.outcomes);
   const appliedNote = buildBlankInsensitiveNote(plan.outcomes);
   if (appliedNote !== null) out(appliedNote);
+  const maskNote = buildMaskRestoreNote(plan.outcomes, true);
+  if (maskNote !== null) out(maskNote);
   if (plan.failures.length > 0) {
     out(`スキップした失敗 ${plan.failures.length} 件のレポート:`);
     out("");
+    literalHint();
     // --partial で成功分は書き込み済みのため nothingWritten は付けない
     await emitReport(buildFailureReport(plan.failures, { outcomes: plan.outcomes }));
   }
