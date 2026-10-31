@@ -33,7 +33,8 @@ const MATCH_SPEC_NOTE = [
 const WRAPPED_REQUEST_LINES = [
   "",
   "- ただし、抜粋の注記で「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず、",
-  "  その行を含まない連続した範囲にしてください",
+  "  その行を含まない連続した範囲にしてください。「範囲の端の行」とした行は、[MASKED] を含む行と同じ",
+  "  SEARCH には入れないでください",
 ].join("\n");
 
 /** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
@@ -42,7 +43,8 @@ const MASK_SPEC_NOTE = [
   "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
   "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
   "- 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行は SEARCH に含めると一致しません。その行を",
-  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください",
+  "  含まない連続した範囲 (その行より前か後ろの行) で一意に特定してください (抜粋で「範囲の端の行」とした行は、",
+  "  [MASKED] を含む行と同じ SEARCH に入れなければ含められます)",
 ];
 
 const reRequest = (wrapped: boolean): string => `## 依頼
@@ -229,7 +231,7 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
     parts.splice(specAt, 0, ...MASK_SPEC_NOTE);
   }
   const wrapped = failures.some((f) =>
-    [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped === true) === true),
+    [f.nearest, f.nearestReplace].some((a) => a?.window?.lines.some((l) => l.wrapped !== undefined) === true),
   );
   parts.push("", reRequest(wrapped), "");
   return parts.join("\n");

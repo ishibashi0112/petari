@@ -33,7 +33,7 @@ import {
   type MaskRestoreResult,
   type MaskedLine,
 } from "./mask.ts";
-import { analyzeNearest, type NearestAnalysis } from "./nearest.ts";
+import { analyzeNearest, type NearestAnalysis, type WindowLine } from "./nearest.ts";
 
 export interface NewFileConfig {
   encoding: FileEncoding;
@@ -189,15 +189,16 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
 type BlockMatch = ReturnType<typeof matchBlock>;
 
 /**
- * 抜粋の行のうち、写すと一致しない「複数行にまたがる値を伏せた範囲にかかる行」に印を付ける。
- * 伏せ字のない SEARCH は実ファイルで照合するため、その範囲の行を含めても一致する。一致しないのは、
- * SEARCH に伏せ字が入るとき (SEARCH に対応づけた行に伏せ字があるか、その行自体が伏せ字を含む) だけ
+ * 抜粋の行のうち「複数行にまたがる値を伏せた範囲にかかる行」に印を付ける。伏せ字のある SEARCH は伏せた
+ * 表示で照合し、その範囲の行を含む一致は採らない (伏せ字のない SEARCH は実ファイルで照合するので一致する)。
+ * そのため、伏せ字を含むその行は SEARCH に含めると必ず一致せず ("always")、伏せ字を含まないその行
+ * (字下げした鍵の END の行など) は伏せ字を含む行と同じ SEARCH に入れたときだけ一致しない ("with-mask")。
+ * 抜粋に伏せ字がなければ、写した SEARCH に伏せ字は入らないので印を付けない
  */
 function markWrapped(a: NearestAnalysis, isWrapped: (lineNo: number) => boolean): NearestAnalysis {
   if (a.window === null || !a.window.lines.some((l) => hasMaskToken(l.text))) return a;
-  const alignedMasked = a.window.lines.some((l) => l.verdict !== null && hasMaskToken(l.text));
-  const lines = a.window.lines.map((l) =>
-    (alignedMasked || hasMaskToken(l.text)) && isWrapped(l.lineNo) ? { ...l, wrapped: true } : l,
+  const lines = a.window.lines.map((l): WindowLine =>
+    isWrapped(l.lineNo) ? { ...l, wrapped: hasMaskToken(l.text) ? "always" : "with-mask" } : l,
   );
   return { ...a, window: { ...a.window, lines } };
 }
@@ -403,18 +404,26 @@ function planReplace(
       const isWrapped = (lineNo: number): boolean => views().some((view) => view[lineNo - 1]?.wrapped === true);
       const marked = markWrapped(nearest, isWrapped);
       const markedReplace = nearestReplace === undefined ? undefined : markWrapped(nearestReplace, isWrapped);
-      const wrappedLines = [marked, markedReplace].flatMap((a) =>
-        (a?.window?.lines ?? []).filter((l) => l.wrapped === true).map((l) => l.lineNo),
-      );
+      const linesOfKind = (kind: WindowLine["wrapped"]): number[] =>
+        [marked, markedReplace].flatMap((a) =>
+          (a?.window?.lines ?? []).filter((l) => l.wrapped === kind).map((l) => l.lineNo),
+        );
+      const always = linesOfKind("always");
+      const edges = linesOfKind("with-mask");
       failures.push({
         path: change.path,
         kind: "block-not-found",
         message:
-          wrappedLines.length > 0
-            ? `${message}。抜粋の ${formatLineRanges(wrappedLines)} 行目は複数行にまたがる値 (秘密鍵の本文など) を伏せた` +
+          message +
+          (always.length > 0
+            ? `。抜粋の ${formatLineRanges(always)} 行目は複数行にまたがる値 (秘密鍵の本文など) を伏せた` +
               "範囲にかかる行で、SEARCH に含めると一致しません。その行を含まない連続した範囲 (その行より前か後ろの行) で" +
               "一意に特定してください"
-            : message,
+            : "") +
+          (edges.length > 0
+            ? `。抜粋の ${formatLineRanges(edges)} 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行で、` +
+              "[MASKED] を含む行と同じ SEARCH に入れると一致しません ([MASKED] を含まない範囲なら含められます)"
+            : ""),
         block,
         nearest: marked,
         ...(markedReplace !== undefined ? { nearestReplace: markedReplace } : {}),

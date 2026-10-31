@@ -949,9 +949,12 @@ describe("applier: 複数行の値・空行の差", () => {
       new Map([["svc.yaml", state(src)]]),
       NEW_FILE,
     );
-    expect(p.failures[0]?.message).toContain("抜粋の 4〜6 行目は複数行にまたがる値");
+    expect(p.failures[0]?.message).toContain("抜粋の 4〜5 行目は複数行にまたがる値");
+    // END の行は伏せ字を含まないが、伏せ字を含む行と同じ SEARCH には入れられない
+    expect(p.failures[0]?.message).toContain("抜粋の 6 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
     const report = buildFailureReport(p.failures);
-    expect(report).toContain("- 4〜6 行目: 複数行にまたがる値");
+    expect(report).toContain("- 4〜5 行目: 複数行にまたがる値");
+    expect(report).toContain("- 6 行目: 複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
     expect(report).not.toContain("修正のヒント");
     expect(report).not.toContain("この行も含めてコピーしてください");
     expect(report).toContain("「複数行にまたがる値を伏せた範囲にかかる行」とした行は SEARCH に含めず");
@@ -1039,10 +1042,83 @@ describe("applier: 複数行の値・空行の差", () => {
       new Map([["s.yaml", state(src)]]),
       NEW_FILE,
     );
-    expect(p.failures[0]?.message).toContain("抜粋の 4〜6 行目は複数行にまたがる値");
+    expect(p.failures[0]?.message).toContain("抜粋の 4〜5 行目は複数行にまたがる値");
+    expect(p.failures[0]?.message).toContain("抜粋の 6 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
     const report = buildFailureReport(p.failures);
     expect(report).not.toContain("Hunter2Secret");
     expect(report).not.toContain("MIIEow");
+  });
+
+  it("文脈の END の行は、伏せ字の行と同じ SEARCH に入れられない範囲の端の行として注記する", () => {
+    // 抜粋の文脈に伏せ字の行 (token) があると、END の行と一緒に写した SEARCH は伏せた表示で照合され一致しない
+    const src = [
+      "svc1:",
+      "  key: |",
+      "    -----BEGIN RSA PRIVATE KEY-----",
+      "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "    -----END RSA PRIVATE KEY-----",
+      "  token: Xk3pQ9vLm2Rt7sWz8Yb4Hq5nJ8cV",
+      "  host: example",
+      "  port: 80",
+      "svc2:",
+      "  host: example",
+      "  port: 80",
+      "",
+    ].join("\n");
+    const states = new Map([["s.yaml", state(src)]]);
+    const p = planChangeSet(cs(replace("s.yaml", block(["  host: example", "  timeout: 5", "  port: 80"], ["x"]))), states, NEW_FILE);
+    expect(p.failures[0]?.message).toContain("抜粋の 4 行目は複数行にまたがる値 (秘密鍵の本文など)");
+    expect(p.failures[0]?.message).toContain("抜粋の 5 行目は複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
+    const report = buildFailureReport(p.failures);
+    expect(report).toContain("- 5 行目: 複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
+    expect(report).toContain("「範囲の端の行」とした行は、[MASKED] を含む行と同じ");
+    expect(report).not.toContain("MIIEow");
+    expect(report).not.toContain("Xk3pQ9");
+    // END の行と伏せ字の行を一緒に入れると一致しない
+    const withToken = ["    -----END RSA PRIVATE KEY-----", "  token: [MASKED]", "  host: example", "  port: 80"];
+    const bad = planChangeSet(cs(replace("s.yaml", block(withToken, [...withToken.slice(0, 3), "  port: 8080"]))), states, NEW_FILE);
+    expect(bad.ok).toBe(false);
+    expect(bad.failures[0]?.message).toContain("範囲の端の行");
+    // 伏せ字の行から始めるか、伏せ字の行を含まなければ END の行も使える
+    const fromToken = ["  token: [MASKED]", "  host: example", "  port: 80"];
+    const okToken = planChangeSet(cs(replace("s.yaml", block(fromToken, [...fromToken.slice(0, 2), "  port: 8080"]))), states, NEW_FILE);
+    expect(okToken.ok).toBe(true);
+    expect(text(okToken.outcomes[0]?.afterBytes ?? null)).toBe(src.replace("  port: 80\nsvc2", "  port: 8080\nsvc2"));
+  });
+
+  it("文脈にだけ範囲の端の行があるときの修正のヒントは、記号の付いた行だけを写すよう明記する", () => {
+    const src = [
+      "svc1:",
+      "  key: |",
+      "    -----BEGIN RSA PRIVATE KEY-----",
+      "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+      "    -----END RSA PRIVATE KEY-----",
+      "  token: Xk3pQ9vLm2Rt7sWz8Yb4Hq5nJ8cV",
+      "  name: a",
+      "  zone: b",
+      "  host: example",
+      "  user: admin",
+      "  port: 80",
+      "  tail: z",
+      "",
+    ].join("\n");
+    const states = new Map([["s.yaml", state(src)]]);
+    const p = planChangeSet(cs(replace("s.yaml", block(["  host: example", "  port: 80"], ["  host: example", "  port: 8080"]))), states, NEW_FILE);
+    const report = buildFailureReport(p.failures);
+    expect(report).toContain("- 5 行目: 複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行");
+    expect(report).toContain("(記号のない前後の文脈の行は含めません)");
+    // ヒントどおり記号の付いた行だけを写せば一致する
+    const copied = report
+      .split("\n")
+      .filter((l) => /^[=~!+] +\d+│/.test(l))
+      .map((l) => l.slice(l.indexOf("│") + 1));
+    expect(copied).toEqual(["  host: example", "  user: admin", "  port: 80"]);
+    const ok = planChangeSet(
+      cs(replace("s.yaml", block(copied, ["  host: example", "  user: admin", "  port: 8080"]))),
+      states,
+      NEW_FILE,
+    );
+    expect(ok.ok).toBe(true);
   });
 
   it("複数行にまたがる値のない失敗の依頼には、伏せた範囲の行の例外を載せない", () => {

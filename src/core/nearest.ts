@@ -44,9 +44,10 @@ export interface WindowLine {
   note?: string;
   /**
    * 複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行 (applier が付ける)。
-   * SEARCH に含めると一致しないため、写すよう勧める注記・ヒントを出さない
+   * "always" = 伏せ字を含む行で、SEARCH に含めると一致しない。"with-mask" = 伏せ字を含まない範囲の端の行
+   * (字下げした鍵の END の行など) で、伏せ字を含む行と同じ SEARCH に入れると一致しない
    */
-  wrapped?: boolean;
+  wrapped?: "always" | "with-mask";
 }
 
 /** アラインメントの結果、この領域に対応する行が無かった SEARCH 側の行 */
@@ -375,6 +376,11 @@ const WRAPPED_LINE_NOTE =
   "複数行にまたがる値 (秘密鍵の本文など) を伏せた範囲にかかる行です。SEARCH に含めると一致しないため、" +
   "これらの行を含まない連続した範囲 (前か後ろの行) で一意に特定してください";
 
+/** 複数行にまたがる値を伏せた範囲の端の行 (伏せ字を含まない) の注記 */
+const WRAPPED_EDGE_NOTE =
+  "複数行にまたがる値 (秘密鍵など) を伏せた範囲の端の行です。[MASKED] を含む行と同じ SEARCH に入れると一致しません " +
+  "([MASKED] を含まない範囲なら含められます)";
+
 const MARK: Record<LineVerdict, string> = { match: "=", "ws-only": "~", differ: "!", extra: "+" };
 
 /** 抜粋 (コードブロック + 凡例 + 行ごとの注記)。SEARCH / REPLACE 両方の診断で共用 */
@@ -393,15 +399,16 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
   );
   for (let i = 0; i < w.lines.length; i++) {
     const line = w.lines[i] as WindowLine;
-    if (line.wrapped === true) {
-      // 続く行はまとめて 1 つの注記にする
+    const kind = line.wrapped;
+    if (kind !== undefined) {
+      // 続く同じ種類の行はまとめて 1 つの注記にする
       let last = line;
-      while (w.lines[i + 1]?.wrapped === true && w.lines[i + 1]?.lineNo === last.lineNo + 1) {
+      while (w.lines[i + 1]?.wrapped === kind && w.lines[i + 1]?.lineNo === last.lineNo + 1) {
         i++;
         last = w.lines[i] as WindowLine;
       }
       const range = last === line ? `${line.lineNo}` : `${line.lineNo}〜${last.lineNo}`;
-      out.push(`- ${range} 行目: ${WRAPPED_LINE_NOTE}`);
+      out.push(`- ${range} 行目: ${kind === "always" ? WRAPPED_LINE_NOTE : WRAPPED_EDGE_NOTE}`);
     } else if (line.note !== undefined) {
       out.push(`- ${line.lineNo} 行目: ${line.note}`);
     }
@@ -424,10 +431,12 @@ function renderWindowBody(w: NearestWindow, subject: NearestSubject): string[] {
  */
 function buildHint(w: NearestWindow): string[] {
   if (w.extraCount === 0 || w.unmatchedSearch.length > 0) return [];
-  // 抜粋をそのまま写しても、複数行にまたがる値を伏せた範囲の行は一致しない
-  if (w.lines.some((l) => l.wrapped === true && l.verdict !== null)) return [];
+  // 記号の付いた行を写しても、複数行にまたがる値を伏せた範囲の行が入ると一致しない
+  const aligned = w.lines.filter((l) => l.verdict !== null);
+  const alignedMasked = aligned.some((l) => l.text.includes("[MASKED]"));
+  if (aligned.some((l) => l.wrapped === "always" || (l.wrapped === "with-mask" && alignedMasked))) return [];
   // 前後の文脈にその行があるときは、写すのは記号の付いた行だけだと明記する
-  const contextWrapped = w.lines.some((l) => l.wrapped === true);
+  const contextWrapped = w.lines.some((l) => l.wrapped !== undefined);
   if (w.lines.some((l) => l.verdict === "differ")) return [];
   const hasWsOnly = w.lines.some((l) => l.verdict === "ws-only");
   const head =
