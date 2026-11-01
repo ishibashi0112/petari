@@ -49,14 +49,14 @@ suite("initDocs", () => {
     assert.deepStrictEqual(result.errors, []);
     assert.deepStrictEqual(result.kept, []);
     assert.deepStrictEqual(result.created, [
-      "slnmix.config.json",
+      "petari.config.json",
       "docs/design/",
       "docs/spec/",
       "docs/README.md",
     ]);
     assert.deepStrictEqual(rel(fs, "dirs"), ["docs/design", "docs/spec"]);
     assert.deepStrictEqual(
-      JSON.parse(fs.files.get(path.join(ROOT, "slnmix.config.json"))!),
+      JSON.parse(fs.files.get(path.join(ROOT, "petari.config.json"))!),
       { docs: { design: "docs/design", spec: "docs/spec", handoff: "docs/HANDOFF.md" } },
     );
     assert.strictEqual(fs.files.get(path.join(ROOT, "docs", "README.md")), DOCS_README);
@@ -81,7 +81,7 @@ suite("initDocs", () => {
     const result = initDocs(ROOT, fs.deps);
     assert.deepStrictEqual(result.created, []);
     assert.deepStrictEqual(result.kept, [
-      "slnmix.config.json (docs 設定済み)",
+      "petari.config.json (docs 設定済み)",
       "docs/design/",
       "docs/spec/",
       "docs/README.md",

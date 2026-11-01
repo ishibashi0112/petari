@@ -1,8 +1,8 @@
 /**
- * slnmix --init-config: VB.NET 以外のプロジェクト(TypeScript 等)で slnmix を使う
- * ための slnmix.config.json(kind: "generic")を作る(v0.17.0、設計書 §19)。
+ * petari pack --init-config: VB.NET 以外のプロジェクト(TypeScript 等)で使う
+ * ための設定ファイル(petari.config.json、kind: "generic")を作る(旧 slnmix v0.17.0、設計書 §19)。
  *
- * - 既に slnmix.config.json があれば何もしない(冪等。中身は変えない)
+ * - 既に設定ファイルがあれば(旧名の slnmix.config.json でも)何もしない(冪等。中身は変えない)
  * - その場所に .sln / .vbproj があれば作らない(従来の solution 構成で動くため)
  * - ソースのディレクトリは「候補名のうち実在するもの」だけを採用する(src / app /
  *   lib / apps / packages → kind: "src"、tests / test / e2e / __tests__ →
@@ -12,7 +12,8 @@
  */
 
 import * as path from "node:path";
-import { CONFIG_FILE_NAME } from "./slnmixConfig.ts";
+import { PACK_COMMAND } from "../brand.ts";
+import { CONFIG_FILE_NAME, configFileNameIn, hasConfigFile } from "./slnmixConfig.ts";
 
 export interface InitConfigDeps {
   isDirectory(absolutePath: string): boolean;
@@ -58,17 +59,18 @@ function renderConfig(roots: readonly InitConfigRoot[]): string {
  * @param rootDir 設定を置くディレクトリ(プロジェクトルート)の絶対パス
  */
 export function initConfig(rootDir: string, deps: InitConfigDeps): InitConfigResult {
-  const configPath = path.join(rootDir, CONFIG_FILE_NAME);
-  if (deps.isFile(configPath)) {
-    return { kind: "kept", path: configPath };
+  // 旧名(slnmix.config.json)の設定があればそれを使う(名前は変えない)
+  if (hasConfigFile(rootDir, deps.isFile)) {
+    return { kind: "kept", path: path.join(rootDir, configFileNameIn(rootDir, deps.isFile)) };
   }
+  const configPath = path.join(rootDir, CONFIG_FILE_NAME);
   const names = deps.listFileNames(rootDir) ?? [];
   const solutionFiles = names.filter((name) => /\.(sln|vbproj)$/i.test(name)).sort();
   if (solutionFiles.length > 0) {
     return {
       kind: "error",
       message: [
-        `${rootDir} には ${solutionFiles.join(", ")} があります。VB.NET のプロジェクトは設定なしで npx slnmix を実行できます(kind: "generic" は .sln / .vbproj の無いプロジェクト向け)。`,
+        `${rootDir} には ${solutionFiles.join(", ")} があります。VB.NET のプロジェクトは設定なしで npx ${PACK_COMMAND} を実行できます(kind: "generic" は .sln / .vbproj の無いプロジェクト向け)。`,
       ].join("\n"),
     };
   }

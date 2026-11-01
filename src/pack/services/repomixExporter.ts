@@ -20,7 +20,8 @@
 
 import * as path from "node:path";
 import { buildLogicalTree } from "../logicalTreeBuilder.ts";
-import type { ExtraRootConfig } from "../slnmixConfig.ts";
+import { TOOL_NAME } from "../../brand.ts";
+import { CONFIG_FILE_NAME, type ExtraRootConfig } from "../slnmixConfig.ts";
 import type {
   FileNode,
   LegacyTreeNode,
@@ -90,8 +91,10 @@ export interface RepomixExportOptions {
    * 未指定なら従来の `プロジェクト名\論理パス` 表記(後方互換 / --legacy-paths)
    */
   rootDir?: string | undefined;
-  /** .vbproj に乗らない追加ディレクトリ(rootDir 必須。slnmix.config.json の extraRoots) */
+  /** .vbproj に乗らない追加ディレクトリ(rootDir 必須。設定ファイルの extraRoots) */
   extraRoots?: readonly ExtraRootConfig[] | undefined;
+  /** 設定ファイルの名前(ヘッダーの説明用。既定は新しい名前。旧名の slnmix.config.json のときはそれ) */
+  configFileName?: string | undefined;
   /** contract.schema.json のルート相対パス(rootDir 必須)。あれば <contract_summary> を生成 */
   contractSchema?: string | undefined;
   /** 契約の正本ファイルのルート相対パス(<contract_summary> の説明に使う) */
@@ -731,11 +734,12 @@ export function buildRepomixOutput(
   const rootName = rootDir === undefined ? undefined : path.basename(rootDir);
 
   const generic = options.layout === "generic";
+  const configFileName = options.configFileName ?? CONFIG_FILE_NAME;
 
   const content = [
     generic
-      ? `このファイルは slnmix が「${title}」の slnmix.config.json(extraRoots)に宣言されたディレクトリに基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`
-      : `このファイルは slnmix が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
+      ? `このファイルは ${TOOL_NAME} が「${title}」の ${configFileName}(extraRoots)に宣言されたディレクトリに基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`
+      : `このファイルは ${TOOL_NAME} が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
     "",
     "<file_summary>",
     "<purpose>",
@@ -802,8 +806,8 @@ export function buildRepomixOutput(
     ...(extra !== undefined
       ? [
           generic
-            ? `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは slnmix.config.json の extraRoots に宣言されたディレクトリ(<file> の root 属性)。宣言されていないディレクトリは含まれない`
-            : `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは .vbproj に乗らない追加ディレクトリ(slnmix.config.json の extraRoots。<file> の root 属性)。認証情報マスクは VB 側と同様に適用済み`,
+            ? `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは ${configFileName} の extraRoots に宣言されたディレクトリ(<file> の root 属性)。宣言されていないディレクトリは含まれない`
+            : `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは .vbproj に乗らない追加ディレクトリ(${configFileName} の extraRoots。<file> の root 属性)。認証情報マスクは VB 側と同様に適用済み`,
         ]
       : []),
     ...(generatedDirs.length > 0

@@ -108,7 +108,7 @@ suite("procedure: スナップショット", () => {
     // v7(layout)も solution 構成では版数の行だけが変わる
     for (const mode of PROCEDURE_MODES) {
       const plain = renderBuiltinProcedure(mode);
-      assert.ok(plain.startsWith(`<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: `));
+      assert.ok(plain.startsWith(`<!-- petari procedure v${PROCEDURE_VERSION} (mode: `));
       assert.ok(!plain.includes("テスト"), `${mode}: テストなしの本文にテストの記述がある`);
       assert.ok(!plain.includes("data-testid"));
     }
@@ -206,7 +206,7 @@ suite("procedure: 描画", () => {
       assert.ok(!rendered.includes("{{"), `${mode}: プレースホルダが残っている`);
       assert.ok(
         rendered.startsWith(
-          `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: ${mode}) -->\n`,
+          `<!-- petari procedure v${PROCEDURE_VERSION} (mode: ${mode}) -->\n`,
         ),
       );
       assert.ok(rendered.endsWith("\n"));
@@ -353,7 +353,7 @@ suite("procedure: 構成の種類(layout、v7)", () => {
       ]) {
         assert.ok(!text.includes(phrase), `${mode}: ${phrase} が残っています`);
       }
-      assert.ok(text.startsWith(`<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: ${mode}, layout: generic) -->\n`));
+      assert.ok(text.startsWith(`<!-- petari procedure v${PROCEDURE_VERSION} (mode: ${mode}, layout: generic) -->\n`));
     }
   });
 

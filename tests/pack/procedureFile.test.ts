@@ -38,15 +38,12 @@ function fakeDeps(files: Record<string, string>): InstructionFileDeps {
   return { readTextFile: (p) => map.get(p) };
 }
 
-const INSTRUCTION_FOUND: InstructionResolution = {
+const INSTRUCTION_FOUND = {
   kind: "found",
-  path: path.join(PROJECT_DIR, "protocol.md"),
   content: "規約文\n",
-};
-const INSTRUCTION_NONE: InstructionResolution = {
-  kind: "none",
-  searchedPath: path.join(PROJECT_DIR, "protocol.md"),
-};
+  source: { kind: "file", path: path.join(PROJECT_DIR, "protocol.md"), explicit: false, baseVersion: undefined },
+} as const satisfies InstructionResolution;
+const INSTRUCTION_NONE: InstructionResolution = { kind: "none" };
 
 function tail(partial: Partial<OutputTail>): OutputTail {
   return {

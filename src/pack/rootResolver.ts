@@ -1,25 +1,23 @@
 /**
  * ルート(物理パス・設定ファイル・protocol.md / procedure.md・docs/・出力先の基準)を決める。
+ * パック(petari pack / build)と適用(petari / undo / show / list / watch / init)で同じ決め方をし、
+ * パックの `<file path>` と changes.md のパスの基準を必ず一致させる(設計書 §25.3-2)。
  *
- * 従来はルート = 入力(.sln / .vbproj)のあるディレクトリに固定していたが、
- * web + dotnet を分けた構成(例: webview2-bridge の雛形は `dotnet/MyApp.sln`)では
- * `web/` `contract/` `e2e/` がルート外になり、petari のルート(.git の場所)とも
- * ずれる。そこで次の順で決める(決定ログ 2026-09-22):
+ *   1. `--root <dir>` の明示指定(パックでは入力がその配下にあること)
+ *   2. 起点(パック: 入力のディレクトリ、適用: カレント)から上に向かって設定ファイル
+ *      (petari.config.json / slnmix.config.json)を探し、最初に見つかったディレクトリ。
+ *      `.git` のあるディレクトリ(リポジトリの境界)より上には行かない
+ *   3. 上に向かって最初の `.git` のあるディレクトリ
+ *   4. どちらもなければ起点
  *
- *   1. `--root <dir>` の明示指定(入力はその配下にあること)
- *   2. 入力のディレクトリから上に向かって `slnmix.config.json` を探し、最初に
- *      見つかったディレクトリ。`.git` のあるディレクトリ(リポジトリの境界)より
- *      上には行かない。入力のディレクトリ自身に設定があれば従来と同じ
- *   3. どちらもなければ入力のディレクトリ(従来どおり)
- *
- * `.git` を自動で辿る方式は採らない。.sln がリポジトリ直下にない既存プロジェクトの
- * 出力が黙って変わるため。設定ファイルを置いた人だけが変わる、という明示の形にする。
+ * 旧 slnmix は 3 を持たず(入力のディレクトリ)、旧 petari は 2 を持たなかった。設定ファイルを
+ * サブフォルダに置いた構成や、.sln がサブフォルダにあり設定の無い構成で、両者のルートがずれていた。
  *
  * 純粋関数(ファイルシステムは deps 注入)。
  */
 
 import * as path from "node:path";
-import { CONFIG_FILE_NAME } from "./slnmixConfig.ts";
+import { hasConfigFile } from "./slnmixConfig.ts";
 
 export interface RootResolverDeps {
   isDirectory(absolutePath: string): boolean;
@@ -28,7 +26,9 @@ export interface RootResolverDeps {
   exists(absolutePath: string): boolean;
 }
 
-export type RootReason = "explicit" | "config" | "target";
+export type RootReason = "explicit" | FoundRootReason;
+/** config: 設定ファイルの場所 / git: .git の場所 / start: 起点(どちらも無い) */
+export type FoundRootReason = "config" | "git" | "start";
 
 export type RootResolution =
   | { kind: "root"; rootDir: string; reason: RootReason }
@@ -41,6 +41,27 @@ export function isWithinDirectory(parent: string, child: string): boolean {
     return true;
   }
   return !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/** 起点から上に向かってルートを探す(--root の無いとき。2〜4) */
+export function findRoot(
+  startDir: string,
+  deps: Pick<RootResolverDeps, "isFile" | "exists">,
+): { rootDir: string; reason: FoundRootReason } {
+  let dir = startDir;
+  for (;;) {
+    if (hasConfigFile(dir, deps.isFile)) {
+      return { rootDir: dir, reason: "config" };
+    }
+    if (deps.exists(path.join(dir, ".git"))) {
+      return { rootDir: dir, reason: "git" };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return { rootDir: startDir, reason: "start" };
+    }
+    dir = parent;
+  }
 }
 
 /**
@@ -68,21 +89,7 @@ export function resolveRoot(
     }
     return { kind: "root", rootDir, reason: "explicit" };
   }
-  let dir = targetDir;
-  for (;;) {
-    if (deps.isFile(path.join(dir, CONFIG_FILE_NAME))) {
-      return { kind: "root", rootDir: dir, reason: dir === targetDir ? "target" : "config" };
-    }
-    if (deps.exists(path.join(dir, ".git"))) {
-      break;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-  return { kind: "root", rootDir: targetDir, reason: "target" };
+  return { kind: "root", ...findRoot(targetDir, deps) };
 }
 
 /** CLI の 1 行表示用 */
@@ -91,8 +98,10 @@ export function describeRootReason(reason: RootReason): string {
     case "explicit":
       return "--root";
     case "config":
-      return `上位の ${CONFIG_FILE_NAME} の場所`;
-    case "target":
+      return "設定ファイルの場所";
+    case "git":
+      return "リポジトリの直下(.git の場所)";
+    case "start":
       return "入力と同じ場所";
   }
 }

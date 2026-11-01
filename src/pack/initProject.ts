@@ -1,44 +1,48 @@
 /**
- * slnmix init: 初回セットアップを 1 コマンドにまとめる(v0.18.0、設計書 §20)。
+ * petari init: 初回セットアップを 1 コマンドにまとめる(旧 slnmix init + petari init。設計書 §20・§25)。
  *
- * 1. 構成: slnmix.config.json があればそのまま使う。なければ
+ * 1. 構成: 設定ファイル(petari.config.json。旧名 slnmix.config.json も)があればそのまま使う。なければ
  *    - 直下に .sln / .vbproj があれば設定を作らない(従来どおり自動検出)
  *    - 直下に無く、1 段下のフォルダに .sln が 1 つだけあれば target で指す設定を作る
  *    - どちらも無ければ --init-config と同じ generic 構成を作る
  * 2. docs/ 連携(--init-docs と同じ)
- * 3. .gitignore に生成物(repomix-output.xml / repomix-output.prompt.md)を追記
- * 4. petari init --yes --no-repomix(protocol.md / .petari/ / .gitignore の .petari/)
+ * 3. .gitignore に生成物(repomix-output.xml / repomix-output.prompt.md)と .petari/ を追記
+ * 4. .petari/config.json(PC ごとの設定。雛形)
+ * 5. 規約文: 内蔵なので書き出さない。旧 init が書いた protocol.md があれば、手を加えていないか
+ *    (削除してよいか)を案内する
  *
- * 実行場所はリポジトリ直下(.git のある場所)に限る。petari は .git の場所を基準に
- * changes.md のパスを当てるため、slnmix のルートと食い違うと適用先がずれる。
- * 既存のファイルは変えない(protocol.md だけは petari が最新の規約文に更新する)。
- * 何度実行しても同じ結果になる(冪等)。
+ * 対話なし。既存のファイルは変えない。何度実行しても同じ結果になる(冪等)。
+ * ルートはパック・適用と同じ決め方(rootResolver.ts)で呼び出し側が決める。--root でリポジトリの
+ * 途中を指したときは、設定ファイルがある場所に限る(無いとパックと適用のルートがずれるため)。
  *
  * 1 段下の .sln を探すのは init だけの例外(パックの対象は決めず、見つけた .sln を
  * 設定に書いて利用者に見える形にする)。
  *
- * ファイルシステムと petari の起動は deps 注入(単体テスト可能)。
+ * ファイルシステムは deps 注入(単体テスト可能)。
  */
 
 import * as path from "node:path";
 import { GitignoreRules } from "./services/gitignoreMatcher.ts";
 import { initConfig, type InitConfigDeps } from "./initConfig.ts";
 import { initDocs, type InitDocsDeps } from "./initDocs.ts";
-import { CONFIG_FILE_NAME, loadSlnmixConfig } from "./slnmixConfig.ts";
+import { BUILD_COMMAND, PACK_COMMAND, TOOL_NAME } from "../brand.ts";
+import { CONFIG_TEMPLATE } from "../infra/config.ts";
+import { describeInstruction, resolveInstructionFile } from "./instructionFile.ts";
+import {
+  CONFIG_FILE_NAME,
+  configFileNameIn,
+  describeConfigConflict,
+  hasConfigFile,
+  loadSlnmixConfig,
+  readConfigFile,
+} from "./slnmixConfig.ts";
 import { resolveTarget } from "./targetResolver.ts";
-
-/** output は petari の端末出力(手順 4 の下に字下げして表示する) */
-export type PetariInitOutcome =
-  | { ok: true; output: string }
-  | { ok: false; message: string; output: string };
 
 export interface InitProjectDeps extends InitDocsDeps, InitConfigDeps {
   /** ディレクトリ直下のサブディレクトリ名一覧(取得できなければ undefined) */
   listDirectoryNames(absolutePath: string): string[] | undefined;
   /** 既存ファイルの末尾に追記する(.gitignore の既存部分のバイト列を変えないため) */
   appendTextFile(absolutePath: string, content: string): void;
-  /** petari init --yes --no-repomix --root <rootDir> を実行する */
-  runPetariInit(rootDir: string): PetariInitOutcome;
   log(line: string): void;
 }
 
@@ -48,11 +52,14 @@ export interface InitProjectResult {
   layout?: "solution" | "generic" | undefined;
 }
 
-/** slnmix が書く生成物(既定の出力名)。git の管理外にする */
+/** パックが書く生成物(既定の出力名)。git の管理外にする */
 export const GENERATED_OUTPUTS: readonly string[] = [
   "repomix-output.xml",
   "repomix-output.prompt.md",
 ];
+
+/** PC ごとの設定と適用の履歴。git の管理外にする */
+export const LOCAL_STATE_DIRECTORY = ".petari";
 
 /** 1 段下の .sln を探すときに見ないフォルダ(ドットで始まるものも見ない) */
 const SKIPPED_SUBDIRECTORIES = new Set(["node_modules", "bin", "obj", "packages"]);
@@ -86,7 +93,8 @@ export function planGitignoreAppend(
   entries: readonly string[],
 ): { append: string; added: string[] } | undefined {
   const matcher = new GitignoreRules(current ?? "");
-  const added = entries.filter((entry) => !matcher.ignores(entry));
+  // 末尾 / の項目(ディレクトリ)は、その中のファイルが除外されるかで判定する
+  const added = entries.filter((entry) => !matcher.ignores(entry.endsWith("/") ? `${entry}_` : entry));
   if (added.length === 0) {
     return undefined;
   }
@@ -114,15 +122,20 @@ type LayoutStep =
   | { kind: "error"; message: string };
 
 function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
-  const configPath = path.join(rootDir, CONFIG_FILE_NAME);
-  const configText = deps.readTextFile(configPath);
+  const found = readConfigFile(rootDir, deps);
+  if (found.kind === "conflict") {
+    return { kind: "error", message: describeConfigConflict(rootDir) };
+  }
+  const configName = found.kind === "found" ? found.name : CONFIG_FILE_NAME;
+  const configPath = path.join(rootDir, configName);
+  const configText = found.kind === "found" ? found.text : undefined;
   if (configText !== undefined) {
     try {
       JSON.parse(configText.replace(/^﻿/, ""));
     } catch (error) {
       return {
         kind: "error",
-        message: `${CONFIG_FILE_NAME} を JSON として読めません(上書きしません): ${
+        message: `${configName} を JSON として読めません(上書きしません): ${
           error instanceof Error ? error.message : String(error)
         }`,
       };
@@ -137,7 +150,7 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
       return {
         kind: "ok",
         layout: "generic",
-        lines: [`1. 構成: generic(既存の ${CONFIG_FILE_NAME}。変更なし)`],
+        lines: [`1. 構成: generic(既存の ${configName}。変更なし)`],
       };
     }
     if (resolution.kind === "file") {
@@ -145,7 +158,7 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
         kind: "ok",
         layout: "solution",
         lines: [
-          `1. 構成: ${toRelative(rootDir, resolution.path)}(既存の ${CONFIG_FILE_NAME}。変更なし)`,
+          `1. 構成: ${toRelative(rootDir, resolution.path)}(既存の ${configName}。変更なし)`,
         ],
       };
     }
@@ -154,7 +167,7 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
       return {
         kind: "error",
         message: [
-          `${CONFIG_FILE_NAME} はありますが、対象が決まりません(直下に .sln / .vbproj が無く、target も kind: "generic" もありません)。`,
+          `${configName} はありますが、対象が決まりません(直下に .sln / .vbproj が無く、target も kind: "generic" もありません)。`,
           `.sln がサブフォルダにあれば "target": "<フォルダ>/<名前>.sln" を、VB.NET 以外なら "kind": "generic" と extraRoots を書いてから、もう一度実行してください。`,
         ].join("\n"),
       };
@@ -176,7 +189,7 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
       kind: "error",
       message:
         resolution.kind === "error"
-          ? `${resolution.message}\n${CONFIG_FILE_NAME} に "target": "<対象>.sln" を書いてから、もう一度実行してください。`
+          ? `${resolution.message}\n${configName} に "target": "<対象>.sln" を書いてから、もう一度実行してください。`
           : "対象を決められません。",
     };
   }
@@ -190,14 +203,14 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
     return {
       kind: "ok",
       layout: "solution",
-      lines: [`1. 構成: ${target}(1 段下で見つけた .sln を ${CONFIG_FILE_NAME} の target に書きました)`],
+      lines: [`1. 構成: ${target}(1 段下で見つけた .sln を ${configName} の target に書きました)`],
     };
   }
   if (solutions.length > 1) {
     return {
       kind: "error",
       message: [
-        "1 段下のフォルダに .sln が複数あります。対象を決めて、次のような slnmix.config.json を作ってから、もう一度実行してください:",
+        `1 段下のフォルダに .sln が複数あります。対象を決めて、次のような ${configName} を作ってから、もう一度実行してください:`,
         ...solutions.map((solution) => `  - ${solution}`),
         JSON.stringify({ target: solutions[0] }, null, 2),
       ].join("\n"),
@@ -210,19 +223,19 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
     return {
       kind: "error",
       message: [
-        `.sln / .vbproj が直下にも 1 段下のフォルダにもありません。VB.NET のプロジェクトなら ${CONFIG_FILE_NAME} に "target": "<フォルダ>/<名前>.sln" を書いてから、もう一度実行してください。`,
+        `.sln / .vbproj が直下にも 1 段下のフォルダにもありません。VB.NET のプロジェクトなら ${configName} に "target": "<フォルダ>/<名前>.sln" を書いてから、もう一度実行してください。`,
         `VB.NET 以外のプロジェクトの場合: ${result.message}`,
       ].join("\n"),
     };
   }
   if (result.kind === "kept") {
-    return { kind: "ok", layout: "generic", lines: [`1. 構成: 既存の ${CONFIG_FILE_NAME}(変更なし)`] };
+    return { kind: "ok", layout: "generic", lines: [`1. 構成: 既存の ${configName}(変更なし)`] };
   }
   return {
     kind: "ok",
     layout: "generic",
     lines: [
-      `1. 構成: generic(.sln / .vbproj が無いため ${CONFIG_FILE_NAME} を作りました)`,
+      `1. 構成: generic(.sln / .vbproj が無いため ${configName} を作りました)`,
       ...result.roots.map((root) => `   extraRoots: ${root.path}/(kind: "${root.kind}")`),
       `   VB.NET のプロジェクトで .sln が 2 段以上深い場合は見つけられません。kind と extraRoots の代わりに "target": "<パス>/<名前>.sln" を書いてください`,
     ],
@@ -234,7 +247,7 @@ function toRelative(rootDir: string, absolutePath: string): string {
 }
 
 /**
- * @param rootDir セットアップする場所(リポジトリ直下)の絶対パス
+ * @param rootDir セットアップする場所(ルート)の絶対パス
  */
 export function initProject(rootDir: string, deps: InitProjectDeps): InitProjectResult {
   const fail = (message: string, layout?: "solution" | "generic"): InitProjectResult => {
@@ -246,12 +259,12 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
     return fail(`ディレクトリがありません: ${rootDir}`);
   }
   const repositoryRoot = findRepositoryRoot(rootDir, deps.exists);
-  if (repositoryRoot !== undefined && repositoryRoot !== rootDir) {
+  if (repositoryRoot !== undefined && repositoryRoot !== rootDir && !hasConfigFile(rootDir, deps.isFile)) {
     return fail(
       [
         `ここはリポジトリの直下ではありません(リポジトリ: ${repositoryRoot})。`,
-        "petari はリポジトリ直下を基準に変更を当てるため、slnmix もそこに揃えます。リポジトリ直下で npx slnmix init を実行してください",
-        "(.sln がサブフォルダにあれば、init が slnmix.config.json の target に書きます)。",
+        `${TOOL_NAME} はリポジトリ直下(または設定ファイルの場所)を基準にパックを作り、変更を当てます。リポジトリ直下で npx ${TOOL_NAME} init を実行してください`,
+        `(.sln がサブフォルダにあれば、init が ${CONFIG_FILE_NAME} の target に書きます)。`,
       ].join("\n"),
     );
   }
@@ -280,9 +293,9 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
   // 3. .gitignore(既存部分は書き換えず末尾に追記)
   const gitignorePath = path.join(rootDir, ".gitignore");
   const gitignore = deps.readTextFile(gitignorePath);
-  const plan = planGitignoreAppend(gitignore, GENERATED_OUTPUTS);
+  const plan = planGitignoreAppend(gitignore, [...GENERATED_OUTPUTS, `${LOCAL_STATE_DIRECTORY}/`]);
   if (plan === undefined) {
-    deps.log("3. .gitignore: 生成物は除外済み(変更なし)");
+    deps.log(`3. .gitignore: 生成物と ${LOCAL_STATE_DIRECTORY}/ は除外済み(変更なし)`);
   } else {
     if (gitignore === undefined) {
       deps.writeTextFile(gitignorePath, plan.append);
@@ -292,29 +305,35 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
     deps.log(`3. .gitignore: ${plan.added.join(" / ")} を追記しました`);
   }
 
-  // 4. petari(規約文 protocol.md と .petari/)
-  deps.log("4. petari の初期化(petari init --yes --no-repomix):");
-  const petari = deps.runPetariInit(rootDir);
-  for (const line of petari.output.split(/\r?\n/)) {
-    if (line.trim() !== "") {
-      deps.log(`   ${line}`);
-    }
-  }
-  if (!petari.ok) {
-    return fail(
-      `petari の初期化に失敗しました: ${petari.message}\nこのフォルダで npx petari init --yes --no-repomix を実行してください(1〜3 は完了しています)。`,
-      layout.layout,
-    );
+  // 4. PC ごとの設定(Downloads の場所・VS Code のパスなど)
+  const localConfig = `${LOCAL_STATE_DIRECTORY}/config.json`;
+  const localConfigPath = path.join(rootDir, LOCAL_STATE_DIRECTORY, "config.json");
+  if (deps.exists(localConfigPath)) {
+    deps.log(`4. ${localConfig}: 既存(変更なし)`);
+  } else {
+    deps.makeDirectory(path.join(rootDir, LOCAL_STATE_DIRECTORY));
+    deps.writeTextFile(localConfigPath, CONFIG_TEMPLATE);
+    deps.log(`4. ${localConfig}: 雛形を作りました(PC ごとの設定。git の管理外)`);
   }
 
+  // 5. 規約文(内蔵。旧 init が書いた protocol.md は手を加えていなければ不要)
+  const instruction = describeInstruction(resolveInstructionFile(undefined, rootDir, rootDir, deps));
+  deps.log(`5. ${instruction.line}`);
+  if (instruction.warning !== undefined) {
+    deps.log(`   ${instruction.warning}`);
+  }
+
+  const command = (text: string): string => `  ${`npx ${text}`.padEnd(19)}`;
   deps.log("");
   deps.log("セットアップ完了。以後は次の 2 つだけです:");
-  deps.log("  npx slnmix         Copilot Chat に貼るものをクリップボードに入れる(本文に貼って送信)");
-  deps.log("  npx petari watch   別の端末で起動したままにすると、ダウンロードした changes.md を自動で適用");
-  deps.log("                     (起動しないときは、ダウンロードのたびに npx petari)");
+  deps.log(`${command(PACK_COMMAND)}Copilot Chat に貼るものをクリップボードに入れる(本文に貼って送信)`);
+  deps.log(`${command(`${TOOL_NAME} watch`)}別の端末で起動したままにすると、ダウンロードした changes.md を自動で適用`);
+  deps.log(`${" ".repeat(21)}(起動しないときは、ダウンロードのたびに npx ${TOOL_NAME})`);
   if (layout.layout === "solution") {
-    deps.log("  ビルドは npx slnmix build で。失敗するとエラーと周辺のコードがクリップボードに入ります");
+    deps.log(`  ビルドは npx ${BUILD_COMMAND} で。失敗するとエラーと周辺のコードがクリップボードに入ります`);
   }
-  deps.log("slnmix.config.json・docs/・protocol.md は git にコミットしてください。");
+  deps.log(
+    `${configFileNameIn(rootDir, deps.isFile)}・docs/ は git にコミットしてください(${LOCAL_STATE_DIRECTORY}/ は PC ごとの設定と適用の履歴なのでコミットしません)。`,
+  );
   return { exitCode: 0, layout: layout.layout };
 }

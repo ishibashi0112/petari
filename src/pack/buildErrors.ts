@@ -13,6 +13,7 @@
 
 import * as path from "node:path";
 import { MASK_TOKEN, maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "../core/mask.ts";
+import { BUILD_COMMAND } from "../brand.ts";
 
 export interface BuildError {
   /** ファイルのパス(MSBuild が出したまま)、またはツール名(vbc / MSBUILD 等) */
@@ -410,7 +411,7 @@ export function buildErrorReport(
   const parts: string[] = [
     "## ビルドエラー",
     "",
-    `slnmix build でビルドしたところ、エラーが ${errors.length} 件出ました。` +
+    `${BUILD_COMMAND} でビルドしたところ、エラーが ${errors.length} 件出ました。` +
       "修正を、これまでと同じ規約の changes.md で出してください。",
     "",
     "- 抜粋は今の実ファイルの内容です。パックの内容と食い違うときは、抜粋が正です",

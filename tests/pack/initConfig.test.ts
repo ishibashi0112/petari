@@ -40,7 +40,7 @@ suite("initConfig", () => {
     const result = initConfig(ROOT, fs.deps);
     assert.strictEqual(result.kind, "created");
     if (result.kind !== "created") return;
-    assert.strictEqual(result.path, path.join(ROOT, "slnmix.config.json"));
+    assert.strictEqual(result.path, path.join(ROOT, "petari.config.json"));
     assert.deepStrictEqual(result.roots, [
       { path: "src", kind: "src" },
       { path: "tests", kind: "test" },
@@ -52,7 +52,7 @@ suite("initConfig", () => {
         { path: "tests", kind: "test" },
       ],
     });
-    assert.strictEqual(fs.files.get(path.join(ROOT, "slnmix.config.json")), result.content);
+    assert.strictEqual(fs.files.get(path.join(ROOT, "petari.config.json")), result.content);
     assert.ok(result.content.endsWith("}\n"), "末尾は改行で終える");
   });
 
@@ -72,7 +72,7 @@ suite("initConfig", () => {
     ]);
   });
 
-  test("既に slnmix.config.json があれば変えない(冪等)", () => {
+  test("既に旧名の slnmix.config.json があれば変えない(冪等。新しい名前の設定も作らない)", () => {
     const fs = fakeFs(["src"], ["slnmix.config.json"]);
     fs.files.set(path.join(ROOT, "slnmix.config.json"), '{ "kind": "solution" }');
     const result = initConfig(ROOT, fs.deps);

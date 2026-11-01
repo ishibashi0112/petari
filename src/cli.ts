@@ -2,6 +2,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { TOOL_NAME } from "./brand.ts";
 import { err as errLine } from "./infra/term.ts";
 
 const SUBCOMMANDS = ["pack", "build", "undo", "show", "list", "protocol", "init", "watch"] as const;
@@ -12,20 +13,22 @@ function version(): string {
   return (JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string }).version;
 }
 
-const HELP = `petari — AI チャットでの開発を、コードベースを渡す → 返答を当てる → ビルドする の流れで支える
+const T = TOOL_NAME;
+const HELP = `${T} — AI チャットでの開発を、コードベースを渡す → 返答を当てる → ビルドする の流れで支える
 
 Usage:
-  petari init           プロジェクト初回セットアップ (リポジトリ直下で一回だけ)
-  petari pack [入力]    コードベースを 1 ファイルにまとめ、チャットに貼るものをクリップボードへ
-                        (petari pack --help でオプション一覧)
-  petari [path]         changes.md を適用 (省略時: Downloads から自動検出)
-  petari watch          Downloads を見張り、届いた changes.md を確認なしで適用
+  ${T} init           プロジェクト初回セットアップ (リポジトリ直下で一回だけ。何度実行しても同じ結果)
+  ${T} pack [入力]    コードベースを 1 ファイルにまとめ、チャットに貼るものをクリップボードへ
+                        (${T} pack --help でオプション一覧)
+  ${T} [path]         changes.md を適用 (省略時: Downloads から自動検出)
+  ${T} watch          Downloads を見張り、届いた changes.md を確認なしで適用
                         (Ctrl+C で終了)
-  petari undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
-  petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正 (VS Code)
-  petari list           履歴の一覧を表示
-  petari build [入力]   MSBuild でビルドし、失敗したらエラーと周辺のコードをクリップボードへ
-  petari protocol       AI への規約文を標準出力に出す
+  ${T} undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
+  ${T} show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正 (VS Code)
+  ${T} list           履歴の一覧を表示
+  ${T} build [入力]   MSBuild でビルドし、失敗したらエラーと周辺のコードをクリップボードへ
+  ${T} protocol       AI への規約文を標準出力に出す (パックには内蔵の規約文が自動で入る。
+                        repomix など別の道具で使うとき用)
 
 Options:
   -h, --help            ヘルプを表示

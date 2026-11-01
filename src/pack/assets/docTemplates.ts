@@ -20,6 +20,8 @@
  * スナップショットを更新すること。
  */
 
+import { INIT_COMMAND, PACK_COMMAND, TOOL_NAME } from "../../brand.ts";
+
 export const DOC_TEMPLATES_VERSION = 4;
 
 export const DOC_KINDS = ["design", "spec", "handoff"] as const;
@@ -432,7 +434,7 @@ const HANDOFF_TEMPLATE = `# 引継ぎ書 — <画面名または機能名>
 
 ## 8. 次のチャットに添付が必要な資料
 
-- パック(slnmix の出力)は毎回添付する。それ以外に要るもの:
+- パック(${PACK_COMMAND} の出力)は毎回添付する。それ以外に要るもの:
 `;
 
 export const DOC_TEMPLATES: Readonly<Record<DocKind, string>> = {
@@ -441,12 +443,12 @@ export const DOC_TEMPLATES: Readonly<Record<DocKind, string>> = {
   handoff: HANDOFF_TEMPLATE,
 };
 
-/** slnmix init / --init-docs が docs/README.md として書く説明文 */
+/** petari init / petari pack --init-docs が docs/README.md として書く説明文 */
 export const DOCS_README = `# docs/ — AI チャットと共有するプロジェクト文書
 
-このフォルダは slnmix(\`slnmix init\` / \`--init-docs\`)が作成しました。slnmix はここにある文書を
+このフォルダは ${TOOL_NAME}(\`${INIT_COMMAND}\` / \`${PACK_COMMAND} --init-docs\`)が作成しました。\`${PACK_COMMAND}\` はここにある文書を
 パック(repomix-output.xml)の \`<docs>\` に含め、文書の状態から作業モードを自動で
-決めます。文書の作成・更新は AI が changes.md で出し、petari が保存します。
+決めます。文書の作成・更新は AI が changes.md で出し、\`${TOOL_NAME}\` が保存します。
 
 | 場所 | 文書 | 役割 | 更新のタイミング |
 |---|---|---|---|
@@ -458,10 +460,10 @@ export const DOCS_README = `# docs/ — AI チャットと共有するプロジ�
 ## 日常の流れ
 
 \`\`\`text
-npx slnmix          # パックと本文用テキスト(.prompt.md)を作る。モードは文書の状態から自動
+npx ${PACK_COMMAND}     # パックと本文用テキスト(.prompt.md)を作る。モードは文書の状態から自動
                     #   設計書なし / draft → design(設計書を質疑応答で仕上げる)
                     #   設計書 ready       → full(実装。引継ぎ書があれば続きから)
-npx petari          # AI の changes.md(コード・文書の両方)を適用する
+npx ${TOOL_NAME}          # AI の changes.md(コード・文書の両方)を適用する
 \`\`\`
 
 Copilot Chat には .xml を添付し、.prompt.md の中身を本文に貼ります。
@@ -469,11 +471,11 @@ AI は回答の末尾に「継続判定」を付け、バッチ完了時は HAND
 changes.md を出します。
 
 場面別の手順(新規開発・実装の続き・既存プロジェクトの乗せ替え・継続判定への
-対応・コマンド早見表)は slnmix の運用ガイドを参照:
-https://github.com/ishibashi0112/slnmix/blob/main/docs/WORKFLOW.md
+対応・コマンド早見表)は ${TOOL_NAME} の運用ガイドを参照:
+https://github.com/ishibashi0112/petari/blob/main/docs/WORKFLOW.md
 `;
 
-/** slnmix.config.json に --init-docs が書く docs 設定の既定値 */
+/** 設定ファイルに --init-docs が書く docs 設定の既定値 */
 export const DEFAULT_DOCS_CONFIG = {
   design: "docs/design",
   spec: "docs/spec",

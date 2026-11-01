@@ -36,6 +36,30 @@ suite("slnmixConfig: 設定なし", () => {
   });
 });
 
+suite("slnmixConfig: 新しい名前(petari.config.json)と旧名(slnmix.config.json)", () => {
+  test("petari.config.json を読む(出どころと診断の名前はそのファイル)", () => {
+    const result = loadSlnmixConfig(ROOT, fakeDeps({ "petari.config.json": JSON.stringify({ kind: "typescript" }) }));
+    assert.deepStrictEqual(result.config.sources, ["petari.config.json"]);
+    assert.ok(result.diagnostics.some((d) => d.message.startsWith("petari.config.json: kind は")));
+    assert.strictEqual(result.conflict, undefined);
+  });
+
+  test("旧名の診断は旧名で出す", () => {
+    const result = loadSlnmixConfig(ROOT, fakeDeps({ "slnmix.config.json": JSON.stringify({ kind: "typescript" }) }));
+    assert.ok(result.diagnostics.some((d) => d.message.startsWith("slnmix.config.json: kind は")));
+  });
+
+  test("両方あれば設定なしとして conflict を返す(呼び出し側が止める)", () => {
+    const result = loadSlnmixConfig(
+      ROOT,
+      fakeDeps({ "petari.config.json": '{ "kind": "generic" }', "slnmix.config.json": "{}" }),
+    );
+    assert.strictEqual(result.config.kind, "solution");
+    assert.deepStrictEqual(result.config.sources, []);
+    assert.ok(result.conflict !== undefined && result.conflict.includes("両方あります"));
+  });
+});
+
 suite("slnmixConfig: slnmix.config.json", () => {
   test("extraRoots を読み、include 省略時は kind ごとの既定を使う", () => {
     const result = loadSlnmixConfig(

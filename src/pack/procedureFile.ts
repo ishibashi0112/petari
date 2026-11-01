@@ -40,6 +40,7 @@
  */
 
 import * as path from "node:path";
+import { TOOL_NAME } from "../brand.ts";
 import {
   DEFAULT_PROCEDURE_LAYOUT,
   type ProcedureLayout,
@@ -141,7 +142,7 @@ export interface ProcedureOptions {
   tests?: boolean | undefined;
   /** テスト用 DB のテーブル定義があるか(手順文に「DB の確認」の節を入れる。dbChecks.ts) */
   db?: boolean | undefined;
-  /** 構成の種類(slnmix.config.json の kind。省略時 "solution") */
+  /** 構成の種類(設定ファイルの kind。省略時 "solution") */
   layout?: ProcedureLayout | undefined;
 }
 
@@ -359,7 +360,7 @@ export function buildPromptText(
   }
   const header = [
     "[添付ファイルと本文の関係]",
-    `添付した ${packFileName} は、現在のコードベースを 1 ファイルにまとめたパック(slnmix 出力)です。`,
+    `添付した ${packFileName} は、現在のコードベースを 1 ファイルにまとめたパック(${TOOL_NAME} 出力)です。`,
     "添付内の <file> の内容を現在のコードとして正に扱ってください。",
   ];
   let content = "";

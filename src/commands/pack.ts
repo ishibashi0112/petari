@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { INIT_COMMAND, PACK_COMMAND } from "../brand.ts";
+import { INIT_COMMAND, PACK_COMMAND, TOOL_NAME } from "../brand.ts";
 import { writeClipboardSync } from "../infra/clipboard.ts";
 import { err } from "../infra/term.ts";
 import { maskCredentials } from "../core/mask.ts";
@@ -26,7 +26,7 @@ import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "../p
 import { planHandoff } from "../pack/handoff.ts";
 import { initConfig } from "../pack/initConfig.ts";
 import { initDocs } from "../pack/initDocs.ts";
-import { resolveInstructionFile } from "../pack/instructionFile.ts";
+import { describeInstruction, resolveInstructionFile } from "../pack/instructionFile.ts";
 import {
   assembleOutput,
   buildPromptText,
@@ -37,7 +37,7 @@ import {
   type TaskResolution,
 } from "../pack/procedureFile.ts";
 import { buildRepomixOutput, type RepomixSource } from "../pack/services/repomixExporter.ts";
-import { CONFIG_FILE_NAME, loadSlnmixConfig } from "../pack/slnmixConfig.ts";
+import { CONFIG_FILE_NAME, configFileNameIn, LEGACY_CONFIG_FILE_NAME, loadSlnmixConfig } from "../pack/slnmixConfig.ts";
 import { parseSln } from "../pack/slnParser.ts";
 import { parseVbproj } from "../pack/vbprojParser.ts";
 import {
@@ -55,13 +55,15 @@ export const PACK_USAGE = `使い方:
 
   入力を省略するとカレントディレクトリ(ディレクトリ指定ならその直下)の
   *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
-  その場所の ${CONFIG_FILE_NAME} に "target": "dotnet/App.sln" があればそれを使います。
-  同じ設定が "kind": "generic" なら .sln / .vbproj を探さず、extraRoots に宣言した
-  ディレクトリだけでパックします(VB.NET 以外のプロジェクト。${INIT_COMMAND} で作成)。
+  その場所の設定ファイル(${CONFIG_FILE_NAME}。旧名の ${LEGACY_CONFIG_FILE_NAME} も読みます)に
+  "target": "dotnet/App.sln" があればそれを使います。同じ設定が "kind": "generic" なら
+  .sln / .vbproj を探さず、extraRoots に宣言したディレクトリだけでパックします
+  (VB.NET 以外のプロジェクト。${INIT_COMMAND} で作成)。
 
   ルート(<file path> の基準。設定ファイル・protocol.md・docs/・出力先もここ)は
-  --root > 入力のディレクトリから上に向かって最初に見つかる ${CONFIG_FILE_NAME} の
-  場所(.git のあるディレクトリより上には行かない)> 入力と同じ場所、の順です。
+  --root > 入力のディレクトリから上に向かって最初に見つかる設定ファイルの場所
+  (.git のあるディレクトリより上には行かない)> 上に向かって最初の .git の場所 >
+  入力と同じ場所、の順です(変更を当てる ${TOOL_NAME} と同じ決め方)。
 
 オプション:
   -o, --output <file>   出力先(既定: ルートの repomix-output.xml)
@@ -82,7 +84,8 @@ export const PACK_USAGE = `使い方:
                         <contract_summary> で代替)
       --instruction-file <path>
                         出力末尾に <instruction> として連結する規約文ファイルを明示指定
-                        (既定: ルートの protocol.md を自動検出)
+                        (既定: 内蔵の規約文。ルートに protocol.md を置くとそれを使う)
+      --no-instruction  規約文(<instruction>)を出さない
       --task <file|text>  依頼内容を <task> として同梱する。ファイルが存在すれば
                         読み込み、なければ文字列として扱う
       --mode <full|plan|implement|design>
@@ -184,6 +187,7 @@ export function packCommand(argv: string[]): number {
       plan: { type: "string" },
       "procedure-file": { type: "string" },
       "no-procedure": { type: "boolean", default: false },
+      "no-instruction": { type: "boolean", default: false },
       "print-procedure": { type: "boolean", default: false },
       "prompt-output": { type: "string" },
       "no-prompt": { type: "boolean", default: false },
@@ -325,18 +329,19 @@ export function packCommand(argv: string[]): number {
 
   // 設定ファイルはルートから読む(物理パス・protocol.md / procedure.md・.gitignore・docs/ も同じ基準)
   const configResult = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile });
-  printDiagnostics(CONFIG_FILE_NAME, configResult.diagnostics);
+  const configName = configFileNameIn(rootDir, isFilePath);
+  printDiagnostics(configName, configResult.diagnostics);
   const config = configResult.config;
   const layout = targetPath === undefined ? "generic" : "solution";
   if (layout === "generic" && config.extraRoots.length === 0) {
     err(
-      `出力対象のディレクトリがありません。${CONFIG_FILE_NAME} の extraRoots に少なくとも 1 つ path を書いてください(例: { "path": "src", "kind": "src" })。`,
+      `出力対象のディレクトリがありません。${configName} の extraRoots に少なくとも 1 つ path を書いてください(例: { "path": "src", "kind": "src" })。`,
     );
     return 1;
   }
   if (layout === "solution" && config.kind === "generic") {
     err(
-      `[warning] ${CONFIG_FILE_NAME} は kind: "generic" ですが、入力に .sln / .vbproj が指定されたため従来どおり論理構成で出力します`,
+      `[warning] ${configName} は kind: "generic" ですが、入力に .sln / .vbproj が指定されたため従来どおり論理構成で出力します`,
     );
   }
   if (config.sources.length > 0) {
@@ -370,6 +375,7 @@ export function packCommand(argv: string[]): number {
       uiSummary: !values["no-ui-summary"],
       rootDir: values["legacy-paths"] ? undefined : rootDir,
       extraRoots: config.extraRoots,
+      configFileName: configName,
       contractSchema: config.contractSchema,
       contractFile: config.contractFile,
       generatedDirs: config.generatedDirs,
@@ -435,10 +441,18 @@ export function packCommand(argv: string[]): number {
   const dbSchema = resolveDbSchema(rootDir, { readTextFile: readSourceTextFile });
   err(`DB の確認・動作検証: ${describeDbSchema(dbSchema)}`);
 
-  // 規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
-  const instruction = resolveInstructionFile(values["instruction-file"], rootDir, process.cwd(), {
-    readTextFile: readSourceTextFile,
-  });
+  // 規約文を出力末尾へ連結する(内蔵。ルートの protocol.md は置いたときだけ使う上書き)
+  if (values["no-instruction"] && values["instruction-file"] !== undefined) {
+    err("--no-instruction と --instruction-file は同時に使えません。");
+    return 1;
+  }
+  const instruction = resolveInstructionFile(
+    values["instruction-file"],
+    rootDir,
+    process.cwd(),
+    { readTextFile: readSourceTextFile },
+    values["no-instruction"],
+  );
   if (instruction.kind === "error") {
     err(instruction.message);
     return 1;
@@ -497,7 +511,7 @@ export function packCommand(argv: string[]): number {
   const promptText = buildPromptText(promptTail, path.basename(outputPath));
   if (values["print-prompt"]) {
     if (promptText === undefined) {
-      err("本文に貼る指示がありません(--no-procedure かつ --task なし、protocol.md なし)。");
+      err("本文に貼る指示がありません(--no-procedure かつ --task なし、--no-instruction)。");
       return 1;
     }
     process.stdout.write(promptText);
@@ -507,8 +521,10 @@ export function packCommand(argv: string[]): number {
   // 末尾に <task> / <plan> / <procedure> / <instruction>、先頭にリマインダの
   // サンドイッチ配置(チャットの要約処理で末尾が落ちても冒頭が末尾へ誘導する)
   const content = assembleOutput(output.content, promptTail);
-  if (instruction.kind === "none") {
-    err(`protocol.md が見つかりません(規約文なしで出力): ${instruction.searchedPath}`);
+  const instructionNote = describeInstruction(instruction);
+  err(instructionNote.line);
+  if (instructionNote.warning !== undefined) {
+    err(instructionNote.warning);
   }
   if (task.kind === "file") {
     err(`タスク: ${task.path}`);

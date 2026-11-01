@@ -16,7 +16,7 @@
 
 import * as path from "node:path";
 import { DEFAULT_DOCS_CONFIG, DOCS_README } from "./assets/docTemplates.ts";
-import { CONFIG_FILE_NAME } from "./slnmixConfig.ts";
+import { CONFIG_FILE_NAME, CONFIG_FILE_NAMES } from "./slnmixConfig.ts";
 
 export interface InitDocsDeps {
   exists(absolutePath: string): boolean;
@@ -44,8 +44,10 @@ export function initDocs(rootDir: string, deps: InitDocsDeps): InitDocsResult {
   const result: InitDocsResult = { created: [], kept: [], errors: [] };
   const abs = (relative: string): string => path.resolve(rootDir, ...relative.split("/"));
 
-  // 1. slnmix.config.json(先に。ここで失敗したらディレクトリを作らない)
-  const configPath = abs(CONFIG_FILE_NAME);
+  // 1. 設定ファイル(先に。ここで失敗したらディレクトリを作らない)。旧名(slnmix.config.json)が
+  // あればそちらに追記する(名前は変えない)
+  const configName = CONFIG_FILE_NAMES.find((name) => deps.exists(abs(name))) ?? CONFIG_FILE_NAME;
+  const configPath = abs(configName);
   const existing = deps.readTextFile(configPath);
   let parsed: Record<string, unknown> = {};
   if (existing !== undefined) {
@@ -54,25 +56,25 @@ export function initDocs(rootDir: string, deps: InitDocsDeps): InitDocsResult {
       value = JSON.parse(existing.replace(/^﻿/, ""));
     } catch (error) {
       result.errors.push(
-        `${CONFIG_FILE_NAME} を JSON として読めません(上書きしません): ${
+        `${configName} を JSON として読めません(上書きしません): ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
       return result;
     }
     if (!isRecord(value)) {
-      result.errors.push(`${CONFIG_FILE_NAME} のトップレベルはオブジェクトである必要があります(上書きしません)`);
+      result.errors.push(`${configName} のトップレベルはオブジェクトである必要があります(上書きしません)`);
       return result;
     }
     parsed = value;
   }
   if (parsed["docs"] !== undefined && parsed["docs"] !== false && parsed["docs"] !== null) {
-    result.kept.push(`${CONFIG_FILE_NAME} (docs 設定済み)`);
+    result.kept.push(`${configName} (docs 設定済み)`);
   } else {
     const next = { ...parsed, docs: { ...DEFAULT_DOCS_CONFIG } };
     deps.writeTextFile(configPath, `${JSON.stringify(next, null, 2)}\n`);
     result.created.push(
-      existing === undefined ? CONFIG_FILE_NAME : `${CONFIG_FILE_NAME} (docs 設定を追記)`,
+      existing === undefined ? configName : `${configName} (docs 設定を追記)`,
     );
   }
 

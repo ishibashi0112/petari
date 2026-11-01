@@ -5,7 +5,7 @@
 import { suite, test } from "vitest";
 import * as assert from "node:assert";
 import * as path from "node:path";
-import { isWithinDirectory, resolveRoot, type RootResolverDeps } from "../../src/pack/rootResolver.ts";
+import { findRoot, isWithinDirectory, resolveRoot, type RootResolverDeps } from "../../src/pack/rootResolver.ts";
 
 const CWD = path.resolve("/work/app");
 const TARGET = path.join(CWD, "dotnet", "App.sln");
@@ -22,26 +22,35 @@ function fakeDeps(files: string[], dirs: string[]): RootResolverDeps {
 }
 
 suite("rootResolver: 既定(設定ファイルなし)", () => {
-  test("入力のディレクトリがルート(従来どおり)", () => {
+  test("設定も .git も無ければ入力のディレクトリがルート", () => {
     const deps = fakeDeps([], [CWD, path.join(CWD, "dotnet")]);
     assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
       kind: "root",
       rootDir: path.join(CWD, "dotnet"),
-      reason: "target",
+      reason: "start",
     });
   });
 
-  test("入力のディレクトリに設定があればそこ(従来どおり)", () => {
+  test("上に .git があればそこがルート(適用のルートと揃える。設計書 §25.3-2)", () => {
+    const deps = fakeDeps([], [CWD, path.join(CWD, ".git"), path.join(CWD, "dotnet")]);
+    assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
+      kind: "root",
+      rootDir: CWD,
+      reason: "git",
+    });
+  });
+
+  test("入力のディレクトリに設定があればそこ", () => {
     const deps = fakeDeps([path.join(CWD, "dotnet", "slnmix.config.json"), path.join(CWD, "slnmix.config.json")], [CWD]);
     assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
       kind: "root",
       rootDir: path.join(CWD, "dotnet"),
-      reason: "target",
+      reason: "config",
     });
   });
 });
 
-suite("rootResolver: 上位の slnmix.config.json", () => {
+suite("rootResolver: 上位の設定ファイル", () => {
   test("上のディレクトリに設定があればそこがルート", () => {
     const deps = fakeDeps([path.join(CWD, "slnmix.config.json")], [CWD]);
     assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
@@ -51,12 +60,29 @@ suite("rootResolver: 上位の slnmix.config.json", () => {
     });
   });
 
-  test(".git のあるディレクトリより上には行かない", () => {
+  test(".git のあるディレクトリより上には行かない(.git の場所がルート)", () => {
     const deps = fakeDeps([path.resolve("/work/slnmix.config.json")], [CWD, path.join(CWD, ".git")]);
     assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
       kind: "root",
+      rootDir: CWD,
+      reason: "git",
+    });
+  });
+
+  test("新しい名前の設定ファイル(petari.config.json)も同じ", () => {
+    const deps = fakeDeps([path.join(CWD, "petari.config.json")], [CWD, path.resolve("/work/.git")]);
+    assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
+      kind: "root",
+      rootDir: CWD,
+      reason: "config",
+    });
+  });
+
+  test("サブフォルダの設定は .git より先に見つかる(パックも適用もそこがルート)", () => {
+    const deps = fakeDeps([path.join(CWD, "dotnet", "petari.config.json")], [CWD, path.join(CWD, ".git")]);
+    assert.deepStrictEqual(findRoot(path.join(CWD, "dotnet", "Forms"), deps), {
       rootDir: path.join(CWD, "dotnet"),
-      reason: "target",
+      reason: "config",
     });
   });
 

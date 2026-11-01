@@ -3,6 +3,7 @@
  * 手順: パース → 全件ドライラン検証 → (失敗があれば何も書かずレポート) →
  * before 保存 → 書き換え → after 保存 → サマリ表示。
  */
+import { INIT_COMMAND } from "../brand.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -129,7 +130,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   const root = findProjectRoot(process.cwd(), values.root);
   const config = loadConfig(root);
   if (!existsSync(join(root, ".petari"))) {
-    out("ヒント: 初回は `petari init` を実行すると protocol.md や設定の雛形が整います");
+    out(`ヒント: 初回は \`${INIT_COMMAND}\` を実行すると設定の雛形と .gitignore などが整います`);
   }
 
   // レポートを標準出力へ出し、クリップボードにもコピーする (§7)。

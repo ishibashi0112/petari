@@ -1,7 +1,7 @@
 /**
- * slnmix.config.json(任意)の読み込み。
+ * リポジトリにコミットする設定ファイル(petari.config.json。旧名 slnmix.config.json も読む。任意)の読み込み。
  *
- * ルート(.sln のあるディレクトリ)直下に置く。**なくても動く**。
+ * ルート直下に置く。**なくても動く**。
  * ハイブリッド構成(WinForms + WebView2 + React)で、.vbproj に乗らない
  * web 側・契約側のディレクトリを同じパックへ入れるための設定。
  *
@@ -17,12 +17,53 @@
  */
 
 import * as path from "node:path";
+import { TOOL_NAME } from "../brand.ts";
 import { DEFAULT_DOCS_CONFIG } from "./assets/docTemplates.ts";
 import { normalizeGlobPath } from "./globMatcher.ts";
 import type { ParseDiagnostic } from "./types.ts";
 
-export const CONFIG_FILE_NAME = "slnmix.config.json";
+/** リポジトリにコミットする設定ファイル(新しい名前。ツール名に合わせる) */
+export const CONFIG_FILE_NAME = `${TOOL_NAME}.config.json`;
+/** 旧 slnmix の設定ファイル。名前を変えなくても読む(両方あればエラー。設計書 §25.3-2) */
+export const LEGACY_CONFIG_FILE_NAME = "slnmix.config.json";
+/** 探す名前(両方あるときはどちらも使わずエラー) */
+export const CONFIG_FILE_NAMES: readonly string[] = [CONFIG_FILE_NAME, LEGACY_CONFIG_FILE_NAME];
 export const GEN_CONFIG_FILE_NAME = "webview2-bridge.gen.json";
+
+export type ConfigFileLookup =
+  | { kind: "none" }
+  | { kind: "found"; name: string; text: string }
+  | { kind: "conflict" };
+
+/** ディレクトリ直下の設定ファイルを読む(どちらの名前でも。両方あれば conflict) */
+export function readConfigFile(directory: string, deps: SlnmixConfigDeps): ConfigFileLookup {
+  const found: { name: string; text: string }[] = [];
+  for (const name of CONFIG_FILE_NAMES) {
+    const text = deps.readTextFile(path.join(directory, name));
+    if (text !== undefined) {
+      found.push({ name, text });
+    }
+  }
+  const [first] = found;
+  if (first === undefined) {
+    return { kind: "none" };
+  }
+  return found.length > 1 ? { kind: "conflict" } : { kind: "found", ...first };
+}
+
+/** ディレクトリ直下に設定ファイルがあるか(どちらの名前でも) */
+export function hasConfigFile(directory: string, isFile: (absolutePath: string) => boolean): boolean {
+  return CONFIG_FILE_NAMES.some((name) => isFile(path.join(directory, name)));
+}
+
+/** 設定ファイルの名前(ディレクトリにある方。無ければ新しい名前) */
+export function configFileNameIn(directory: string, isFile: (absolutePath: string) => boolean): string {
+  return CONFIG_FILE_NAMES.find((name) => isFile(path.join(directory, name))) ?? CONFIG_FILE_NAME;
+}
+
+export function describeConfigConflict(directory: string): string {
+  return `${directory} に ${CONFIG_FILE_NAME} と ${LEGACY_CONFIG_FILE_NAME} が両方あります。どちらを使うか決められないので、1 つにまとめてください(${LEGACY_CONFIG_FILE_NAME} はそのままの名前でも読めます)。`;
+}
 
 export interface ExtraRootConfig {
   /** ルート相対のディレクトリ(`/` 区切りに正規化済み) */
@@ -52,7 +93,7 @@ export interface DocsConfig {
  * プロジェクトの構成の種類。
  * - "solution": .sln / .vbproj の論理構成に基づく(既定。従来どおり)
  * - "generic": .sln / .vbproj を使わず、extraRoots に宣言されたディレクトリだけで
- *   パックする(VB.NET 以外のプロジェクト向け。v0.17.0〜)。引数なしの `npx slnmix`
+ *   パックする(VB.NET 以外のプロジェクト向け。v0.17.0〜)。引数なしの `petari pack`
  *   がこの設定を見て .sln の探索を省く。明示フラグにしたのは「.sln を探さなかった」
  *   理由をログで示すため(決定ログ 2026-10-10)
  */
@@ -67,7 +108,7 @@ export interface SlnmixConfig {
   /** 構成の種類(省略時 "solution") */
   kind: ConfigKind;
   /**
-   * 入力(.sln / .vbproj)のルート相対パス。引数なしの `npx slnmix` がこれを使う
+   * 入力(.sln / .vbproj)のルート相対パス。引数なしの `petari pack` がこれを使う
    * (web + dotnet を分けた構成で .sln がサブディレクトリにあるとき用)
    */
   target?: string | undefined;
@@ -80,7 +121,7 @@ export interface SlnmixConfig {
   contractFile?: string | undefined;
   /** 生成コードのディレクトリ(ルート相対)。既定で除外し要約で代替する */
   generatedDirs: string[];
-  /** 設定の出どころ(表示用)。例: ["slnmix.config.json", "webview2-bridge.gen.json"] */
+  /** 設定の出どころ(表示用)。例: ["petari.config.json", "webview2-bridge.gen.json"] */
   sources: string[];
 }
 
@@ -91,6 +132,8 @@ export interface SlnmixConfigDeps {
 export interface SlnmixConfigResult {
   config: SlnmixConfig;
   diagnostics: ParseDiagnostic[];
+  /** 設定ファイルが新旧の名前で両方あるとき(config は設定なしと同じ)。呼び出し側は止める */
+  conflict?: string | undefined;
 }
 
 /** kind ごとの include 既定 */
@@ -133,6 +176,7 @@ export function defaultIncludeFor(kind: string): string[] {
 
 function parseExtraRoots(
   value: unknown,
+  fileName: string,
   diagnostics: ParseDiagnostic[],
 ): ExtraRootConfig[] {
   if (value === undefined) {
@@ -141,7 +185,7 @@ function parseExtraRoots(
   if (!Array.isArray(value)) {
     diagnostics.push({
       severity: "warning",
-      message: `${CONFIG_FILE_NAME}: extraRoots は配列で指定してください(無視します)`,
+      message: `${fileName}: extraRoots は配列で指定してください(無視します)`,
     });
     return [];
   }
@@ -150,7 +194,7 @@ function parseExtraRoots(
     if (!isRecord(entry)) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: extraRoots[${index}] はオブジェクトで指定してください(無視します)`,
+        message: `${fileName}: extraRoots[${index}] はオブジェクトで指定してください(無視します)`,
       });
       return;
     }
@@ -158,7 +202,7 @@ function parseExtraRoots(
     if (rawPath === undefined || rawPath.trim() === "") {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: extraRoots[${index}] に path がありません(無視します)`,
+        message: `${fileName}: extraRoots[${index}] に path がありません(無視します)`,
       });
       return;
     }
@@ -166,7 +210,7 @@ function parseExtraRoots(
     if (rootPath === "" || rootPath.startsWith("../") || path.isAbsolute(rawPath)) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: extraRoots[${index}].path はルート配下の相対パスで指定してください: ${rawPath}(無視します)`,
+        message: `${fileName}: extraRoots[${index}].path はルート配下の相対パスで指定してください: ${rawPath}(無視します)`,
       });
       return;
     }
@@ -175,14 +219,14 @@ function parseExtraRoots(
     if (entry["include"] !== undefined && include === undefined) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: extraRoots[${index}].include は文字列の配列で指定してください(既定を使います)`,
+        message: `${fileName}: extraRoots[${index}].include は文字列の配列で指定してください(既定を使います)`,
       });
     }
     const exclude = asStringArray(entry["exclude"]);
     if (entry["exclude"] !== undefined && exclude === undefined) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: extraRoots[${index}].exclude は文字列の配列で指定してください(無視します)`,
+        message: `${fileName}: extraRoots[${index}].exclude は文字列の配列で指定してください(無視します)`,
       });
     }
     roots.push({
@@ -252,6 +296,7 @@ function readGenConfig(
  */
 function parseDocsConfig(
   value: unknown,
+  fileName: string,
   diagnostics: ParseDiagnostic[],
 ): DocsConfig | undefined {
   if (value === undefined || value === false || value === null) {
@@ -263,7 +308,7 @@ function parseDocsConfig(
   if (!isRecord(value)) {
     diagnostics.push({
       severity: "warning",
-      message: `${CONFIG_FILE_NAME}: docs は true またはオブジェクトで指定してください(無視します)`,
+      message: `${fileName}: docs は true またはオブジェクトで指定してください(無視します)`,
     });
     return undefined;
   }
@@ -276,7 +321,7 @@ function parseDocsConfig(
     if (text === undefined || text.trim() === "") {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: docs.${key} は文字列で指定してください(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
+        message: `${fileName}: docs.${key} は文字列で指定してください(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
       });
       return DEFAULT_DOCS_CONFIG[key];
     }
@@ -284,7 +329,7 @@ function parseDocsConfig(
     if (normalized === "" || normalized.startsWith("../") || path.isAbsolute(text)) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME}: docs.${key} はルート配下の相対パスで指定してください: ${text}(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
+        message: `${fileName}: docs.${key} はルート配下の相対パスで指定してください: ${text}(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
       });
       return DEFAULT_DOCS_CONFIG[key];
     }
@@ -294,7 +339,7 @@ function parseDocsConfig(
 }
 
 /** `kind`: "solution" / "generic"。それ以外は警告して既定の "solution" */
-function parseKind(value: unknown, diagnostics: ParseDiagnostic[]): ConfigKind {
+function parseKind(value: unknown, fileName: string, diagnostics: ParseDiagnostic[]): ConfigKind {
   if (value === undefined) {
     return "solution";
   }
@@ -304,7 +349,7 @@ function parseKind(value: unknown, diagnostics: ParseDiagnostic[]): ConfigKind {
   }
   diagnostics.push({
     severity: "warning",
-    message: `${CONFIG_FILE_NAME}: kind は ${CONFIG_KINDS.map((k) => `"${k}"`).join(" / ")} のいずれかを指定してください: ${String(value)}(既定の "solution" を使います)`,
+    message: `${fileName}: kind は ${CONFIG_KINDS.map((k) => `"${k}"`).join(" / ")} のいずれかを指定してください: ${String(value)}(既定の "solution" を使います)`,
   });
   return "solution";
 }
@@ -312,7 +357,7 @@ function parseKind(value: unknown, diagnostics: ParseDiagnostic[]): ConfigKind {
 const TARGET_EXTENSION = /\.(sln|vbproj)$/i;
 
 /** `target`: ルート配下の相対パスで .sln / .vbproj を指す。それ以外は警告して無視 */
-function parseTarget(value: unknown, diagnostics: ParseDiagnostic[]): string | undefined {
+function parseTarget(value: unknown, fileName: string, diagnostics: ParseDiagnostic[]): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -320,7 +365,7 @@ function parseTarget(value: unknown, diagnostics: ParseDiagnostic[]): string | u
   if (text === undefined || text.trim() === "") {
     diagnostics.push({
       severity: "warning",
-      message: `${CONFIG_FILE_NAME}: target は文字列で指定してください(無視します)`,
+      message: `${fileName}: target は文字列で指定してください(無視します)`,
     });
     return undefined;
   }
@@ -328,14 +373,14 @@ function parseTarget(value: unknown, diagnostics: ParseDiagnostic[]): string | u
   if (normalized === "" || normalized.startsWith("../") || path.isAbsolute(text)) {
     diagnostics.push({
       severity: "warning",
-      message: `${CONFIG_FILE_NAME}: target はルート配下の相対パスで指定してください: ${text}(無視します)`,
+      message: `${fileName}: target はルート配下の相対パスで指定してください: ${text}(無視します)`,
     });
     return undefined;
   }
   if (!TARGET_EXTENSION.test(normalized)) {
     diagnostics.push({
       severity: "warning",
-      message: `${CONFIG_FILE_NAME}: target は .sln / .vbproj を指定してください: ${text}(無視します)`,
+      message: `${fileName}: target は .sln / .vbproj を指定してください: ${text}(無視します)`,
     });
     return undefined;
   }
@@ -343,7 +388,7 @@ function parseTarget(value: unknown, diagnostics: ParseDiagnostic[]): string | u
 }
 
 /**
- * @param rootDir ルート(slnmix.config.json のあるディレクトリ。無ければ .sln / .vbproj のあるディレクトリ)の絶対パス
+ * @param rootDir ルート(設定ファイルのあるディレクトリ。rootResolver.ts で決めたもの)の絶対パス
  */
 export function loadSlnmixConfig(
   rootDir: string,
@@ -361,7 +406,12 @@ export function loadSlnmixConfig(
   let explicitContractFile: string | undefined;
   let explicitGenerated: string[] | undefined;
 
-  const text = deps.readTextFile(path.join(rootDir, CONFIG_FILE_NAME));
+  const found = readConfigFile(rootDir, deps);
+  if (found.kind === "conflict") {
+    return { config, diagnostics, conflict: describeConfigConflict(rootDir) };
+  }
+  const text = found.kind === "found" ? found.text : undefined;
+  const fileName = found.kind === "found" ? found.name : CONFIG_FILE_NAME;
   if (text !== undefined) {
     let parsed: unknown;
     try {
@@ -369,7 +419,7 @@ export function loadSlnmixConfig(
     } catch (error) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME} を JSON として読めません(設定なしとして続行): ${
+        message: `${fileName} を JSON として読めません(設定なしとして続行): ${
           error instanceof Error ? error.message : String(error)
         }`,
       });
@@ -378,32 +428,32 @@ export function loadSlnmixConfig(
     if (parsed !== undefined && !isRecord(parsed)) {
       diagnostics.push({
         severity: "warning",
-        message: `${CONFIG_FILE_NAME} のトップレベルはオブジェクトで指定してください(設定なしとして続行)`,
+        message: `${fileName} のトップレベルはオブジェクトで指定してください(設定なしとして続行)`,
       });
       parsed = undefined;
     }
     if (isRecord(parsed)) {
-      config.sources.push(CONFIG_FILE_NAME);
-      config.kind = parseKind(parsed["kind"], diagnostics);
-      const target = parseTarget(parsed["target"], diagnostics);
+      config.sources.push(fileName);
+      config.kind = parseKind(parsed["kind"], fileName, diagnostics);
+      const target = parseTarget(parsed["target"], fileName, diagnostics);
       if (target !== undefined) {
         if (config.kind === "generic") {
           diagnostics.push({
             severity: "warning",
-            message: `${CONFIG_FILE_NAME}: kind が "generic" のため target は使いません(無視します): ${target}`,
+            message: `${fileName}: kind が "generic" のため target は使いません(無視します): ${target}`,
           });
         } else {
           config.target = target;
         }
       }
-      config.extraRoots = parseExtraRoots(parsed["extraRoots"], diagnostics);
+      config.extraRoots = parseExtraRoots(parsed["extraRoots"], fileName, diagnostics);
       if (config.kind === "generic" && config.extraRoots.length === 0) {
         diagnostics.push({
           severity: "warning",
-          message: `${CONFIG_FILE_NAME}: kind が "generic" のときは extraRoots に少なくとも 1 つのディレクトリが必要です(出力対象がありません)`,
+          message: `${fileName}: kind が "generic" のときは extraRoots に少なくとも 1 つのディレクトリが必要です(出力対象がありません)`,
         });
       }
-      config.docs = parseDocsConfig(parsed["docs"], diagnostics);
+      config.docs = parseDocsConfig(parsed["docs"], fileName, diagnostics);
       const schema = asString(parsed["contractSchema"]);
       if (schema !== undefined && schema.trim() !== "") {
         explicitSchema = normalizeRootRelative(schema);
@@ -416,7 +466,7 @@ export function loadSlnmixConfig(
       if (parsed["generatedDirs"] !== undefined && generated === undefined) {
         diagnostics.push({
           severity: "warning",
-          message: `${CONFIG_FILE_NAME}: generatedDirs は文字列の配列で指定してください(無視します)`,
+          message: `${fileName}: generatedDirs は文字列の配列で指定してください(無視します)`,
         });
       }
       if (generated !== undefined) {

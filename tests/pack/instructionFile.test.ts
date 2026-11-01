@@ -5,9 +5,13 @@
 import { suite, test } from "vitest";
 import * as assert from "node:assert";
 import * as path from "node:path";
+import { PAST_PROTOCOL_SHA256, PROTOCOL_TEXT, PROTOCOL_VERSION } from "../../src/assets/protocol.ts";
 import {
   appendInstruction,
+  builtinProtocolVersionOf,
+  describeInstruction,
   INSTRUCTION_NOTICE,
+  protocolVersionOf,
   type InstructionFileDeps,
   prependInstructionNotice,
   resolveInstructionFile,
@@ -24,26 +28,94 @@ function fakeDeps(files: Record<string, string>): InstructionFileDeps {
   return { readTextFile: (p) => map.get(p) };
 }
 
-suite("instructionFile: protocol.md の自動検出", () => {
-  test("入力と同じディレクトリの protocol.md を読む(cwd ではない)", () => {
+suite("instructionFile: 内蔵の規約文と protocol.md の上書き(設計書 §25.3-1)", () => {
+  const protocolPath = path.join(PROJECT_DIR, "protocol.md");
+
+  test("protocol.md がなければ内蔵の規約文", () => {
+    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({}));
+    assert.deepStrictEqual(result, { kind: "found", content: PROTOCOL_TEXT, source: { kind: "builtin" } });
+    assert.strictEqual(describeInstruction(result).line, `規約文: 内蔵 v${PROTOCOL_VERSION}`);
+  });
+
+  test("手を加えていない protocol.md(最新版)は使わず、削除してよいと案内する", () => {
+    const deps = fakeDeps({ "/work/project/protocol.md": PROTOCOL_TEXT });
+    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, deps);
+    assert.deepStrictEqual(result, {
+      kind: "found",
+      content: PROTOCOL_TEXT,
+      source: { kind: "builtin", unmodifiedFile: { path: protocolPath, version: PROTOCOL_VERSION } },
+    });
+    const note = describeInstruction(result);
+    assert.ok(note.line.includes("内蔵と同じ内容"));
+    assert.ok(note.line.includes("削除してかまいません"));
+    assert.strictEqual(note.warning, undefined);
+  });
+
+  test("改行コード(CRLF)・BOM・末尾の改行の違いは手を加えたことにしない", () => {
+    const crlf = "\uFEFF" + PROTOCOL_TEXT.replace(/\n/g, "\r\n") + "\r\n\r\n";
+    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({ "/work/project/protocol.md": crlf }));
+    assert.ok(result.kind === "found" && result.source.kind === "builtin");
+    assert.strictEqual(result.kind === "found" ? result.content : "", PROTOCOL_TEXT);
+  });
+
+  test("手を加えていない古い版(v3)は内蔵の最新版に置き換える", () => {
+    // v3 そのものは手元にないので、ハッシュの照合を確かめる
+    for (const entry of PAST_PROTOCOL_SHA256) {
+      assert.ok(entry.version < PROTOCOL_VERSION);
+    }
+    assert.deepStrictEqual(
+      PAST_PROTOCOL_SHA256.map((entry) => entry.version),
+      Array.from({ length: PROTOCOL_VERSION - 1 }, (_, i) => i + 1),
+      "版を上げたら、上げる前の版のハッシュを PAST_PROTOCOL_SHA256 に足す",
+    );
+  });
+
+  test("一字でも違えば上書きとして使う(1 行目の版が最新なら警告なし)", () => {
+    const edited = PROTOCOL_TEXT.replace("## 全体構造", "## 全体構造(社内向けに追記)");
+    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({ "/work/project/protocol.md": edited }));
+    assert.deepStrictEqual(result, {
+      kind: "found",
+      content: edited,
+      source: { kind: "file", path: protocolPath, explicit: false, baseVersion: PROTOCOL_VERSION },
+    });
+    const note = describeInstruction(result);
+    assert.ok(note.line.includes("上書き"));
+    assert.strictEqual(note.warning, undefined);
+  });
+
+  test("古い版をもとにした上書きは警告する", () => {
+    const old = "<!-- petari protocol v2 -->\n# 社内の規約\n";
+    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({ "/work/project/protocol.md": old }));
+    assert.ok(result.kind === "found" && result.source.kind === "file" && result.source.baseVersion === 2);
+    const warning = describeInstruction(result).warning ?? "";
+    assert.ok(warning.includes("v2"));
+    assert.ok(warning.includes(`v${PROTOCOL_VERSION}`));
+  });
+
+  test("版の行が無い protocol.md は上書きとして使う(警告なし)", () => {
     const deps = fakeDeps({
-      "/work/project/protocol.md": "# petari protocol\n規約本文\n",
+      "/work/project/protocol.md": "# 独自の規約\n規約本文\n",
       "/work/app/protocol.md": "こちらは読まれない\n",
     });
     const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, deps);
     assert.deepStrictEqual(result, {
       kind: "found",
-      path: path.join(path.resolve("/work/project"), "protocol.md"),
-      content: "# petari protocol\n規約本文\n",
+      content: "# 独自の規約\n規約本文\n",
+      source: { kind: "file", path: protocolPath, explicit: false, baseVersion: undefined },
     });
+    assert.strictEqual(describeInstruction(result).warning, undefined);
   });
 
-  test("protocol.md がなければ none(エラーにしない)。探索先を返す", () => {
-    const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({}));
-    assert.deepStrictEqual(result, {
-      kind: "none",
-      searchedPath: path.join(path.resolve("/work/project"), "protocol.md"),
-    });
+  test("--no-instruction は none", () => {
+    const deps = fakeDeps({ "/work/project/protocol.md": "# 独自の規約\n" });
+    assert.deepStrictEqual(resolveInstructionFile(undefined, PROJECT_DIR, CWD, deps, true), { kind: "none" });
+  });
+
+  test("protocolVersionOf / builtinProtocolVersionOf", () => {
+    assert.strictEqual(protocolVersionOf("<!-- petari protocol v7 -->\n本文"), 7);
+    assert.strictEqual(protocolVersionOf("本文"), undefined);
+    assert.strictEqual(builtinProtocolVersionOf(PROTOCOL_TEXT), PROTOCOL_VERSION);
+    assert.strictEqual(builtinProtocolVersionOf(PROTOCOL_TEXT + "追記"), undefined);
   });
 });
 
@@ -56,8 +128,8 @@ suite("instructionFile: --instruction-file 指定", () => {
     const result = resolveInstructionFile("docs/rules.md", PROJECT_DIR, CWD, deps);
     assert.deepStrictEqual(result, {
       kind: "found",
-      path: path.join(CWD, "docs", "rules.md"),
       content: "明示指定の規約\n",
+      source: { kind: "file", path: path.join(CWD, "docs", "rules.md"), explicit: true, baseVersion: undefined },
     });
   });
 
@@ -94,8 +166,8 @@ suite("instructionFile: appendInstruction", () => {
 suite("instructionFile: prependInstructionNotice", () => {
   const found = {
     kind: "found",
-    path: path.join(path.resolve("/work/project"), "protocol.md"),
     content: "規約文\n",
+    source: { kind: "builtin" },
   } as const;
 
   test("規約文ありなら本文の最先頭にリマインダ + 空行を付ける", () => {
@@ -111,10 +183,7 @@ suite("instructionFile: prependInstructionNotice", () => {
   });
 
   test("規約文なし(none)なら先頭に何も付かない", () => {
-    const none = {
-      kind: "none",
-      searchedPath: path.join(path.resolve("/work/project"), "protocol.md"),
-    } as const;
+    const none = { kind: "none" } as const;
     assert.strictEqual(prependInstructionNotice("本文\n", none), "本文\n");
   });
 

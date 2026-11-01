@@ -14,7 +14,8 @@
  */
 
 import * as path from "node:path";
-import { CONFIG_FILE_NAME } from "./slnmixConfig.ts";
+import { INIT_COMMAND } from "../brand.ts";
+import { CONFIG_FILE_NAME, configFileNameIn } from "./slnmixConfig.ts";
 
 export interface TargetResolverDeps {
   isDirectory(absolutePath: string): boolean;
@@ -82,7 +83,7 @@ function detectInDirectory(
   if (deps.isGenericConfig?.(directory) === true) {
     return { kind: "generic", rootDir: directory };
   }
-  // slnmix.config.json の target(web + dotnet を分けた構成で、.sln がサブディレクトリに
+  // 設定ファイルの target(web + dotnet を分けた構成で、.sln がサブディレクトリに
   // あるとき用)。設定があればそれを使い、無ければ従来どおり直下を探す
   const configured = deps.readConfigTarget?.(directory);
   if (configured !== undefined) {
@@ -90,13 +91,13 @@ function detectInDirectory(
     if (!deps.isFile(absolutePath)) {
       return {
         kind: "error",
-        message: `${CONFIG_FILE_NAME} の target が見つかりません: ${absolutePath}`,
+        message: `${configFileNameIn(directory, deps.isFile)} の target が見つかりません: ${absolutePath}`,
       };
     }
     if (!TARGET_EXTENSION.test(absolutePath)) {
       return {
         kind: "error",
-        message: `${CONFIG_FILE_NAME} の target は .sln / .vbproj を指定してください: ${configured}`,
+        message: `${configFileNameIn(directory, deps.isFile)} の target は .sln / .vbproj を指定してください: ${configured}`,
       };
     }
     return { kind: "file", path: absolutePath, autoDetected: true, source: "config" };
@@ -134,7 +135,7 @@ function detectInDirectory(
     kind: "error",
     message: [
       `${displayName} に .sln / .vbproj が見つかりません: ${directory}`,
-      `初めてなら npx slnmix init でセットアップしてください(VB.NET 以外のプロジェクトは ${CONFIG_FILE_NAME} の kind: "generic" で動きます)。`,
+      `初めてなら npx ${INIT_COMMAND} でセットアップしてください(VB.NET 以外のプロジェクトは ${CONFIG_FILE_NAME} の kind: "generic" で動きます)。`,
     ].join("\n"),
   };
 }

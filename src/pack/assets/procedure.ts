@@ -57,9 +57,11 @@
  * (docs/db/schema.md の有無)。無いときの本文は v8 と同じ(版数の行だけ)。
  */
 
+import { PACK_COMMAND, TOOL_NAME } from "../../brand.ts";
+
 export const PROCEDURE_VERSION = 9;
 
-/** 構成の種類(slnmix.config.json の kind と同じ。手順文の表現の切り替えに使う) */
+/** 構成の種類(設定ファイルの kind と同じ。手順文の表現の切り替えに使う) */
 export const PROCEDURE_LAYOUTS = ["solution", "generic"] as const;
 export type ProcedureLayout = (typeof PROCEDURE_LAYOUTS)[number];
 export const DEFAULT_PROCEDURE_LAYOUT: ProcedureLayout = "solution";
@@ -77,7 +79,7 @@ export function isProcedureMode(value: string): value is ProcedureMode {
  * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} / {{DB_SECTIONS}} を含む
  * テンプレート(procedure.md でも同じプレースホルダが使える)
  */
-export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}{{LAYOUT:NOTE}}) -->
+export const PROCEDURE_TEMPLATE = `<!-- ${TOOL_NAME} procedure v${PROCEDURE_VERSION} (mode: {{MODE}}{{LAYOUT:NOTE}}) -->
 # 作業手順
 
 これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。
@@ -183,7 +185,7 @@ const DESIGN_QUESTIONS_BODY = `ユーザーに確認したいことを番号付�
 
 const DESIGN_CONTINUE_BODY = `次のどちらかを 1 行で書いてください。
 - 「継続判定: 継続」— 必須の確認事項が残っている。回答を待って設計書を更新します
-- 「継続判定: 設計確定」— 必須の確認事項が 0 件。実装は新しいチャットで始めるようユーザーに伝え、次に打つべき操作(slnmix の実行 → 新しいチャットにパックを添付し本文用テキストを貼る)を案内してください
+- 「継続判定: 設計確定」— 必須の確認事項が 0 件。実装は新しいチャットで始めるようユーザーに伝え、次に打つべき操作(${PACK_COMMAND} の実行 → 新しいチャットにパックを添付し本文用テキストを貼る)を案内してください
 設計確定のときは、仕様書がまだなければ同じ changes.md に初版(<template kind="spec"> の §1〜§4 まで。docs/spec/<設計書と同じファイル名>.md を create)を含め、改修で既に現状の仕様書があれば変更後の振る舞いを「未」の実装状況で追記してください。
 このモードでは引継ぎ書を書きません(設計書自体が次のチャットへの引継ぎになります)。`;
 
@@ -270,7 +272,7 @@ export const DOCS_SECTIONS = `
 - すべての回答の末尾に「継続判定: 継続」「継続判定: 引継ぎ推奨(理由)」「継続判定: 引継ぎ」のいずれかを 1 行付けてください(design モードでは「設計確定」が「引継ぎ」に相当し、引継ぎ書は書きません)
 - 「引継ぎ」(同意を待たない): 実装バッチが 1 つ完了し、ユーザーがビルドと動作確認の成功を伝えたら、その回答で次を行ってください
   1. 仕様書を実装した振る舞いに合わせて更新し、引継ぎ書(<docs> の kind="handoff" の path。なければ docs/HANDOFF.md)を rewrite(初回は create)する changes.md を出す(コードの変更は含めない)
-  2. 「適用ツールで適用 → slnmix を再実行 → 新しいチャットにパックを添付し本文用テキストを貼る」と案内する
+  2. 「適用ツールで適用 → ${PACK_COMMAND} を再実行 → 新しいチャットにパックを添付し本文用テキストを貼る」と案内する
   ユーザーが「このチャットで続ける」と言ったときだけ続行してください
 - 「引継ぎ推奨」(同意を待つ): 次のいずれかに該当したら理由を添えて勧め、ユーザーの返事を待ってください
   1. このチャットで changes.md を 3 回以上出した(ビルドエラー・実行エラーの修正を含む。同じ問題に 2 回以上失敗しているなら、失敗した試行が残るこのチャットより、修正途中のコードを含む最新のパックで始め直す方が早い)

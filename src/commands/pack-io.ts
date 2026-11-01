@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { decodeSourceBuffer } from "../pack/services/repomixExporter.ts";
 import { GitignoreEvaluator } from "../pack/services/gitignoreService.ts";
-import { CONFIG_FILE_NAME, loadSlnmixConfig } from "../pack/slnmixConfig.ts";
+import { configFileNameIn, loadSlnmixConfig, readConfigFile, describeConfigConflict } from "../pack/slnmixConfig.ts";
 import { describeRootReason, resolveRoot } from "../pack/rootResolver.ts";
 import { resolveTarget } from "../pack/targetResolver.ts";
 import type { ParseDiagnostic } from "../pack/types.ts";
@@ -135,9 +135,17 @@ export type TargetAndRoot =
 
 /**
  * 入力(.sln / .vbproj / ディレクトリ / 省略)とルートを決める(パックとビルドで同じ)。
- * solution: --root > 上位の設定ファイルの場所 > 入力と同じ場所(rootResolver.ts)
+ * solution: --root > 上位の設定ファイルの場所 > 上位の .git の場所 > 入力と同じ場所(rootResolver.ts)
  * generic: 設定ファイルの場所に固定(--root は使えない。基準が設定と食い違うため)
  */
+/** ルートに設定ファイルが新旧の名前で両方あれば止める(どちらを使うか決められない) */
+function withConfigCheck(result: TargetAndRoot & { kind: "ok" }): TargetAndRoot {
+  if (readConfigFile(result.rootDir, { readTextFile: readSourceTextFile }).kind === "conflict") {
+    return { kind: "error", message: describeConfigConflict(result.rootDir), usageHint: false };
+  }
+  return result;
+}
+
 export function resolveTargetAndRoot(
   inputArg: string | undefined,
   rootArg: string | undefined,
@@ -158,10 +166,11 @@ export function resolveTargetAndRoot(
     return { kind: "error", message: resolution.message, usageHint: true };
   }
   if (resolution.kind === "generic") {
+    const configName = configFileNameIn(resolution.rootDir, isFilePath);
     if (rootArg !== undefined && path.resolve(process.cwd(), rootArg) !== resolution.rootDir) {
       return {
         kind: "error",
-        message: `kind: "generic" の構成では --root は使えません(ルートは ${CONFIG_FILE_NAME} の場所: ${resolution.rootDir})。`,
+        message: `kind: "generic" の構成では --root は使えません(ルートは ${configName} の場所: ${resolution.rootDir})。`,
         usageHint: false,
       };
     }
@@ -172,13 +181,13 @@ export function resolveTargetAndRoot(
         usageHint: false,
       };
     }
-    err(`対象: generic 構成(${CONFIG_FILE_NAME} の kind。.sln / .vbproj は使いません)`);
+    err(`対象: generic 構成(${configName} の kind。.sln / .vbproj は使いません)`);
     err(`ルート: ${resolution.rootDir}`);
-    return { kind: "ok", targetPath: undefined, rootDir: resolution.rootDir };
+    return withConfigCheck({ kind: "ok", targetPath: undefined, rootDir: resolution.rootDir });
   }
   const targetPath = resolution.path;
   if (resolution.autoDetected) {
-    err(`対象: ${targetPath}(${resolution.source === "config" ? `${CONFIG_FILE_NAME} の target` : "自動検出"})`);
+    err(`対象: ${targetPath}(${resolution.source === "config" ? "設定ファイルの target" : "自動検出"})`);
   }
   const root = resolveRoot(targetPath, rootArg, process.cwd(), {
     isDirectory: isDirectoryPath,
@@ -188,8 +197,8 @@ export function resolveTargetAndRoot(
   if (root.kind === "error") {
     return { kind: "error", message: root.message, usageHint: false };
   }
-  if (root.reason !== "target") {
+  if (root.rootDir !== path.dirname(targetPath)) {
     err(`ルート: ${root.rootDir}(${describeRootReason(root.reason)})`);
   }
-  return { kind: "ok", targetPath, rootDir: root.rootDir };
+  return withConfigCheck({ kind: "ok", targetPath, rootDir: root.rootDir });
 }

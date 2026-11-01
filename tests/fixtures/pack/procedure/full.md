@@ -1,4 +1,4 @@
-<!-- slnmix procedure v9 (mode: full) -->
+<!-- petari procedure v9 (mode: full) -->
 # 作業手順
 
 これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。

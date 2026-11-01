@@ -28,6 +28,17 @@ export const DEFAULT_CONFIG: PetariConfig = {
   vbproj: { register: true },
 };
 
+/** petari init が書く .petari/config.json の雛形 (PC ごとの設定。git の管理外) */
+export const CONFIG_TEMPLATE = `{
+  "downloadsDir": null,
+  "newFile": { "encoding": "auto" },
+  "historyLimit": null,
+  "vscodeCommand": "code",
+  "clipReportOnFailure": true,
+  "vbproj": { "register": true }
+}
+`;
+
 /** グローバル設定のパス (§10)。Windows は %APPDATA%、他は XDG (~/.config) */
 export function globalConfigPath(): string {
   if (process.platform === "win32" && process.env["APPDATA"] !== undefined) {
