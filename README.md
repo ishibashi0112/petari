@@ -128,7 +128,7 @@ repomix の出力) が実ファイルとずれている**可能性が高いで�
 | `tazuna build [入力]` | MSBuild でビルドし、失敗ならエラーと周辺のコードをクリップボードへ (旧 slnmix build) |
 | `tazuna [path]` | changes.md を適用。省略時は Downloads とプロジェクト直下から自動検出 (直近 30 分)。`--clip` でクリップボードから |
 | `tazuna watch` | Downloads とプロジェクト直下を見張り、起動後に届いた changes*.md を確認なしで適用し続ける (Ctrl+C で終了)。`--dry-run` で検証とプレビューだけ |
-| `tazuna undo [ID]` | 履歴を巻き戻す (手修正がある場合は警告) |
+| `tazuna undo [ID]` | 履歴を巻き戻す (手修正がある場合は警告)。ID 省略で続けて実行すると 1 つずつ前の適用へ戻る |
 | `tazuna show [ID]` | 履歴の差分を表示 (VS Code、なければブラウザの閲覧レポートにフォールバック)。`--edit` で現在のファイルを差分を見ながら手修正 (VS Code のみ)、`--mine` で適用後の手修正分、`--changes` で変更概要、`--browser` でブラウザ強制 |
 | `tazuna list` | 履歴の一覧と合計サイズ |
 | `tazuna protocol` | 内蔵の規約文を標準出力に出す (`protocol.md` で上書きするときの元・他のツールでパックを作るとき用) |

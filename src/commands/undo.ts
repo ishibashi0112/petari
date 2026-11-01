@@ -30,6 +30,19 @@ interface UndoAction {
   modified: boolean;
 }
 
+/**
+ * 巻き戻していない直近の履歴 ID。manifest を読めない履歴はそこで止めて返す
+ * (後の readManifest で「見つかりません」と知らせる。読めない履歴を飛ばして古いものを戻さない)
+ */
+function latestNotUndone(root: string, ids: readonly string[]): string | undefined {
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const id = ids[i] as string;
+    const manifest = readManifest(root, id);
+    if (manifest === null || manifest.undoneAt === undefined) return id;
+  }
+  return undefined;
+}
+
 export async function undoCommand(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -47,10 +60,20 @@ export async function undoCommand(argv: string[]): Promise<number> {
     err(`${TOOL_NAME}: 履歴がありません`);
     return 1;
   }
-  const id = positionals[0] ?? (ids[ids.length - 1] as string);
+  // ID 省略時は巻き戻していない直近の履歴 (続けて実行すると 1 つずつ前へ戻る)。
+  // 巻き戻し済みの履歴をもう一度戻すと、その後の手修正を before で上書きしてしまうため対象にしない
+  const id = positionals[0] ?? latestNotUndone(root, ids);
+  if (id === undefined) {
+    err(`${TOOL_NAME}: 巻き戻せる履歴がありません (すべて巻き戻し済みです。${TOOL_NAME} list で確認してください)`);
+    return 1;
+  }
   const manifest = readManifest(root, id);
   if (manifest === null) {
     err(`${TOOL_NAME}: 履歴 ${id} が見つかりません (${TOOL_NAME} list で確認してください)`);
+    return 1;
+  }
+  if (manifest.undoneAt !== undefined) {
+    err(`${TOOL_NAME}: 履歴 ${id} は巻き戻し済みです (${TOOL_NAME} list で確認してください)`);
     return 1;
   }
 

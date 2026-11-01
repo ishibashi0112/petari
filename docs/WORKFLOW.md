@@ -292,7 +292,7 @@ npx tazuna build                   MSBuild でビルドし、失敗ならエラ�
 
 npx tazuna watch                   起動したままにすると、届いた changes.md を確認なしで適用し続ける
 npx tazuna                         Downloads の changes.md を適用
-npx tazuna undo                    直前の適用を巻き戻す
+npx tazuna undo                    直前の適用を巻き戻す (続けて実行すると 1 つずつ前へ)
 npx tazuna show                    直前の適用の差分を表示
 npx tazuna protocol                内蔵の規約文を表示する (protocol.md で上書きしたいときの元に)
 
