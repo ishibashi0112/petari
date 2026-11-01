@@ -35,6 +35,36 @@ const BOM = Uint8Array.of(0xef, 0xbb, 0xbf);
 const LF = Uint8Array.of(0x0a);
 const CRLF = Uint8Array.of(0x0d, 0x0a);
 
+/**
+ * TextDecoder("shift_jis") が 1 バイトの制御文字を入れ替えて返す分 (Node が使う ICU の対応表は IBM 系で、
+ * 0x1A を U+001C、0x1C を U+007F、0x7F を U+001A にする) を元のコードポイントへ戻す表。
+ * Shift_JIS (CP932・WHATWG) の 0x00-0x7F は ASCII と同じ。0x7F は 2 バイト文字の 2 バイト目にならないため、
+ * デコード結果のこれらの文字は必ず 1 バイトの制御文字から来ている。ICU の版で変わり得るので実際に試して作る
+ */
+const SJIS_CONTROL_FIX: ReadonlyMap<string, string> = (() => {
+  const bytes = [0x1a, 0x1c, 0x7f];
+  const map = new Map<string, string>();
+  let decoded: string[];
+  try {
+    decoded = [...new TextDecoder("shift_jis").decode(Uint8Array.from(bytes))];
+  } catch {
+    // full-ICU のない Node (shift_jis を使うときにエラーになる)
+    return map;
+  }
+  if (decoded.length !== bytes.length) return map;
+  bytes.forEach((byte, i) => {
+    const ch = decoded[i];
+    if (ch !== undefined && ch !== String.fromCharCode(byte)) map.set(ch, String.fromCharCode(byte));
+  });
+  return map;
+})();
+
+/** Shift_JIS のバイト列を文字列にする (fatal なら不正なバイト列で例外)。1 バイトの制御文字は ASCII のまま */
+export function decodeShiftJis(bytes: Uint8Array, fatal = false): string {
+  const text = new TextDecoder("shift_jis", { fatal }).decode(bytes);
+  return SJIS_CONTROL_FIX.size === 0 ? text : text.replace(/[\x1a\x1c\x7f]/g, (c) => SJIS_CONTROL_FIX.get(c) ?? c);
+}
+
 function tryDecode(bytes: Uint8Array, label: "utf-8" | "shift_jis"): boolean {
   try {
     new TextDecoder(label, { fatal: true }).decode(bytes);
@@ -81,7 +111,10 @@ export function decodeFile(bytes: Uint8Array): FileDocument {
 
   // 行分割はバイトレベルで行う。UTF-8 の継続バイトも Shift_JIS の 2 バイト目
   // (0x40-0xFC) も 0x0A/0x0D と衝突しないため安全。
-  const decoder = new TextDecoder(encoding === "utf8" ? "utf-8" : "shift_jis", { fatal: true });
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  const decoder = {
+    decode: (raw: Uint8Array): string => (encoding === "utf8" ? utf8.decode(raw) : decodeShiftJis(raw, true)),
+  };
   const lines: DocLine[] = [];
   let lineStart = 0;
   let crlfCount = 0;

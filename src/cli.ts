@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { err as errLine } from "./infra/term.ts";
 
-const SUBCOMMANDS = ["undo", "show", "list", "protocol", "init", "watch"] as const;
+const SUBCOMMANDS = ["pack", "build", "undo", "show", "list", "protocol", "init", "watch"] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number] | "apply";
 
 function version(): string {
@@ -12,18 +12,20 @@ function version(): string {
   return (JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string }).version;
 }
 
-const HELP = `petari — paste AI chat patches onto your codebase
+const HELP = `petari — AI チャットでの開発を、コードベースを渡す → 返答を当てる → ビルドする の流れで支える
 
 Usage:
+  petari init           プロジェクト初回セットアップ (リポジトリ直下で一回だけ)
+  petari pack [入力]    コードベースを 1 ファイルにまとめ、チャットに貼るものをクリップボードへ
+                        (petari pack --help でオプション一覧)
   petari [path]         changes.md を適用 (省略時: Downloads から自動検出)
   petari watch          Downloads を見張り、届いた changes.md を確認なしで適用
                         (Ctrl+C で終了)
   petari undo [ID]      履歴を巻き戻す (ID 省略時: 直近)
   petari show [ID]      履歴の差分を表示 (VS Code / ブラウザ)。--edit で手修正 (VS Code)
   petari list           履歴の一覧を表示
+  petari build [入力]   MSBuild でビルドし、失敗したらエラーと周辺のコードをクリップボードへ
   petari protocol       AI への規約文を標準出力に出す
-  petari init           プロジェクト初回セットアップ (--yes で全提案に同意、
-                        --no-repomix で repomix 連携を省く)
 
 Options:
   -h, --help            ヘルプを表示
@@ -33,11 +35,13 @@ Options:
 export async function main(argv: string[]): Promise<number> {
   // pnpm run は "--" をそのまま渡してくる (npm と異なり消費しない) ため先頭の区切りを除く
   if (argv[0] === "--") argv = argv.slice(1);
-  if (argv.includes("-h") || argv.includes("--help")) {
+  // pack はそれぞれのオプション一覧を出す
+  const ownHelp = argv[0] === "pack";
+  if (!ownHelp && (argv.includes("-h") || argv.includes("--help"))) {
     process.stdout.write(HELP);
     return 0;
   }
-  if (argv.includes("-v") || argv.includes("--version")) {
+  if (!ownHelp && (argv.includes("-v") || argv.includes("--version"))) {
     process.stdout.write(version() + "\n");
     return 0;
   }
@@ -50,6 +54,14 @@ export async function main(argv: string[]): Promise<number> {
   const rest = sub === "apply" ? argv : argv.slice(1);
 
   switch (sub) {
+    case "pack": {
+      const { packCommand } = await import("./commands/pack.ts");
+      return packCommand(rest);
+    }
+    case "build": {
+      const { buildCommand } = await import("./commands/build.ts");
+      return buildCommand(rest);
+    }
     case "apply": {
       const { applyCommand } = await import("./commands/apply.ts");
       return applyCommand(rest);

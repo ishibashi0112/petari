@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import {
   EncodingError,
   decodeFile,
+  decodeShiftJis,
   encodeDocument,
   findUnencodable,
   makeDocument,
@@ -211,5 +212,15 @@ describe("sjisEncode の整合性", () => {
   it("ASCII と ¥ の扱い", () => {
     expect([...sjisEncode("A\\").bytes]).toEqual([0x41, 0x5c]);
     expect([...sjisEncode("¥").bytes]).toEqual([0x5c]);
+  });
+});
+
+describe("decodeShiftJis: 1 バイトの制御文字", () => {
+  it("0x1A / 0x1C / 0x7F は同じコードポイントの制御文字のまま (ICU の入れ替えを戻す)", () => {
+    assert.strictEqual(decodeShiftJis(Uint8Array.from([0x41, 0x1a, 0x1c, 0x7f, 0x42])), "A\u001a\u001c\u007fB");
+  });
+  it("Shift_JIS のファイルの行も同じ (decodeFile)", () => {
+    const doc = decodeFile(Uint8Array.from([0x82, 0xa0, 0x1a, 0x0a]));
+    assert.strictEqual(doc.lines[0]?.text, "あ\u001a");
   });
 });

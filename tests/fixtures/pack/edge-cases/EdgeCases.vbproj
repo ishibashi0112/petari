@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(CustomTargetsPath)\Company.targets" Condition="Exists('$(CustomTargetsPath)\Company.targets')" />
+  <Choose>
+    <When Condition="'$(Configuration)' == 'Debug'">
+      <ItemGroup>
+        <Compile Include="ChooseOnly.vb" />
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup>
+        <Compile Include="ChooseOtherwise.vb" />
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
+  <ItemGroup>
+    <Compile Include="$(SharedSourceRoot)\Common\Helper.vb">
+      <Link>Common\Helper.vb</Link>
+    </Compile>
+    <Compile Include="Common\**\*.vb" />
+    <Compile Include="Missing.vb" />
+    <Compile Include="D:\Shared\External.vb" />
+    <Compile Include="ItemCond.vb" Condition="'$(BuildFlavor)' == 'Special'" />
+    <Compile>
+      <SubType>Form</SubType>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+    <Compile Include="DebugOnly.vb" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lib\Lib.vbproj" />
+    <Reference Include="System" />
+    <COMReference Include="MSComctlLib" />
+  </ItemGroup>
+</Project>
