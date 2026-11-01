@@ -1,13 +1,21 @@
 {
   "name": "petari",
-  "version": "0.14.0",
-  "description": "petari — paste AI chat patches onto your codebase",
+  "version": "0.15.0",
+  "description": "petari — pack your codebase for AI chat, then apply its patches safely (zero dependencies)",
   "keywords": [
     "cli",
     "ai",
+    "chat",
+    "copilot",
     "patch",
     "diff",
-    "apply"
+    "apply",
+    "repomix",
+    "pack",
+    "vb.net",
+    "visual-studio",
+    "sln",
+    "vbproj"
   ],
   "license": "MIT",
   "author": "Yuki Sakakibara",

@@ -61,8 +61,8 @@ export const PACK_USAGE = `使い方:
   *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
   その場所の設定ファイル(${CONFIG_FILE_NAME}。旧名の ${LEGACY_CONFIG_FILE_NAME} も読みます)に
   "target": "dotnet/App.sln" があればそれを使います。同じ設定が "kind": "generic" なら
-  .sln / .vbproj を探さず、extraRoots に宣言したディレクトリだけでパックします
-  (VB.NET 以外のプロジェクト。${INIT_COMMAND} で作成)。
+  .sln / .vbproj を探さず、git が管理しているファイル(extraRoots を書けば、宣言した
+  ディレクトリだけ)でパックします(VB.NET 以外のプロジェクト。${INIT_COMMAND} で作成)。
 
   ルート(<file path> の基準。設定ファイル・protocol.md・docs/・出力先もここ)は
   --root > 入力のディレクトリから上に向かって最初に見つかる設定ファイルの場所
@@ -357,7 +357,18 @@ export function packCommand(argv: string[]): number {
       );
       return 1;
     }
-    gitFiles = listed.files;
+    // パック自身の出力(前回の分)は入れない(.gitignore に書いていなくても。本家 repomix と同じ)
+    const defaultOutput = path.join(rootDir, "repomix-output.xml");
+    const outputFile = path.resolve(values.output ?? defaultOutput);
+    const ownOutputs = new Set(
+      [
+        defaultOutput,
+        defaultPromptPath(defaultOutput),
+        outputFile,
+        values["prompt-output"] === undefined ? defaultPromptPath(outputFile) : path.resolve(values["prompt-output"]),
+      ].map((p) => path.relative(rootDir, p).split(path.sep).join("/").toLowerCase()),
+    );
+    gitFiles = listed.files.filter((file) => !ownOutputs.has(file.toLowerCase()));
   }
   if (layout === "solution" && config.kind === "generic") {
     err(

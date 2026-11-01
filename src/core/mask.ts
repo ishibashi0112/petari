@@ -1,14 +1,15 @@
 /**
  * 認証情報の伏せ字 (§7 失敗レポート / 伏せ字の行の照合)。
  *
- * slnmix がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
- * (SEARCH / REPLACE / CONTENT) にも [MASKED] が入る。petari は次の 3 点でこれを扱う:
+ * petari pack (旧 slnmix) がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
+ * (SEARCH / REPLACE / CONTENT) にも [MASKED] が入る。適用では次の 3 点でこれを扱う:
  * - 失敗レポートの「実ファイルの該当箇所」を伏せる (AI に貼るレポートから実際の値が漏れない)
  * - SEARCH の [MASKED] を「伏せた後の実ファイル」と照合する (伏せ字の行も変更できる)
  * - 書き込む行の [MASKED] を元の値に戻す。戻せなければ書かずに止める
  *
- * maskCredentials / maskLinesForDisplay / maskedValuesForDisplay は slnmix の src/services/credentialMasker.ts の写し
- * (slnmix 0.22.2 時点)。判定を変えるときは両方を揃える (slnmix と petari の統合で 1 つに戻す。設計書 §25)。
+ * 伏せる処理 (maskCredentials) はパック・petari build のエラーの文面・適用の失敗レポートで共通の 1 本
+ * (0.15.0 の統合で slnmix の credentialMasker.ts の写しから 1 つに戻した。設計書 §25)。旧 slnmix のパック
+ * (言語ごとの伏せ方の前の版) から写した SEARCH も照合できるよう、照合用の表示は旧版の伏せ方の分も作る。
  * I/O を持たない純粋ロジック。
  */
 
@@ -1696,10 +1697,10 @@ function maskLanguageSource(content: string, strict: boolean, language: SourceLa
 }
 
 // ---------------------------------------------------------------------------
-// 伏せた表示 (行の位置を保つ)。slnmix のビルドエラーの抜粋と同じ処理
+// 伏せた表示 (行の位置を保つ)。petari build のエラーの抜粋と失敗レポートの抜粋で使う
 // ---------------------------------------------------------------------------
 
-/** slnmix が置き換える伏せ字 */
+/** パックで置き換える伏せ字 */
 export const MASK_TOKEN = MASK;
 
 export function hasMaskToken(line: string): boolean {
@@ -1721,7 +1722,7 @@ interface MaskSpan {
 }
 
 /**
- * slnmix が使い得る伏せ方。.vb は VB として伏せるのが通常だが、generic 構成の追加ディレクトリでは
+ * パックが使い得る伏せ方。.vb は VB として伏せるのが通常だが、generic 構成の追加ディレクトリでは
  * 汎用テキストとして伏せる。strict は --no-strict-mask で切られる
  */
 function maskModes(path: string, stricts: boolean[]): MaskMode[] {
@@ -1792,7 +1793,7 @@ export interface MaskedLine {
    */
   values: string[] | null;
   /**
-   * 複数行にまたがる値 (秘密鍵の本文・複数行の属性値) の一部を伏せた行。slnmix のパックでは
+   * 複数行にまたがる値 (秘密鍵の本文・複数行の属性値) の一部を伏せた行。パックでは
    * これらの行は 1 行にまとめて表示されるため、AI が写した SEARCH とは本来一致しない
    */
   wrapped: boolean;
@@ -1858,7 +1859,7 @@ export interface MaskLinesOptions {
   /** 高エントロピー文字列も伏せるか (省略時は true) */
   strict?: boolean;
   /**
-   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (slnmix build) に指定する。
+   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (petari build) に指定する。
    * 省略時は拡張子から、パックが取り得る伏せ方をすべて使う (.vb は VB / 汎用テキストの両方)
    */
   vbSource?: boolean;
@@ -1884,7 +1885,7 @@ function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | nul
 
 /**
  * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
- * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
+ * パックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
 export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
@@ -1919,7 +1920,7 @@ export function maskedValuesForDisplay(lines: string[], options: MaskLinesOption
 // ---------------------------------------------------------------------------
 
 /**
- * 照合と伏せ字の復元に使う伏せた表示。slnmix のパックが取り得る伏せ方ごとと、失敗レポート・
+ * 照合と伏せ字の復元に使う伏せた表示。パックが取り得る伏せ方ごとと、失敗レポート・
  * ビルドエラーの抜粋 (maskLinesForDisplay) と同じ合わせ方のもの (抜粋から写した SEARCH 用) を作る。
  * 同じ表示になるものは 1 つにまとめ、対応づけられない伏せ方は含めない
  */

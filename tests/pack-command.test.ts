@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +144,18 @@ describe("petari pack: generic 構成で extraRoots が無ければ git が管�
     expect(result.stdout).toContain('<doc path="docs/design/x.md"');
     expect(result.stdout).toContain("- docs/design/x.md: <docs> に入れたため <file> には入れない");
     expect(result.stdout).toContain('<file path="docs/notes.md">');
+  });
+
+  it.skipIf(!hasGit)("前回のパック (.gitignore に書いていない repomix-output.*) を入れない", () => {
+    const dir = gitRepo();
+    const first = run(["--no-clip"], dir);
+    expect(first.code).toBe(0);
+    expect(existsSync(join(dir, "repomix-output.xml"))).toBe(true);
+    const second = run(["--stdout", "--no-clip"], dir);
+    expect(second.code).toBe(0);
+    expect(second.stdout).not.toContain('<file path="repomix-output.xml"');
+    expect(second.stdout).not.toContain('<file path="repomix-output.prompt.md"');
+    expect(second.stdout).toContain('<file path="app/main.py">');
   });
 
   it("git のリポジトリでなければ、extraRoots を書くよう案内して止める", () => {

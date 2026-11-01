@@ -1,7 +1,18 @@
 # petari — 開発ガイド
 
-チャットベース AI の返答 (changes.md) をローカルのコードベースへ安全に適用する CLI。
-仕様の正本は [requirements.md](requirements.md)。本ファイルは実装時に決定した方針・規約を記録する。
+チャットベース AI で開発するための CLI。コードベースを 1 ファイルにまとめて渡し (`petari pack`。旧 slnmix)、
+AI の返答 (changes.md) をローカルへ安全に適用し (`petari`)、MSBuild のエラーを渡す (`petari build`。旧 slnmix build)。
+適用の仕様の正本は [requirements.md](requirements.md)。パックと統合の設計正本は
+[docs/HANDOFF-slnmix-petari-2026-09.md](docs/HANDOFF-slnmix-petari-2026-09.md) (決めたことは同書 §17 決定ログに追記)。
+本ファイルは実装時に決定した方針・規約を記録する。
+
+- 利用者向けの運用手順 (場面別のコマンドと流れ) は `docs/WORKFLOW.md`。運用に関わる挙動 (モード自動選択・
+  継続判定・ひな型・init) を変えたら同書も更新する
+- パックの機能説明は `docs/PACK.md` (旧 slnmix の README)
+- 導入審査向けの説明 (通信・依存・外部コマンド・残るファイル) は `docs/SECURITY-REVIEW.md`。依存・起動する外部
+  コマンド・通信・書き込むファイル・パックに入るもの・伏せ方を変えたら同書の表と対象バージョンを更新する
+- ツール名は `src/brand.ts` の定数 1 か所 (改名を検討中。設計書 §25.8-1)。案内・出力の文面はこの定数から作る。
+  利用者のリポジトリに書かれている名前 (設計書の状態行 `<!-- slnmix design: ... -->`・`slnmix.config.json`) は変えない
 
 ## コマンド
 
@@ -9,6 +20,7 @@
 - `pnpm test` — vitest run
 - `pnpm dev -- <args>` — CLI を直接実行 (Node 24 のネイティブ TS 実行)
 - `pnpm build` — dist/ へ tsc ビルド
+- `node src/cli.ts pack tests/fixtures/pack/solution/Sample.sln --stdout --no-clip` — パックの動作確認
 
 各実装ステップの完了条件: typecheck と test が全パスすること。
 
@@ -37,7 +49,11 @@
 - `src/core/` — **純粋ロジックのみ。ファイル I/O 禁止** (文字列/Buffer in → 結果 out)。parser / matcher / encoding / report / diff / diff-html / vbproj / new-file-style / watch。テスト最厚領域 (§6, §8)
 - `src/infra/` — I/O 層。history / config / root / downloads / clipboard / git / browser / vbproj (最寄り .vbproj 探索) / new-file-style (手本収集)
 - `src/commands/` — コマンド層。薄く保ち、core と infra の結線のみ (apply の .vbproj 登録結線は vbproj-register.ts に分離)
-- `src/assets/protocol.md` — 規約文の同梱原本 (single source)
+- `src/assets/protocol.ts` — 規約文の同梱原本 (single source)
+- `src/pack/` — パックとビルド (旧 slnmix の src をそのままの構成で移したもの。下記「パック」)。
+  core の I/O 禁止の決まりは `src/core/` にだけ効かせ、`src/pack/` は slnmix の deps 注入の書き方を続ける。
+  実際のファイルシステムをつなぐのは `src/commands/pack-io.ts`
+- `src/brand.ts` — ツール名とコマンド名の定数
 
 ### エンコーディング保全 (§8) の実装方式
 
@@ -52,6 +68,68 @@
   (新規追加した日本語が UTF-8 で書かれる)。半角カナのみの Shift_JIS が UTF-8 として
   有効なバイト列になる稀ケースも UTF-8 優先
 - `src/core/sjis-table.ts` は自動生成 (`pnpm gen:sjis`)。手編集禁止
+
+### パック (petari pack / build / init。旧 slnmix、2026-11-01 統合、v0.15.0)
+
+slnmix 0.22.2 の `src/` を `src/pack/`、テストを `tests/pack/`、test-fixtures を `tests/fixtures/pack/` へ移した
+(ESM・vitest・厳しい型設定。ロジックは変えない)。統合の段の完了条件は「ツール名の行を除いて slnmix 0.22.2 と
+出力が同じ」(設計書 §25.10)。統合後に入れた言語汎用化 (git の一覧・言語ごとの伏せ方) は下記。
+
+- 実行時依存ゼロのまま置き換えたもの: iconv-lite → `TextDecoder` (`core/encoding.ts` の `decodeShiftJis`。ICU が
+  入れ替える 0x1A / 0x1C / 0x7F は元の制御文字に戻す。適用の decodeFile も同じ)、ignore →
+  `pack/services/gitignoreMatcher.ts` (git の規則の自前実装)、fast-xml-parser → `pack/xmlReader.ts`
+  (vbprojParser が受け取る形は同じ: 属性は `@_` 接頭辞、名前空間の接頭辞を外す、値は文字列、前後の空白を落とす)
+- 静的 XML 解析のみ。MSBuild 式・Condition・ワイルドカードは評価せず「未解決」として明記する。推測で補完しない。
+  例外は SDK スタイル .vbproj の既定 Compile グロブ (`**/*.vb`) の展開で、展開したことを診断と出力ヘッダーに明記
+  (`globMatcher.ts` は `**` / `*` / `?` / `{a,b}` のみ解釈)
+- ディレクトリ走査はしない。例外は設定の `extraRoots` で明示したディレクトリと、generic 構成で extraRoots が無い
+  ときの git の一覧 (`git ls-files --cached --others --exclude-standard`。リポジトリが宣言したもの。設計書 §25.7)。
+  `petari init` の「1 段下のフォルダの .sln」探しは初回セットアップだけの例外で、見つけたものは設定の `target` に書く
+- 壊れた入力でもクラッシュせず、取れた分だけ出す。`<file path>` はルート相対の物理パス・`/` 区切りが既定
+  (`--legacy-paths` で旧形式)。Windows パス前提だが相対パス解決は実行環境の区切りへ変換
+- ルート (`pack/rootResolver.ts` の `findRoot`。適用の `infra/root.ts` も同じもの) = `--root` > 入力 (適用は
+  カレント) から上に向かって最初の設定ファイル (`petari.config.json` / `slnmix.config.json`。`.git` より上には
+  行かない) > 最初の `.git` > 起点。物理パス・設定ファイル・protocol.md / procedure.md・.gitignore・docs/・
+  出力先の基準はすべてここ。パックの `<file path>` と changes.md のパスの基準が必ず一致する
+- 設定ファイル (`pack/slnmixConfig.ts`): `petari.config.json`。旧名の `slnmix.config.json` も読み、同じ場所に
+  両方あればエラー (`readConfigFile` の conflict)。新しく書くもの (init / --init-config / --init-docs) は、旧名が
+  あれば旧名に書く (名前を勝手に変えない)。PC ごとの設定は `.petari/config.json` のまま
+- 規約文 (`pack/instructionFile.ts`): 内蔵 (`assets/protocol.ts`) を `<instruction>` に入れる。ルートの
+  `protocol.md` は置いたときだけ使う上書き。旧 init が書いたまま手を加えていないもの (BOM・改行コード・末尾の改行を
+  そろえた SHA-256 が今の版か PAST_PROTOCOL_SHA256 と一致) は使わず、削除してよいと案内する。古い版に手を加えた
+  上書きは警告。`--instruction-file` / `--no-instruction`
+- generic 構成で extraRoots が無いとき (`commands/pack.ts` → `pack-io.ts` の `listGitFiles` →
+  `services/extraRootsCollector.ts` の `collectGitFiles`): 既定の除外 (extraRoots と同じ)・バイナリ (拡張子と NUL)・
+  ロックファイル・256KB 超・.gitignore / .repomixignore (追跡中でも)・`<docs>` / `<db_schema>` に入るものを除き、
+  理由を `<skipped_files>` に残す。パック自身の出力 (既定名・`-o` / `--prompt-output` の先) は黙って除く。
+  git のリポジトリでなければ extraRoots を書くよう案内して止める。`petari init` / `--init-config` は git の
+  リポジトリでは `{ "kind": "generic" }` だけを書く
+- 言語ごとの伏せ方 (`core/source-lexer.ts` + `core/mask.ts` の `maskLanguageSource`): .ts / .js / .java / .cs /
+  .go / .py などは、汎用テキストとして伏せた範囲のうちリテラル (文字列・コメント・数値) の中の部分だけを伏せ、
+  コードの部分 (`process.env.API_KEY` など) は戻す。読み違えの恐れのある行 (1 行で閉じるはずの文字列が閉じない)
+  は行全体をリテラルとみなし、範囲を対応づけられなければ汎用テキストの結果のまま (安全側)。部分が伏せ字で区切られた
+  ときは、両側を引用符で囲まれているか、単独で汎用テキストとして伏せられる部分だけを伏せたままにする。
+  パックでは .vb 以外の言語の分かるファイルに使う (generic 構成の .vb は汎用テキスト)。失敗レポート・build の
+  抜粋 (maskLinesForDisplay) は汎用テキストの範囲も合わせた上位集合、照合用の表示 (maskedViews) は両方の伏せ方の分を作る
+  (旧 slnmix のパックから写した SEARCH も照合できるように)。tests/mask-language.test.ts にランダムに組んだソースで
+  「汎用テキストとして伏せる値は言語ごとの伏せ方でも伏せる」ことの確認がある。字句解析を変えたらこれを通すこと
+- モジュール (`src/pack/`。それぞれ旧 slnmix の CLAUDE.md の説明がそのまま当てはまる。設計書の該当節も参照):
+  `targetResolver.ts` (入力の自動検出。kind: "generic" なら探さない。§19) /
+  `initProject.ts` (`petari init`。構成の判定 > docs/ > .gitignore (生成物と `.petari/`) > `.petari/config.json` >
+  規約文の案内。対話なし・冪等。§20・§25) / `handoff.ts` (Copilot Chat への受け渡し。`PASTE_LIMIT_CHARS` 以内なら
+  パック全体、超えるなら本文用テキストをクリップボードへ。§21) / `buildErrors.ts` + `msbuildRunner.ts`
+  (`petari build`。エラーの抜粋・本文・ログの末尾をパックと同じ規則で伏せる。MSBuild の場所は --msbuild > vswhere >
+  MSBuild 14.0 / 12.0 > .NET Framework 4。起動自体は自動テストなし。§22) / `dbChecks.ts` (`docs/db/schema.md` が
+  あるときだけ `<db_schema>` と手順文の `{{DB_SECTIONS}}`。§23・§24) / `initConfig.ts` (`--init-config`) /
+  `designerFileFilter.ts` / `procedureFile.ts` + `assets/procedure.ts` (手順文。内蔵文を変えたら `PROCEDURE_VERSION`
+  を上げ `tests/fixtures/pack/procedure/` のスナップショットを更新する。v7 の layout、v6 の `{{TEST_SECTIONS}}`
+  (`autoTests.ts`) は無いときの本文を前の版と同一に保つ) / `docs.ts` + `initDocs.ts` + `assets/docTemplates.ts`
+  (docs/ 連携。設計書 1 行目の状態行 `<!-- slnmix design: status=... -->` だけを読む。§18) /
+  `services/designerSummary.ts` (UI サマリー。実データで取りこぼしが見つかったらパターンを拡充する。完全な VB 構文解析は
+  しない) / `services/contractSummary.ts` (`<contract_summary>`) / `services/repomixExporter.ts` (出力の組み立て)
+- M365 Copilot Chat の実測 (2026-09-12、設計書 §15.1): 添付ファイル内の指示は「埋め込み指示」として無視され、
+  添付の読み取りでは空行・行末空白が落ちる。貼付は約 120K 文字が上限。よって手順文・規約文は本文用テキスト
+  (`<出力名>.prompt.md`) で渡す前提 (パック内の埋め込みは貼付運用向けに残す)
 
 ### TypeScript 規約
 
@@ -118,7 +196,7 @@
   切り分け材料)。抜粋の前後コンテキストは 2 行 → 4 行へ拡大。
   発生源の調査結果: slnmix はファイル内容を verbatim 埋め込みで空行を落とさない
   (修正不要。デコード decodeSourceBuffer・資格情報マスキングにも行操作なしを確認済み)。
-  本家 repomix は output.removeEmptyLines: true 設定で空行が落ちるため init で検知するが、
+  本家 repomix は output.removeEmptyLines: true 設定で空行が落ちるため init で検知していた (v0.15.0 の init は repomix の設定を扱わないため廃止。空行の差は blank-insensitive で吸収される) が、
   当該プロジェクトにはこの設定が無かった (2026-08-25 利用者確認)。よって真因は
   チャットサービス側 (M365 Copilot) の添付・長文処理での空行喪失が最有力 —
   「規約文が要約チャンク化で落ちる」既知問題 (2026-08-10) と同じ経路。発生源での防止は
@@ -194,9 +272,8 @@ slnmix のマスク機能の確認 (2026-10-31) で、AI の SEARCH に `[MASKED
 失敗レポートの近傍抜粋 (AI に貼る前提で自動コピー) に**実際の値がそのまま出る**こと、
 rewrite / REPLACE が `[MASKED]` をそのまま書いて実際の値を消すことを再現した (ユーザー承認の上で修正)。
 
-- core/mask.ts の maskCredentials は slnmix の src/services/credentialMasker.ts の写し
-  (タブ → 2 スペースと noUncheckedIndexedAccess 対応のみ)。判定を変えるときは両方を揃え、
-  tests/mask-credentials.test.ts も slnmix のテストの写しとして保つ。統合 (slnmix 設計書 §25) で 1 つに戻す
+- core/mask.ts の maskCredentials は、v0.14.0 では slnmix の credentialMasker.ts の写しだった。v0.15.0 の統合で
+  1 本に戻し、パック・build・適用で同じものを使う (旧 slnmix のテストは tests/pack/credentialMasker.test.ts)
 - 伏せた表示は**行の数と位置を保つ**。行ごとに伏せる・全体の行数だけ揃える方式は、複数行にまたがる値
   (行継続の代入・複数行の属性値) の漏れと、秘密鍵の BEGIN / END 行の書き換え・行のずれを起こした
   (2026-10-31 の別視点レビューで再現)。そこで maskCredentials を**ファイル全体**にかけ、結果を [MASKED] で
@@ -395,7 +472,10 @@ rewrite / REPLACE が `[MASKED]` をそのまま書いて実際の値を消す�
   **ただし v0.13.0 の tarball には削除したソースの古いビルド (dist/infra/diff-server.js 等 3 件) が
   残っている** (下記。どこからも import されないため動作には影響なし) /
   v0.13.1: 2026-10-29 build が dist/ を消してから tsc するよう修正した再公開 /
-  v0.14.0: 2026-10-31 伏せ字 [MASKED] の扱い — 失敗レポートの抜粋を伏せる + 伏せ字の行の照合と元の値への復元)。リポジトリ: https://github.com/ishibashi0112/petari
+  v0.14.0: 2026-10-31 伏せ字 [MASKED] の扱い — 失敗レポートの抜粋を伏せる + 伏せ字の行の照合と元の値への復元 /
+  v0.15.0: 2026-11-01 slnmix の統合 (pack / build / init の一本化・規約文の内蔵・設定ファイル名とルートの統一) +
+  言語汎用化 (git の一覧・言語ごとの伏せ方)。**未公開** (公開は利用者。公開後に `npm pack petari@0.15.0` で
+  `dist/pack/` の有無とファイル数を確かめ、slnmix 0.23.0 (互換パッケージ) を公開する))。リポジトリ: https://github.com/ishibashi0112/petari
   リリース手順: version を上げて `pnpm publish` (`prepublishOnly` が typecheck → test → build を実行。認証はユーザー)
 - **publish 事故と再発防止 (2026-09-14)**: v0.9.0 は `package.json` の version だけ 0.9.0 で、
   同梱 dist/ が v0.8.0 のビルド (PROTOCOL_VERSION=3、vbproj / new-file-style 系のファイルが欠落)
@@ -428,10 +508,11 @@ rewrite / REPLACE が `[MASKED]` をそのまま書いて実際の値を消す�
 - クリップボード実装 (pbcopy/pbpaste, PowerShell) とブラウザ起動 (infra/browser.ts) は
   自動テストなし (実機確認のみ)。Windows 実機での Get-Clipboard / reg query /
   Known Folder / Start-Process の動作確認が未了
-- slnmix 連携は slnmix v0.7.0 (2026-08-08) で対応済み: 入力と同じディレクトリの
-  protocol.md を `<instruction>` タグで囲んで出力末尾に自動連結する。このため
+- 規約文はパックの末尾に `<instruction>` タグで囲んで連結する (旧 slnmix v0.7.0〜。v0.15.0 から内蔵の
+  規約文を直接使う)。このため
   **規約文に `<instruction>` という文字列を含めない** (protocol.ts の docstring にも明記)。
-  規約文の変更時は PROTOCOL_VERSION を上げ、利用者には `petari init` 再実行で追従してもらう
+  規約文の変更時は PROTOCOL_VERSION を上げ、上げる前の版のハッシュを PAST_PROTOCOL_SHA256 に足す
+  (v0.15.0 から利用者の作業は要らない。旧 init が書いた protocol.md を見分けるため)
 - 埋め込み規約文だけでは AI チャットに無視されることがある (実運用で確認、2026-08-10)。
   チャットサービスが長文貼り付けを要約・検索で処理すると末尾の規約文がモデルに
   届かないため、埋め込みで確実に認識させる方法はない。対策としてチャット本文に

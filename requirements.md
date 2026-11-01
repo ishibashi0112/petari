@@ -228,42 +228,34 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 ### 4.5 `petari protocol`
 
 - 規約文(AI への指示テキスト)を標準出力に出す。
-- slnmix / repomix 連携の single source。規約文はツール内に同梱し、バージョン管理する。
+- 規約文はツール内に同梱し、バージョン管理する(single source)。`petari pack` はこれを直接パックに入れる
+  (v0.15.0。ルートの `protocol.md` は置いたときだけ使う上書き)。repomix など別のツールでパックを作るとき、
+  または上書きの元にするときに使う。
 
 ### 4.6 `petari init` — プロジェクト初回セットアップの一括実行
 
 各プロジェクトで **1 回だけ** 実行すれば運用開始に必要な準備がすべて整うコマンド。
 「初回セットアップの手順を覚えておかなくてよい」体験にすることが目的。
 
-実行内容(対話形式。既存ファイルがある場合は上書きせず確認):
+v0.15.0 で旧 slnmix init と 1 つにした(設計書 docs/HANDOFF-slnmix-petari-2026-09.md §20・§25)。
+対話なしで、既存のファイルは変えない(何度実行しても同じ結果)。実行内容:
 
-1. `.petari/config.json` の雛形を生成
-2. `protocol.md` をプロジェクト直下に生成(`petari protocol` と同じ規約文を書き出す)
-3. repomix 連携のセットアップ:
-   - `repomix.config.json` が存在する場合 →
-     `output.instructionFilePath: "protocol.md"` の追記を提案(y/n)
-   - 存在しない場合 → 最小構成の `repomix.config.json` の新規作成を提案(y/n)
-
-     ```json
-     {
-       "output": {
-         "instructionFilePath": "protocol.md"
-       }
-     }
-     ```
-
-   - これにより、以降は普通に `repomix` を実行するだけで規約文入りの出力になる
-4. `.gitignore` への `.petari/` 追記を提案(なければ `.gitignore` 新規作成も提案)
+1. 構成の判定: 設定ファイル(`petari.config.json`。旧名 `slnmix.config.json` も)があればそのまま使う。
+   なければ、直下に `.sln` / `.vbproj` があれば作らない。1 段下に `.sln` が 1 つだけあれば `target` で指す設定を作る。
+   どちらも無ければ generic 構成(git のリポジトリでは `{ "kind": "generic" }`、それ以外は実在する `src` / `tests`
+   などを `extraRoots` に書く)
+2. docs/ 連携(`docs/design/` `docs/spec/` `docs/README.md` と設定の `docs`)
+3. `.gitignore` に生成物(`repomix-output.xml` / `repomix-output.prompt.md`)と `.petari/` を追記
+4. `.petari/config.json` の雛形を生成
+5. 規約文は内蔵なので書き出さない。旧 init が書いた `protocol.md` があれば、手を加えていないか(削除してよいか)を表示する
 
 補足:
 
-- slnmix を使うプロジェクトでは手順 3 は不要(規約文の取り込みは slnmix 本体に組み込むため)。
-  slnmix 側の対応が済むまでの暫定として、slnmix 出力に protocol.md を手動で連結する運用も可。
-- `--no-repomix` で手順 3 を丸ごと省く(v0.11.0)。slnmix v0.18.0 の `slnmix init` が
-  `--yes --no-repomix` で呼び、slnmix 側のセットアップと 1 コマンドにまとめる。
-- `--yes` で全提案に自動同意。
-- 規約文がバージョンアップされた場合の再生成は `petari protocol > protocol.md` の再実行、
-  または `petari init` の再実行(差分があれば更新を提案)で対応する。
+- v0.14 までの init は `protocol.md` の書き出しと `repomix.config.json` の `instructionFilePath` の提案(対話)を
+  していた。v0.15.0 では行わない(`petari pack` が本家 repomix の代わりになる。repomix を使い続ける場合は
+  `petari protocol > protocol.md` と `instructionFilePath` を手で設定する)
+- `--yes` / `--no-repomix` は受け付けて無視する(旧 slnmix init が `--yes --no-repomix` で呼んでいたため)
+- ルートはパック・適用と同じ決め方(`--root` > 上に向かって最初の設定ファイル > 最初の `.git` > カレント)
 
 ### 4.7 `petari watch` — 届いた changes.md の自動適用(v0.12.0)
 

@@ -1,12 +1,24 @@
 # petari
 
-**petari — paste AI chat patches onto your codebase**
-**petari — AIチャットの返答を、コードベースにぺたり。**
+**petari — pack your codebase for AI chat, then apply its patches safely**
+**petari — AIチャットにコードを渡し、返答をコードベースにぺたり。**
 
-チャットベース AI (M365 Copilot Chat 等) の返答を、ローカルのコードベースへ安全に一括適用する CLI ツールです。
-AI に規約形式の変更指示ファイル (changes.md) を出力させ、petari がパース・検証して適用します。
-レビューは Git の未コミット差分として VS Code で行い、適用の履歴 (before/after/指示原本) は
-`.petari/history/` に自動保存されます。
+チャットベース AI (M365 Copilot Chat 等) で開発するための CLI ツールです。1 つのコマンドで、
+往復の両側を受け持ちます。
+
+1. **渡す** (`petari pack`): プロジェクトのソースを 1 ファイル (パック) にまとめ、チャットに貼る指示文
+   (作業手順・出力規約) と一緒にクリップボードへ入れる。認証情報らしき値は `[MASKED]` に伏せる
+2. **当てる** (`petari`): AI に規約形式の変更指示ファイル (changes.md) を出力させ、petari がパース・検証して
+   適用する。レビューは Git の未コミット差分として VS Code で行い、適用の履歴 (before/after/指示原本) は
+   `.petari/history/` に自動保存される
+3. **直す** (`petari build`): MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行をクリップボードへ入れる
+
+レガシー VB.NET (`.sln` / `.vbproj`、Shift_JIS) を出発点にしていますが、TypeScript・Python・C#・Go などの
+プロジェクトでも使えます (git が管理しているファイルをまとめる)。実行時依存はゼロで、通信もしません
+(導入審査向けの説明は [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md))。
+
+0.15.0 で、パックを作る側だった [slnmix](https://www.npmjs.com/package/slnmix) を取り込みました
+(下記「slnmix から移るとき」)。
 
 ## インストール
 
@@ -14,50 +26,63 @@ AI に規約形式の変更指示ファイル (changes.md) を出力させ、pet
 pnpm add -g petari   # または npx petari
 ```
 
+Node.js 20.19 以降が必要です。
+
 ## 使い方
 
 ```sh
-petari init              # プロジェクト初回セットアップ (protocol.md / 設定 / repomix 連携 / .gitignore)
-repomix                  # 規約文入りのコンテキストを生成して AI チャットに渡す
+npx petari init          # 初回だけ (リポジトリ直下で)。構成の判定・docs/・.gitignore・.petari/ をまとめて準備
+npx petari pack          # パックを作り、Copilot Chat に貼るものをクリップボードへ
+                         # → 本文に貼って送信 (パックが大きいときは repomix-output.xml を添付)
                          # → AI から changes.md をダウンロード
-petari                   # Downloads の changes.md を自動検出して適用
+npx petari               # Downloads の changes.md を自動検出して適用
 git diff                 # VS Code で差分レビュー・手修正
-petari undo              # 直近の適用を巻き戻す
+npx petari build         # (VB.NET) ビルドし、失敗ならエラーと周辺のコードをクリップボードへ → チャットに貼る
+npx petari undo          # 直近の適用を巻き戻す
 ```
 
+日々の流れ (設計から実装・引継ぎまで) は [docs/WORKFLOW.md](docs/WORKFLOW.md)、
+パックの機能 (UI サマリー・パスの規則・ハイブリッド構成・VB.NET 以外・作業手順・docs/ 連携・
+ビルドエラー) は [docs/PACK.md](docs/PACK.md) にまとめています。
+
 往復が続くときは、別の端末で `petari watch` を起動しておくと、ダウンロードした
-changes.md が届くたびに確認なしで適用されます (毎回 `petari` を打たなくてよくなります。
-v0.12.0)。失敗したときはレポートがクリップボードに入るので、そのまま AI に貼り返します。
+changes.md が届くたびに確認なしで適用されます (毎回 `petari` を打たなくてよくなります)。
+失敗したときはレポートがクリップボードに入るので、そのまま AI に貼り返します。
 止めるときは Ctrl+C です。ブラウザのダウンロード先とコードが同じ PC にあることが前提で、
 RDP 越しに受け渡す運用では従来どおり `petari` / `petari --clip` を使います。
 
-### slnmix 連携 (レガシー VB.NET プロジェクト)
-
-[slnmix](https://www.npmjs.com/package/slnmix) v0.7.0 以降は、入力 (.sln / .vbproj) と
-同じディレクトリにある `protocol.md` を出力末尾に自動で連結します (repomix の
-`instructionFilePath` 相当。別の場所に置く場合は `--instruction-file <path>`)。
-
-```sh
-npx slnmix init      # 初回だけ。protocol.md / .petari/ / docs/ / .gitignore をまとめて準備
-                     # (slnmix v0.18.0 以降。内部で petari init --yes --no-repomix を実行)
-npx slnmix           # .sln を解析。出力末尾に規約文が自動で付く
-                     # → 出力を M365 Copilot Chat に貼る
-petari               # 返答 (changes.md) を適用
-```
-
-slnmix v0.17.0 以前では `npx petari init` で protocol.md を作ります (.sln と同じプロジェクト直下に)。
-
-**変更を依頼するメッセージには、必ず次の 1 行を添えてください。**
-貼り付け本文に埋め込まれた規約文は、チャットサービス側の要約・検索処理で
+**変更を依頼するメッセージには、必ず次の 1 行を添えてください** (`petari pack` が作る本文用テキストには
+既に入っています)。貼り付け本文に埋め込まれた規約文は、チャットサービス側の要約・検索処理で
 モデルに届かなかったり、チャット本文の指示より弱く扱われたりすることがあります
 (埋め込みだけで確実に認識させる方法はありません)。
 
 > 変更は、貼り付けた内容の末尾にある規約 (instruction) に従って changes.md として出力してください。
 
-petari の更新で規約文が変わった場合は、`petari init` を再実行すると protocol.md の
-差分を検出して更新を提案します (slnmix 側の更新は不要)。
+規約文は petari に内蔵されていて、petari を更新すれば最新の版になります (`npx petari protocol` で表示)。
+ルートに `protocol.md` を置くと、その内容で上書きできます。本家 repomix など他のツールでパックを作る場合は、
+`npx petari protocol` の出力を規約文として渡してください。
 
-#### 新規 .vb ファイルの作成 (v0.9.0)
+### slnmix から移るとき
+
+| 以前 | 今 |
+|---|---|
+| `npx slnmix init` | `npx petari init` |
+| `npx slnmix [入力] [オプション]` | `npx petari pack [入力] [オプション]` (オプションは同じ名前) |
+| `npx slnmix build` | `npx petari build` |
+| `npx petari` / `watch` / `undo` / `show` / `list` | 変わらない |
+
+- 設定ファイルは `petari.config.json` になりました。`slnmix.config.json` は名前を変えなくても読まれます
+  (両方あるとエラー)
+- `protocol.md` は手を加えていなければ消してかまいません (`npx petari pack` が案内します)
+- ルートの決め方がパックと適用で同じになりました (`--root` > 上に向かって最初の設定ファイル > リポジトリ直下 >
+  入力の場所)。設定ファイルの無いプロジェクトで `.sln` がリポジトリ直下より下にあると、パックの
+  `<file path>` の先頭にフォルダ名が付くようになります (変更を当てるときのパスと一致する方向の変更です)
+- 出力はツール名の行だけが変わります (手順文の版は同じ。設計書の状態行 `<!-- slnmix design: ... -->` もそのまま)
+- `npx slnmix` もしばらくは動きます (petari に引数をそのまま渡す互換パッケージ)
+
+### レガシー VB.NET プロジェクトでの適用
+
+#### 新規 .vb ファイルの作成
 
 AI が `create` で `.vb` を新規作成すると、petari が次を自動で行います (Visual Studio での
 手作業をなくすため)。いずれも失敗しても create 自体は成功し、理由を結果表示に出します。
@@ -73,17 +98,14 @@ AI が `create` で `.vb` を新規作成すると、petari が次を自動で�
   文字コード / BOM / 改行を決めます。`.vb` を BOM なし UTF-8 で作ることはありません
   (vbc / VS で日本語が化けるため)。従来どおり `"utf8"` / `"shift_jis"` の明示指定も使えます
 
-規約文 v4 では「SEARCH は一意に特定できる範囲のうち最小 (目安 3〜8 行)」を追加しました。
-`petari init` の再実行で protocol.md を更新してください。
-
 ### 適用が繰り返し失敗するとき
 
 失敗レポート (自動でクリップボードにコピーされます) をそのまま AI に貼り返すのが
 最短です。レポートには実ファイルの該当箇所の抜粋と、どの行がどう違うかの診断が
 含まれるため、AI は推測ではなくコピーで SEARCH を直せます。
 
-それでも同じ箇所が失敗を繰り返す場合は、**AI に渡したスナップショット (repomix /
-slnmix の出力) が実ファイルとずれている**可能性が高いです。特にチャットサービスは
+それでも同じ箇所が失敗を繰り返す場合は、**AI に渡したスナップショット (`petari pack` /
+repomix の出力) が実ファイルとずれている**可能性が高いです。特にチャットサービスは
 長い添付を要約・検索処理で部分的にしか読まないことがあり、AI が見えなかった箇所を
 もっともらしく補って出力することがあります。SEARCH の空白調整や言い換えを繰り返す
 より、スナップショットを取り直して渡し直すのが確実です (petari 側は空白・インデント・
@@ -94,15 +116,17 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
 
 | コマンド | 説明 |
 |---|---|
+| `petari init` | プロジェクト初回セットアップ (構成の判定・docs/・.gitignore・`.petari/config.json`。対話なし・冪等。`--yes` / `--no-repomix` は互換のため受け付けて無視) |
+| `petari pack [入力]` | パックと本文用テキストを作り、貼るものをクリップボードへ (旧 slnmix。オプションは `petari pack --help`、説明は [docs/PACK.md](docs/PACK.md)) |
+| `petari build [入力]` | MSBuild でビルドし、失敗ならエラーと周辺のコードをクリップボードへ (旧 slnmix build) |
 | `petari [path]` | changes.md を適用。省略時は Downloads とプロジェクト直下から自動検出 (直近 30 分)。`--clip` でクリップボードから |
 | `petari watch` | Downloads とプロジェクト直下を見張り、起動後に届いた changes*.md を確認なしで適用し続ける (Ctrl+C で終了)。`--dry-run` で検証とプレビューだけ |
 | `petari undo [ID]` | 履歴を巻き戻す (手修正がある場合は警告) |
 | `petari show [ID]` | 履歴の差分を表示 (VS Code、なければブラウザの閲覧レポートにフォールバック)。`--edit` で現在のファイルを差分を見ながら手修正 (VS Code のみ)、`--mine` で適用後の手修正分、`--changes` で変更概要、`--browser` でブラウザ強制 |
 | `petari list` | 履歴の一覧と合計サイズ |
-| `petari protocol` | AI への規約文を標準出力に出す (slnmix / repomix 連携用) |
-| `petari init` | プロジェクト初回セットアップ (`--yes` で全提案に同意。`--no-repomix` で repomix 連携を省く。slnmix 利用者は `npx slnmix init` が代わりに呼ぶ) |
+| `petari protocol` | 内蔵の規約文を標準出力に出す (`protocol.md` で上書きするときの元・他のツールでパックを作るとき用) |
 
-主なオプション: `--dry-run` (検証と差分プレビューのみ) / `--partial` (成功分のみ適用) /
+適用の主なオプション: `--dry-run` (検証と差分プレビューのみ) / `--partial` (成功分のみ適用) /
 `--root <dir>` / `--yes` / `--clip-report` (失敗レポートをクリップボードへ。v0.5.0 から既定で自動コピーされるため、config で無効化した場合の個別指定用) /
 `--no-vbproj` (create した .vb の .vbproj 自動登録を今回だけ無効化) /
 `--force` (適用済みの changes.md でも再適用する。下記「二重適用の防止」を今回だけ解除) /
@@ -128,8 +152,9 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
   自動コピー** (失敗した時点で貼り返し 1 ペーストの状態。config の
   `clipReportOnFailure: false` で無効化可)。構文エラー時のレポートには規約フォーマットの
   要点を同梱 (チャット側で規約文が失われていてもレポート 1 枚で再出力を依頼できる)
-- **伏せ字 [MASKED] の扱い** (v0.14.0〜): slnmix はパックを作るとき認証情報らしき値を
-  `[MASKED]` に伏せる。petari は失敗レポートの「実ファイルの該当箇所」を同じ規則で伏せ
+- **伏せ字 [MASKED] の扱い**: `petari pack` はパックを作るとき認証情報らしき値を
+  `[MASKED]` に伏せる (TypeScript / JavaScript・Java・C#・Go・Python は文字列とコメントの中だけ)。
+  適用では失敗レポートの「実ファイルの該当箇所」を同じ規則で伏せ
   (AI に貼るレポートから実際の値が漏れない)、SEARCH の `[MASKED]` を伏せた後の実ファイルと
   照合し、書き込む行の `[MASKED]` を元の値に戻す。戻すのは、伏せ字を含む行を一字も変えずに
   残した (インデントだけ変わった) 行だけ。伏せ字を含む行を書き換えた・新しく足した・create・
@@ -151,11 +176,13 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
   (PATH にある code.cmd はシェルを通さずには起動できないため)
 - **実行時依存ゼロ・同梱サードパーティなし**: サプライチェーン対策として npm の実行時依存
   パッケージを持たず、他者のコードも同梱しない (Shift_JIS 変換テーブルも Node 組み込み ICU
-  から自動生成して同梱)。パッケージは自前のビルド結果 (dist/) のみ
+  から自動生成して同梱。XML・.gitignore の読み取りも自前)。パッケージは自前のビルド結果 (dist/) のみ
 
 ## セキュリティ設計
 
-社内利用の審査 (情報システム部門のレビュー等) を想定した要点です。
+社内利用の審査 (情報システム部門のレビュー等) を想定した要点です。データの流れ・パックに入るもの・
+認証情報の伏せ方・起動する外部コマンド・残るファイルを含む全体の説明は
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) にあります。
 
 ### 通信・依存関係
 
@@ -169,8 +196,8 @@ slnmix の出力) が実ファイルとずれている**可能性が高いです
   削除)。パッケージの中身は自前のビルド結果 (dist/) のみです
 - 子プロセスの起動はすべて `execFile`/`spawn` の配列引数で行い、シェルを経由しません
   (コマンドインジェクション不成立)。起動するのは `git` / `reg` / `powershell` /
-  `pbcopy`・`pbpaste` / VS Code (`code`) / 既定ブラウザ起動 (`open` / `xdg-open` /
-  PowerShell `Start-Process`) のみです
+  `pbcopy`・`pbpaste`・`xclip` / VS Code (`code`) / 既定ブラウザ起動 (`open` / `xdg-open` /
+  PowerShell `Start-Process`) と、`petari build` のときの `vswhere` / `MSBuild` のみです
 
 ### 入力の取り扱い (信頼境界)
 
@@ -220,7 +247,8 @@ pnpm test        # vitest
 pnpm build       # dist/ へビルド
 ```
 
-設計方針・規約は [CLAUDE.md](CLAUDE.md)、仕様の正本は [requirements.md](requirements.md) を参照。
+設計方針・規約は [CLAUDE.md](CLAUDE.md)、適用の仕様の正本は [requirements.md](requirements.md)、
+パックと統合の設計は [docs/HANDOFF-slnmix-petari-2026-09.md](docs/HANDOFF-slnmix-petari-2026-09.md) を参照。
 
 ## License
 

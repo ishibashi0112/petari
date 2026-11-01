@@ -243,7 +243,7 @@ function formatLineRanges(lineNos: number[]): string {
 }
 
 /**
- * 伏せた表示ごとに照合する (SEARCH の [MASKED] は slnmix のパックから写した行)。
+ * 伏せた表示ごとに照合する (SEARCH の [MASKED] はパックから写した行)。
  * どれかの表示で複数一致する・表示によって一致する位置が違うときは ambiguous
  * (伏せた値の違いでしか区別できない)。複数行にまたがる値を伏せた行を含む一致は採らない
  * (パックではその行の見え方が違うため、AI が写した行とは本来一致しない)。どれでも一致しなければ null
@@ -362,7 +362,7 @@ function planReplace(
   for (const block of change.blocks) {
     let m: BlockMatch = matchBlock(textLines, block);
     if (block.search.some(hasMaskToken) && (m.ok || m.reason === "not-found")) {
-      // SEARCH の [MASKED] は伏せた表示となら一致する (slnmix のパックから写した行)。実ファイルで
+      // SEARCH の [MASKED] は伏せた表示となら一致する (パックから写した行)。実ファイルで
       // 一致しても (もともと [MASKED] という文字の行)、伏せると同じに見える別の箇所があれば ambiguous
       const byViews = matchOnViews(views(), block);
       if (!m.ok) {
@@ -820,7 +820,7 @@ function outcomeRemovesMaskedValue(o: FileOutcome, state: FileState | undefined)
     beforeText = decodeFile(state.bytes).lines.map((l) => l.text).join("\n");
   } catch {
     // 読めないファイル (UTF-16 など) は、伏せた値があるか確かめられないため消すものとして扱う
-    // (slnmix は UTF-16 も読んで伏せるため、AI は伏せ字として見ている)
+    // (パックは UTF-16 も読んで伏せるため、AI は伏せ字として見ている)
     return o.change.op === "delete" || o.afterBytes !== null;
   }
   const values = maskedValueCounts(beforeText.split("\n"), o.change.path);
