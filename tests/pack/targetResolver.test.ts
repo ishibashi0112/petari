@@ -203,8 +203,8 @@ suite("targetResolver: kind: \"generic\"(.sln / .vbproj を使わない構成)",
     assert.ok(result.kind === "error" && result.message.includes("見つかりません"));
   });
 
-  test(".sln / .vbproj が見つからないエラーには petari init の案内が付く", () => {
+  test(".sln / .vbproj が見つからないエラーには tazuna init の案内が付く", () => {
     const result = resolveTarget(undefined, CWD, fakeDeps({ "/work/app": ["package.json"] }));
-    assert.ok(result.kind === "error" && result.message.includes("npx petari init"));
+    assert.ok(result.kind === "error" && result.message.includes("npx tazuna init"));
   });
 });

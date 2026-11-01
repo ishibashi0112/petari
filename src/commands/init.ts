@@ -1,9 +1,9 @@
 /**
- * petari init — プロジェクト初回セットアップ (§4.6、設計書 §20・§25)。
+ * tazuna init — プロジェクト初回セットアップ (§4.6、設計書 §20・§25)。
  * 旧 slnmix init (構成の判定・docs/・.gitignore の生成物) と旧 petari init (.petari/config.json・
  * .gitignore の .petari/) を 1 つにしたもの。対話なしで、既存のファイルは変えない (冪等)。
  * 規約文は内蔵なので protocol.md は書き出さない。repomix.config.json も作らない
- * (petari pack が本家 repomix の代わりになる)。
+ * (tazuna pack が本家 repomix の代わりになる)。
  * --yes / --no-repomix は受け付けて無視する (旧 slnmix init が `--yes --no-repomix` で呼んでいたため)。
  */
 import * as fs from "node:fs";

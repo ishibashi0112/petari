@@ -1,6 +1,6 @@
 /**
- * petari pack --init-config: VB.NET 以外のプロジェクト(TypeScript 等)で使う
- * ための設定ファイル(petari.config.json、kind: "generic")を作る(旧 slnmix v0.17.0、設計書 §19)。
+ * tazuna pack --init-config: VB.NET 以外のプロジェクト(TypeScript 等)で使う
+ * ための設定ファイル(tazuna.config.json、kind: "generic")を作る(旧 slnmix v0.17.0、設計書 §19)。
  *
  * - 既に設定ファイルがあれば(旧名の slnmix.config.json でも)何もしない(冪等。中身は変えない)
  * - その場所に .sln / .vbproj があれば作らない(従来の solution 構成で動くため)

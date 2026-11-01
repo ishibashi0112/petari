@@ -42,7 +42,7 @@ describe("parseRegQueryValue / expandWindowsEnv (§10 Windows Known Folder)", ()
 
 describe("findRecentChangesFiles (§4.1 30 分ルール)", () => {
   it("changes*.md のみを対象に、30 分以内・新しい順で返す", () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-dl-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-dl-"));
     const now = Date.now();
     const touch = (name: string, ageMinutes: number): void => {
       const p = join(dir, name);
@@ -66,19 +66,19 @@ describe("findRecentChangesFiles (§4.1 30 分ルール)", () => {
   });
 
   it("ディレクトリがなければ空配列", () => {
-    expect(findRecentChangesFiles("/no/such/dir/petari", new Date())).toEqual([]);
+    expect(findRecentChangesFiles("/no/such/dir/tazuna", new Date())).toEqual([]);
   });
 });
 
 describe("applyCommand: Downloads 自動検出 (§4.1)", () => {
   it("引数なしで最新の changes.md を適用し、成功後に Downloads から移動する", async () => {
-    const project = mkdtempSync(join(tmpdir(), "petari-dlp-"));
+    const project = mkdtempSync(join(tmpdir(), "tazuna-dlp-"));
     const downloads = join(project, "fake-downloads");
     mkdirSync(downloads);
     writeFileSync(join(project, "a.txt"), "hello\n");
-    mkdirSync(join(project, ".petari"));
+    mkdirSync(join(project, ".tazuna"));
     writeFileSync(
-      join(project, ".petari", "config.json"),
+      join(project, ".tazuna", "config.json"),
       JSON.stringify({ downloadsDir: downloads }),
       "utf8",
     );
@@ -102,17 +102,17 @@ describe("applyCommand: Downloads 自動検出 (§4.1)", () => {
     expect(code).toBe(0);
     // 適用され、Downloads の changes.md は移動 (削除) される
     expect(existsSync(changesPath)).toBe(false);
-    const history = join(project, ".petari", "history");
+    const history = join(project, ".tazuna", "history");
     expect(existsSync(history)).toBe(true);
   });
 
   it("候補がなければエラー", async () => {
-    const project = mkdtempSync(join(tmpdir(), "petari-dle-"));
+    const project = mkdtempSync(join(tmpdir(), "tazuna-dle-"));
     const downloads = join(project, "fake-downloads");
     mkdirSync(downloads);
-    mkdirSync(join(project, ".petari"));
+    mkdirSync(join(project, ".tazuna"));
     writeFileSync(
-      join(project, ".petari", "config.json"),
+      join(project, ".tazuna", "config.json"),
       JSON.stringify({ downloadsDir: downloads }),
       "utf8",
     );

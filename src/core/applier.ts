@@ -3,6 +3,7 @@
  * I/O を持たない純粋層: ファイル状態 (FileState) を受け取り、
  * 書き込むべきバイト列と失敗一覧を返す。実際の読み書きは commands/ が行う。
  */
+import { TOOL_NAME } from "../brand.ts";
 import type { ChangeSet, FileChange, ReplaceBlock } from "../types.ts";
 import {
   EncodingError,
@@ -206,7 +207,7 @@ function maskFailureMessage(prefix: string, r: MaskRestoreResult & { ok: false }
     : "";
   return (
     `${prefix}伏せ字 ${MASK_TOKEN} を元の値に戻せないため書き込めません: ${shown.join("、")}${more}。` +
-    `${MASK_TOKEN} は実際の値を伏せた印で、petari が元の値に戻せるのは、伏せ字を含む行を一字も変えずに残したときだけです。` +
+    `${MASK_TOKEN} は実際の値を伏せた印で、${TOOL_NAME} が元の値に戻せるのは、伏せ字を含む行を一字も変えずに残したときだけです。` +
     `伏せ字を含む行は SEARCH にも REPLACE にもそのまま写してください。${move}伏せ字を含む行を書き換える・新しく足す・` +
     `コメントなどに ${MASK_TOKEN} と書く変更はできません (その行は変えずに残し、利用者に手で直してもらうよう説明してください)`
   );

@@ -12,14 +12,14 @@ const sjis = (s: string): Uint8Array => sjisEncode(s).bytes;
 const doc = (...lines: string[]): string => lines.join("\n");
 
 function setupProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), "petari-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tazuna-test-"));
   writeFileSync(join(dir, "legacy.vb"), sjis("' コメント\r\nDim count As Integer = 1\r\nEnd Module"));
   writeFileSync(join(dir, "old.txt"), utf8("obsolete\n"));
   // 失敗レポートの自動コピー (clipReportOnFailure 既定 true) がテスト実行機の
   // クリップボードを書き換えないよう無効化しておく
-  mkdirSync(join(dir, ".petari"), { recursive: true });
+  mkdirSync(join(dir, ".tazuna"), { recursive: true });
   writeFileSync(
-    join(dir, ".petari", "config.json"),
+    join(dir, ".tazuna", "config.json"),
     JSON.stringify({ clipReportOnFailure: false }),
     "utf8",
   );
@@ -47,7 +47,7 @@ const CHANGES = doc(
 );
 
 function historyIds(dir: string): string[] {
-  const h = join(dir, ".petari", "history");
+  const h = join(dir, ".tazuna", "history");
   return existsSync(h) ? readdirSync(h) : [];
 }
 
@@ -74,7 +74,7 @@ describe("applyCommand (統合・§4.1)", () => {
     // 履歴 (§5)
     const ids = historyIds(dir);
     expect(ids).toHaveLength(1);
-    const hdir = join(dir, ".petari", "history", ids[0] as string);
+    const hdir = join(dir, ".tazuna", "history", ids[0] as string);
     expect(readFileSync(join(hdir, "changes.md"), "utf8")).toBe(CHANGES);
     expect(existsSync(join(hdir, "before", "legacy.vb"))).toBe(true);
     expect(existsSync(join(hdir, "before", "old.txt"))).toBe(true);
@@ -135,7 +135,7 @@ describe("applyCommand (統合・§4.1)", () => {
 
     const ids = historyIds(dir);
     const manifest = JSON.parse(
-      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "manifest.json"), "utf8"),
     ) as Manifest;
     expect(manifest.partial).toBe(true);
     expect(manifest.success).toBe(false);
@@ -207,7 +207,7 @@ describe("applyCommand: 冪等性 (適用済み検出)", () => {
     );
     const ids = historyIds(dir);
     const manifest = JSON.parse(
-      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "manifest.json"), "utf8"),
     ) as Manifest;
     const legacy = manifest.files.find((f) => f.path === "legacy.vb");
     expect(legacy?.appliedBlocks).toBe(1);
@@ -218,10 +218,10 @@ describe("applyCommand: 冪等性 (適用済み検出)", () => {
 describe("applyCommand: プロジェクト直下の changes.md 検出", () => {
   it("引数なしで直下の changes.md を検出・適用し、履歴へ移動 (削除) する", async () => {
     const dir = setupProject();
-    const emptyDownloads = mkdtempSync(join(tmpdir(), "petari-dl-"));
-    mkdirSync(join(dir, ".petari"), { recursive: true });
+    const emptyDownloads = mkdtempSync(join(tmpdir(), "tazuna-dl-"));
+    mkdirSync(join(dir, ".tazuna"), { recursive: true });
     writeFileSync(
-      join(dir, ".petari", "config.json"),
+      join(dir, ".tazuna", "config.json"),
       JSON.stringify({ downloadsDir: emptyDownloads, clipReportOnFailure: false }),
       "utf8",
     );
@@ -233,11 +233,11 @@ describe("applyCommand: プロジェクト直下の changes.md 検出", () => {
 
     const ids = historyIds(dir);
     const manifest = JSON.parse(
-      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "manifest.json"), "utf8"),
     ) as Manifest;
     expect(manifest.source.type).toBe("project-root");
     expect(
-      readFileSync(join(dir, ".petari", "history", ids[0] as string, "changes.md"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "changes.md"), "utf8"),
     ).toBe(CHANGES);
   });
 });
@@ -331,14 +331,14 @@ describe("applyCommand: 二重適用の防止 (§6.1)", () => {
     expect(historyIds(dir)).toHaveLength(2);
   });
 
-  it("petari undo で巻き戻した changes.md は --force なしで再適用できる", async () => {
+  it("tazuna undo で巻き戻した changes.md は --force なしで再適用できる", async () => {
     const { dir, changesPath } = setup();
     expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
     expect(await undoCommand(["--root", dir, "--yes"])).toBe(0);
     expect(form(dir)).toBe(FORM);
     const [first] = historyIds(dir);
     const manifest = JSON.parse(
-      readFileSync(join(dir, ".petari", "history", first as string, "manifest.json"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", first as string, "manifest.json"), "utf8"),
     ) as Manifest;
     expect(typeof manifest.undoneAt).toBe("string");
 
@@ -351,7 +351,7 @@ describe("applyCommand: 二重適用の防止 (§6.1)", () => {
     const { dir, changesPath } = setup();
     expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);
     const [id] = historyIds(dir);
-    const manifestPath = join(dir, ".petari", "history", id as string, "manifest.json");
+    const manifestPath = join(dir, ".tazuna", "history", id as string, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest;
     expect(typeof manifest.changesFingerprint).toBe("string");
     delete manifest.changesFingerprint;
@@ -364,7 +364,7 @@ describe("applyCommand: 二重適用の防止 (§6.1)", () => {
 
   it("壊れた manifest は検出の対象外として無視する (適用は妨げない)", async () => {
     const { dir, changesPath } = setup();
-    const broken = join(dir, ".petari", "history", "2000-01-01_0000");
+    const broken = join(dir, ".tazuna", "history", "2000-01-01_0000");
     mkdirSync(broken, { recursive: true });
     writeFileSync(join(broken, "manifest.json"), "{ not json", "utf8");
     expect(await applyCommand([changesPath, "--root", dir, "--yes"])).toBe(0);

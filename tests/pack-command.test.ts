@@ -32,13 +32,13 @@ function run(argv: string[], cwd: string): { code: number; stdout: string; stder
 
 /** .git のあるリポジトリの dotnet/ に basic フィクスチャを置く */
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "petari-pack-"));
+  const dir = mkdtempSync(join(tmpdir(), "tazuna-pack-"));
   mkdirSync(join(dir, ".git"));
   cpSync(BASIC, join(dir, "dotnet"), { recursive: true });
   return dir;
 }
 
-describe("petari pack (設計書 §25)", () => {
+describe("tazuna pack (設計書 §25)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("設定ファイルが無ければ .git の場所がルート (<file path> が適用のルートと揃う)", () => {
@@ -67,7 +67,7 @@ describe("petari pack (設計書 §25)", () => {
 
   it("設定ファイルが新旧の名前で両方あれば止める", () => {
     const dir = repo();
-    writeFileSync(join(dir, "petari.config.json"), "{}");
+    writeFileSync(join(dir, "tazuna.config.json"), "{}");
     writeFileSync(join(dir, "slnmix.config.json"), "{}");
     const result = run(["dotnet/Basic.vbproj", "--stdout", "--no-clip"], dir);
     expect(result.code).toBe(1);
@@ -86,18 +86,18 @@ describe("petari pack (設計書 §25)", () => {
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 
-describe("petari pack: generic 構成で extraRoots が無ければ git が管理しているファイル (設計書 §25.7)", () => {
+describe("tazuna pack: generic 構成で extraRoots が無ければ git が管理しているファイル (設計書 §25.7)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   /** git init したリポジトリに Python / TS のファイルを置く */
   function gitRepo(): string {
-    const dir = mkdtempSync(join(tmpdir(), "petari-pack-git-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-pack-git-"));
     const git = (...args: string[]): void => {
       const r = spawnSync("git", args, { cwd: dir });
       if (r.status !== 0) throw new Error(r.stderr.toString());
     };
     git("init", "-q", ".");
-    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic" }\n');
+    writeFileSync(join(dir, "tazuna.config.json"), '{ "kind": "generic" }\n');
     writeFileSync(join(dir, ".gitignore"), "node_modules/\n*.log\n");
     mkdirSync(join(dir, "app"));
     writeFileSync(join(dir, "app", "main.py"), 'import os\npassword = "hunter2xyz"\n');
@@ -107,7 +107,7 @@ describe("petari pack: generic 構成で extraRoots が無ければ git が管�
     mkdirSync(join(dir, "node_modules", "m"), { recursive: true });
     writeFileSync(join(dir, "node_modules", "m", "index.js"), "module.exports = 1;\n");
     writeFileSync(join(dir, "debug.log"), "secret log\n");
-    git("add", "petari.config.json", ".gitignore", "app/main.py", "poetry.lock", "app/data.bin");
+    git("add", "tazuna.config.json", ".gitignore", "app/main.py", "poetry.lock", "app/data.bin");
     // app/web.ts は未追跡(.gitignore に一致しないので対象)
     return dir;
   }
@@ -126,12 +126,12 @@ describe("petari pack: generic 構成で extraRoots が無ければ git が管�
     expect(result.stdout).not.toContain("debug.log");
     expect(result.stdout).not.toContain("hunter2xyz");
     expect(result.stdout).toMatch(/<directory_structure>\n\.\/\n {2}app\/\n/);
-    expect(result.stderr).toContain("設定: petari.config.json(git が管理しているファイル)");
+    expect(result.stderr).toContain("設定: tazuna.config.json(git が管理しているファイル)");
   });
 
   it.skipIf(!hasGit)("<docs> / <db_schema> に入るファイルは <file> に重ねない", () => {
     const dir = gitRepo();
-    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic", "docs": true }\n');
+    writeFileSync(join(dir, "tazuna.config.json"), '{ "kind": "generic", "docs": true }\n');
     mkdirSync(join(dir, "docs", "design"), { recursive: true });
     mkdirSync(join(dir, "docs", "db"), { recursive: true });
     writeFileSync(join(dir, "docs", "design", "x.md"), "<!-- slnmix design: status=ready blocking=0 deferred=0 -->\n# x\n");
@@ -158,9 +158,23 @@ describe("petari pack: generic 構成で extraRoots が無ければ git が管�
     expect(second.stdout).toContain('<file path="app/main.py">');
   });
 
+  it.skipIf(!hasGit)("適用の履歴 (.gitignore に書いていない .tazuna/・旧版の .petari/) を入れない", () => {
+    const dir = gitRepo();
+    for (const state of [".tazuna", ".petari"]) {
+      mkdirSync(join(dir, state, "history", "2026-11-01_0900", "after", "app"), { recursive: true });
+      writeFileSync(join(dir, state, "history", "2026-11-01_0900", "after", "app", "main.py"), "print(1)\n");
+      writeFileSync(join(dir, state, "config.json"), "{}\n");
+    }
+    const result = run(["--stdout", "--no-clip"], dir);
+    expect(result.code).toBe(0);
+    expect(result.stdout).not.toContain('<file path=".tazuna/');
+    expect(result.stdout).not.toContain('<file path=".petari/');
+    expect(result.stdout).toContain('<file path="app/main.py">');
+  });
+
   it("git のリポジトリでなければ、extraRoots を書くよう案内して止める", () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-pack-nogit-"));
-    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic" }\n');
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-pack-nogit-"));
+    writeFileSync(join(dir, "tazuna.config.json"), '{ "kind": "generic" }\n');
     const result = run(["--stdout", "--no-clip"], dir);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("git が管理しているファイルを一覧できません");

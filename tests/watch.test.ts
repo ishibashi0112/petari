@@ -96,12 +96,12 @@ describe("watchCommand (§4.7)", () => {
   });
 
   function setup(): { dir: string; downloads: string } {
-    const dir = mkdtempSync(join(tmpdir(), "petari-watch-"));
-    const downloads = mkdtempSync(join(tmpdir(), "petari-watch-dl-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-watch-"));
+    const downloads = mkdtempSync(join(tmpdir(), "tazuna-watch-dl-"));
     writeFileSync(join(dir, "legacy.vb"), "Module M\nDim count As Integer = 1\nEnd Module\n", "utf8");
-    mkdirSync(join(dir, ".petari"), { recursive: true });
+    mkdirSync(join(dir, ".tazuna"), { recursive: true });
     writeFileSync(
-      join(dir, ".petari", "config.json"),
+      join(dir, ".tazuna", "config.json"),
       JSON.stringify({ downloadsDir: downloads, clipReportOnFailure: false }),
       "utf8",
     );
@@ -139,10 +139,10 @@ describe("watchCommand (§4.7)", () => {
     expect(await w.stop()).toBe(0);
 
     expect(readFileSync(join(dir, "legacy.vb"), "utf8")).toContain("Dim count As Integer = 100");
-    const ids = readdirSync(join(dir, ".petari", "history"));
+    const ids = readdirSync(join(dir, ".tazuna", "history"));
     expect(ids).toHaveLength(1);
     const manifest = JSON.parse(
-      readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+      readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "manifest.json"), "utf8"),
     ) as Manifest;
     expect(manifest.source).toEqual({ type: "downloads", path: join(downloads, "changes.md") });
     expect(output.join("")).toContain("監視を終了しました");
@@ -182,6 +182,6 @@ describe("watchCommand (§4.7)", () => {
     await waitFor(() => output.join("").includes("見出しがないため"), "skipped");
     expect(await w.stop()).toBe(0);
     expect(existsSync(join(dir, "CHANGES.md"))).toBe(true);
-    expect(existsSync(join(dir, ".petari", "history"))).toBe(false);
+    expect(existsSync(join(dir, ".tazuna", "history"))).toBe(false);
   });
 });

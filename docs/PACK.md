@@ -1,11 +1,12 @@
-# petari pack — パックの詳細
+# tazuna pack — パックの詳細
 
-`petari pack` は、プロジェクトのソースを Repomix 互換フォーマットの 1 ファイル(パック)にまとめ、
+`tazuna pack` は、プロジェクトのソースを Repomix 互換フォーマットの 1 ファイル(パック)にまとめ、
 AI チャットに貼る本文用テキストと一緒に出します。レガシー Visual Studio(`.sln` / `.vbproj`)は
 **ビルド対象の論理構成**で、それ以外の言語は git が管理しているファイルでまとめます。
 
-0.15.0 より前は slnmix という別のパッケージでした(`npx slnmix` → `npx petari pack`、
-`npx slnmix build` → `npx petari build`、`npx slnmix init` → `npx petari init`。オプションは同じ名前)。
+0.15.0 より前は slnmix という別のパッケージでした(変更を当てる側の petari と 1 つにして tazuna に改名。
+`npx slnmix` → `npx tazuna pack`、
+`npx slnmix build` → `npx tazuna build`、`npx slnmix init` → `npx tazuna init`。オプションは同じ名前)。
 日々の操作の流れは [WORKFLOW.md](WORKFLOW.md) を見てください。このページは機能ごとの説明です。
 
 ## 本家 repomix との違い
@@ -17,7 +18,7 @@ AI チャットに貼る本文用テキストと一緒に出します。レガ�
 - ビルド対象外のファイル(過去の残骸・バックアップ)を**拾ってしまう**
 - `Designer.vb` / `.resx` などの自動生成ファイルがノイズになる
 
-`petari pack` は `.sln` → `.vbproj` を静的解析し、**ビルド対象の論理構成**(Link・
+`tazuna pack` は `.sln` → `.vbproj` を静的解析し、**ビルド対象の論理構成**(Link・
 DependentUpon 解決済み)に基づいてエクスポートします。
 
 主な特徴:
@@ -31,7 +32,7 @@ DependentUpon 解決済み)に基づいてエクスポートします。
   文字列とコメントの中だけを伏せ、`process.env.API_KEY` のようなコードは伏せない
 - 既定で厳格モード: ランダムな英数字列(高エントロピー値)も機械的にマスク
   (`--no-strict-mask` で無効化)。出力ヘッダーには AI 向けに
-  「[MASKED] は伏せ字」であることと取り扱いの指示を明記。`petari build` のエラーの
+  「[MASKED] は伏せ字」であることと取り扱いの指示を明記。`tazuna build` のエラーの
   文面も同じ規則で伏せる。変更を当てるときは、回答で `[MASKED]` を含む行を
   一字も変えずに残した場合だけ元の値に戻して書き込み、書き換えた・足した場合は止める
 - `.gitignore` / `.repomixignore` を尊重(本家 repomix と同じ挙動)
@@ -42,7 +43,7 @@ DependentUpon 解決済み)に基づいてエクスポートします。
   `**/*.vb` を展開して扱い、展開したことを出力に明記(下記)
 - `<file path>` は**ルート相対の物理パス・`/` 区切り**(changes.md のパスとして
   そのまま使える形。Link は `logical` 属性で論理パスを併記。下記)
-- 設定ファイル `petari.config.json`(旧名の `slnmix.config.json` も読む)の `extraRoots` で `.vbproj` に乗らない web / 契約
+- 設定ファイル `tazuna.config.json`(旧名の `slnmix.config.json` も読む)の `extraRoots` で `.vbproj` に乗らない web / 契約
   ディレクトリを同じパックに入れられる(WinForms + WebView2 + React の
   ハイブリッド構成向け。生成コードは除外して `<contract_summary>` で代替。下記)
 - `.sln` と同じフォルダに `.sln` から参照されていない `.vbproj` があれば警告
@@ -52,7 +53,7 @@ DependentUpon 解決済み)に基づいてエクスポートします。
   同梱し、`--task` で依頼内容も一緒に渡せる(下記)
 - **プロジェクト文書の連携**(`docs/`): 設計書・仕様書・引継ぎ書をパックの `<docs>` と
   本文用テキストに自動で載せ、文書の状態から作業モード(設計 / 実装 / 続き)を
-  自動で決める。文書の更新は AI が changes.md で出し `npx petari` が保存する(下記)
+  自動で決める。文書の更新は AI が changes.md で出し `npx tazuna` が保存する(下記)
 - VB.NET 以外(TypeScript・Python・C# など)は、git が管理しているファイルを既定でまとめる(下記)
 - 出力は BOM 付き UTF-8(Windows 系ツールの誤判定防止)
 
@@ -64,7 +65,7 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 ## UI サマリー
 
 Designer.vb の原文は座標・サイズの羅列でトークンを浪費しますが、丸ごと捨てると
-AI は `Me.btnSave` が何なのか分からなくなります。`petari pack` は既定で、除外した
+AI は `Me.btnSave` が何なのか分からなくなります。`tazuna pack` は既定で、除外した
 `*.Designer.vb` からコントロール構成だけを抽出して `<ui_summary>` として
 フォーム本体のコードの直後に埋め込みます。
 
@@ -90,44 +91,45 @@ Designer 自動生成コードからの要約(コントロール名: 型 — Tex
 されるため、関係ないフォームで出力が膨らむのを避けられます。
 
 ```console
-npx petari pack MyApp.sln --include-designer-file FormMain.Designer.vb --include-designer-file "FormOrder*"
+npx tazuna pack MyApp.sln --include-designer-file FormMain.Designer.vb --include-designer-file "FormOrder*"
 ```
 
-## 初回セットアップ(`petari init`)
+## 初回セットアップ(`tazuna init`)
 
 リポジトリの直下(`.git` のある場所)で一度だけ実行します。
 
 ```console
-npx petari init
+npx tazuna init
 ```
 
 次をまとめて行います。対話はなく、既存のファイルは変えないので、何度実行しても同じです。
 
 1. **構成の判定**: 設定ファイルがあればそのまま使います。無ければ、直下に `.sln` / `.vbproj` があれば
    設定は作りません。直下に無く、1 段下のフォルダ(例: `dotnet/`)に `.sln` が 1 つだけあれば
-   `petari.config.json` の `target` に書きます。どちらも無ければ VB.NET 以外のプロジェクトとして
+   `tazuna.config.json` の `target` に書きます。どちらも無ければ VB.NET 以外のプロジェクトとして
    `kind: "generic"` の設定を作ります(下記。`--init-config` と同じ)
 2. **docs/ 連携**: `docs/design/` `docs/spec/` `docs/README.md` と `docs` 設定(`--init-docs` と同じ)
-3. **.gitignore**: 生成物 `repomix-output.xml` / `repomix-output.prompt.md` と `.petari/` を追記
+3. **.gitignore**: 生成物 `repomix-output.xml` / `repomix-output.prompt.md` と `.tazuna/` を追記
    (既存の規則で除外済みなら足しません。既存の行は書き換えず末尾に足します)
-4. **`.petari/config.json`**: PC ごとの設定(Downloads の場所・VS Code のパス・履歴の上限など)の雛形
+4. **`.tazuna/config.json`**: PC ごとの設定(Downloads の場所・VS Code のパス・履歴の上限など)の雛形
+   (旧版の petari が作った `.petari/` だけがあれば、`.tazuna/` を作らずに `.petari/` をそのまま使います)
 5. **規約文**: 内蔵なので書き出しません。以前の `slnmix init` / `petari init` が書いた `protocol.md` があれば、
    手を加えていないか(削除してよいか)を表示します
 
 `.git` のあるフォルダより下で実行しても、リポジトリ直下(上に設定ファイルがあればその場所)を
 セットアップします。changes.md のパスとパックの `<file path>` の基準をそこに揃えるためです。
-`.sln` が 1 段下に複数あるときや、2 段以上深いときは、`petari.config.json` に
+`.sln` が 1 段下に複数あるときや、2 段以上深いときは、`tazuna.config.json` に
 `"target": "<フォルダ>/<名前>.sln"` を書いてから実行してください。
 
-`--init-docs` / `--init-config` は `petari pack` のオプションとして単独でも使えます。
+`--init-docs` / `--init-config` は `tazuna pack` のオプションとして単独でも使えます。
 
 ## 使い方
 
 ```console
-npx petari pack                  # カレントディレクトリの .sln を自動検出
-npx petari pack C:\path\to\App   # 指定フォルダ内を自動検出
-npx petari pack MyApp.sln -o for-ai.xml
-npx petari pack Sub\Project.vbproj --stdout
+npx tazuna pack                  # カレントディレクトリの .sln を自動検出
+npx tazuna pack C:\path\to\App   # 指定フォルダ内を自動検出
+npx tazuna pack MyApp.sln -o for-ai.xml
+npx tazuna pack Sub\Project.vbproj --stdout
 ```
 
 入力を省略すると、カレントディレクトリ(ディレクトリ指定ならその直下)の
@@ -161,10 +163,10 @@ npx petari pack Sub\Project.vbproj --stdout
                           作業手順のモード(既定: full。docs 連携時は文書の
                           状態から自動選択)
       --design <名前|file> design モードで対象の設計書を指定(なければ新規作成)
-      --init-docs         docs/ 連携だけを設定する(petari init に含まれる)
-      --init-config       VB.NET 以外のプロジェクト向けの petari.config.json
+      --init-docs         docs/ 連携だけを設定する(tazuna init に含まれる)
+      --init-config       VB.NET 以外のプロジェクト向けの tazuna.config.json
                           (kind: "generic")だけを作る(既にあれば変えない。
-                          petari init に含まれる)
+                          tazuna init に含まれる)
       --plan <file>       implement モードで承認済みの方針を <plan> として同梱
       --procedure-file <path>
                           作業手順文を明示指定(既定: ルートの procedure.md。
@@ -183,14 +185,14 @@ npx petari pack Sub\Project.vbproj --stdout
 ## ファイルパスの規則(物理パス化)
 
 `<file path="...">` は**ルート**からの相対物理パスで、`/` 区切りです。AI が
-changes.md に書くパスをこの `path` と一致させることで、`npx petari` が
+changes.md に書くパスをこの `path` と一致させることで、`npx tazuna` が
 パス変換なしにそのまま適用できます。
 
 ルートは次の順で決まります。パックと変更の適用で同じ決め方です(0.15.0〜。設定ファイル・
 protocol.md・procedure.md・docs/・出力先の既定もルート基準):
 
 1. `--root <dir>` の明示指定(入力はその配下にあること)
-2. 入力のディレクトリから上に向かって最初に見つかる設定ファイル(`petari.config.json` /
+2. 入力のディレクトリから上に向かって最初に見つかる設定ファイル(`tazuna.config.json` /
    `slnmix.config.json`)の場所(`.git` のあるディレクトリより上には行かない)
 3. 上に向かって最初に見つかる `.git` の場所(リポジトリの直下)
 4. どれもなければ入力(`.sln` / `.vbproj`)のあるディレクトリ
@@ -218,18 +220,18 @@ web と dotnet を分けた構成(例: webview2-bridge の雛形は `dotnet/MyAp
   `プロジェクト名\論理パス` が必要な場合は `--legacy-paths` を指定してください
   (1〜2 バージョン残して廃止予定)
 
-## ハイブリッド構成(`petari.config.json`)
+## ハイブリッド構成(`tazuna.config.json`)
 
 WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/webview2-bridge))
 のように `.vbproj` に乗らない web 側・契約側のディレクトリがある場合、ルート直下に
-`petari.config.json`(旧名の `slnmix.config.json` のままでも読みます。両方あるとエラー)を置くと
+`tazuna.config.json`(旧名の `slnmix.config.json` のままでも読みます。両方あるとエラー)を置くと
 同じパックに入ります。**なくても動きます**
-(`petari init` は `target` と `docs` までを書きます。`extraRoots` は手で足してください。
+(`tazuna init` は `target` と `docs` までを書きます。`extraRoots` は手で足してください。
 `.sln` の無いプロジェクトは下記「VB.NET 以外のプロジェクト」)。
 
 ```jsonc
 {
-  // 引数なしの npx petari pack が使う入力(ルート相対)。.sln がサブディレクトリにあるときに書く
+  // 引数なしの npx tazuna pack が使う入力(ルート相対)。.sln がサブディレクトリにあるときに書く
   "target": "dotnet/App.sln",
   "extraRoots": [
     { "path": "apps/web", "kind": "web" },
@@ -241,9 +243,9 @@ WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/w
 }
 ```
 
-- `target`: 引数を省略した `npx petari pack`(またはディレクトリ指定)が使う入力。
+- `target`: 引数を省略した `npx tazuna pack`(またはディレクトリ指定)が使う入力。
   ルート相対で `.sln` / `.vbproj` を指す。設定ファイルのある場所がルートになるので、
-  アプリのルートで `npx petari pack` と打つだけで済みます
+  アプリのルートで `npx tazuna pack` と打つだけで済みます
 - `extraRoots[].path`: ルート相対。**宣言されたディレクトリだけ**走査します
   (ディレクトリ走査をしない原則の、明示的でスコープの狭い例外)
 - `include` の既定: `kind: web` は `**/*.{ts,tsx,js,jsx,css,json,html}`、
@@ -288,8 +290,8 @@ types:
 埋めた規約文は届きません(下記「M365 Copilot Chat への渡し方」)。
 
 ```console
-npx petari init          # 一回だけ。.sln / .vbproj が無ければ generic の設定を作る
-npx petari pack          # repomix-output.xml と repomix-output.prompt.md ができる
+npx tazuna init          # 一回だけ。.sln / .vbproj が無ければ generic の設定を作る
+npx tazuna pack          # repomix-output.xml と repomix-output.prompt.md ができる
 ```
 
 git のリポジトリでは、`init`(と単独の `--init-config`)は `{ "kind": "generic" }` だけを書きます。
@@ -322,7 +324,7 @@ git のリポジトリでない場所では `extraRoots` が必要で、`init` �
 }
 ```
 
-- `kind: "generic"` のときは引数なしの `npx petari pack` が `.sln` / `.vbproj` を探しません。
+- `kind: "generic"` のときは引数なしの `npx tazuna pack` が `.sln` / `.vbproj` を探しません。
   ルートは設定ファイルの場所に固定で、`--root` / `--legacy-paths` / Designer 関連オプションは使えません
 - `kind: "src"` の `include` 既定は `**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`。
   他の言語で `extraRoots` を使うなら `include` を明示してください
@@ -343,7 +345,7 @@ git のリポジトリでない場所では `extraRoots` が必要で、`init` �
 
 `<Project Sdk="Microsoft.NET.Sdk">`(または `<Import Project="Sdk.props" Sdk="..." />`)
 形式のプロジェクトは `Compile` を書かず、プロジェクトフォルダ配下の `**/*.vb` が
-暗黙に含まれます。`petari pack` はこの既定グロブだけを展開します。
+暗黙に含まれます。`tazuna pack` はこの既定グロブだけを展開します。
 
 - 除外: `bin/**`、`obj/**`、`**/*.user`、ドットで始まるフォルダ、
   `<Compile Remove="...">`、`<DefaultItemExcludes>` の追加パターン
@@ -384,12 +386,12 @@ MSBuild の完全評価は行いません(静的 XML 解析のみ)。
 
 パックが 120K 文字を超える(実務のソリューションではほぼ超えます)場合は、
 **パックを添付し、手順文・規約文・依頼内容は本文に貼ってください。**
-`petari pack` はそのための本文用テキストを、パックの隣に `<出力名>.prompt.md`
+`tazuna pack` はそのための本文用テキストを、パックの隣に `<出力名>.prompt.md`
 として既定で書き出します(`--no-prompt` で抑止、`--prompt-output <file>` で
 出力先を変更、`--print-prompt` で標準出力へ)。
 
 ```console
-npx petari pack --task task.md              # repomix-output.xml と repomix-output.prompt.md ができる
+npx tazuna pack --task task.md              # repomix-output.xml と repomix-output.prompt.md ができる
                                             # → 貼るものはクリップボードに入っている
 ```
 
@@ -399,7 +401,7 @@ npx petari pack --task task.md              # repomix-output.xml と repomix-out
 
 ### クリップボードへの自動コピー
 
-`npx petari pack` は実行の最後に、Copilot Chat に貼るものをクリップボードへ入れます。
+`npx tazuna pack` は実行の最後に、Copilot Chat に貼るものをクリップボードへ入れます。
 `.prompt.md` を開いてコピーする手間がなくなります。
 
 | パックの大きさ | クリップボードに入るもの | Copilot Chat でやること |
@@ -415,15 +417,15 @@ Windows は PowerShell の `Set-Clipboard`、macOS は `pbcopy`、Linux は `xcl
 コピーしません。
 
 添付経路では空行・行末空白が読み取りで失われるため、AI が出す SEARCH ブロックから
-空行が抜けることがあります。変更の適用(`npx petari`)は空行の差を無視して照合するので、
+空行が抜けることがあります。変更の適用(`npx tazuna`)は空行の差を無視して照合するので、
 そのまま適用できます。
 
-## ビルドエラーの受け渡し(`petari build`)
+## ビルドエラーの受け渡し(`tazuna build`)
 
 ```console
-npx petari build                    # 対象の .sln / .vbproj を MSBuild でビルド
-npx petari build --configuration Release
-npx petari build --msbuild "C:\path\to\MSBuild.exe"
+npx tazuna build                    # 対象の .sln / .vbproj を MSBuild でビルド
+npx tazuna build --configuration Release
+npx tazuna build --msbuild "C:\path\to\MSBuild.exe"
 ```
 
 失敗すると、エラーごとに**今の実ファイルの周辺行**を付けた文面をクリップボードに入れます
@@ -431,7 +433,7 @@ npx petari build --msbuild "C:\path\to\MSBuild.exe"
 changes.md を書けます(パックを作った後に変更の適用で書き換わった行でも、SEARCH が
 食い違いません)。成功したときは何も入れません。
 
-- 対象の決め方とルートは `npx petari pack` と同じ(設定ファイルの `target` も使う)。
+- 対象の決め方とルートは `npx tazuna pack` と同じ(設定ファイルの `target` も使う)。
   `kind: "generic"` の構成では使えません
 - MSBuild は vswhere(VS 2017 以降・Build Tools)> VS 2015 / 2013 の MSBuild >
   .NET Framework 4 の MSBuild の順に探します。Windows 以外では `--msbuild` が必要です
@@ -445,14 +447,14 @@ changes.md を書けます(パックを作った後に変更の適用で書き�
 ## 規約文(`<instruction>`)
 
 AI に changes.md の書き方を守らせるための規約文を、出力末尾に `<instruction>` ブロックとして付けます。
-規約文は petari に内蔵されていて(`npx petari protocol` で表示)、petari を更新すれば最新の版になります
+規約文は tazuna に内蔵されていて(`npx tazuna protocol` で表示)、tazuna を更新すれば最新の版になります
 (以前のように `init` を打ち直す必要はありません)。規約文を付けたときは、出力の先頭にも末尾の規約へ
 誘導する短いリマインダを置きます。**ただし Copilot Chat にファイル添付で渡す場合、添付内の規約文は
 無視されます。** 規約文は本文用テキスト(`<出力名>.prompt.md`、上記)にも含まれるので、添付で渡すときは
 そちらを本文に貼ってください。
 
 - ルートに `protocol.md` を置くと、その内容を一字一句そのまま使います(内蔵の規約文の上書き)。
-  `npx petari protocol > protocol.md` で書き出して編集してください。内蔵より古い版を元にした上書きは警告します
+  `npx tazuna protocol > protocol.md` で書き出して編集してください。内蔵より古い版を元にした上書きは警告します
 - 以前の `slnmix init` / `petari init` が書いた `protocol.md` に手を加えていなければ(過去の版と一字一句同じなら)、
   使わずに内蔵の最新版を使い、削除してかまわないと 1 行表示します
 - 別の場所・別名のファイルを使う場合は `--instruction-file <path>`、規約文を付けない場合は `--no-instruction`
@@ -460,7 +462,7 @@ AI に changes.md の書き方を守らせるための規約文を、出力末�
 ## 作業手順の自動付与(`<procedure>` / `--task` / `--mode`)
 
 M365 Copilot のように思考量を外から制御できないチャットでは、
-**回答の中で考えさせる**方が確実です。`petari pack` は既定で、出力末尾に
+**回答の中で考えさせる**方が確実です。`tazuna pack` は既定で、出力末尾に
 「調査 → 方針 → 変更 → 自己検証」の手順を `<procedure>` ブロックとして同梱し、
 曖昧なら推測せず質問して止まるよう指示します。先頭にはタスクの 1 行要約と
 末尾ブロックへの誘導(リマインダ)を置きます。
@@ -472,8 +474,8 @@ M365 Copilot のように思考量を外から制御できないチャットで�
 `<procedure>` が効きます。
 
 ```console
-npx petari pack --task "受注フォームに保存ボタンを追加する"   # 依頼内容を <task> に同梱
-npx petari pack --task task.md                                # ファイルなら読み込む
+npx tazuna pack --task "受注フォームに保存ボタンを追加する"   # 依頼内容を <task> に同梱
+npx tazuna pack --task task.md                                # ファイルなら読み込む
 ```
 
 ### モード(`--mode`)
@@ -491,8 +493,8 @@ changes.md が途中で切れるのを避けられます。`plan` の回答を�
 `--plan` が必須です)。
 
 ```console
-npx petari pack --task task.md --mode plan                    # → 方針と質問だけが返る
-npx petari pack --task task.md --mode implement --plan plan.md   # 承認した方針を <plan> として同梱
+npx tazuna pack --task task.md --mode plan                    # → 方針と質問だけが返る
+npx tazuna pack --task task.md --mode implement --plan plan.md   # 承認した方針を <plan> として同梱
 ```
 
 ### 自動テストがあるプロジェクト
@@ -513,7 +515,7 @@ AI は変更した振る舞いに対応するテストを同じ changes.md に�
 `<db_schema>` として入れ、手順文の末尾に「DB の確認」の節を入れます(標準エラーに
 「DB の確認・動作検証: あり」と出ます)。AI は DB の値が答えを左右するとき、推測せずに確認用の
 SELECT を `checks/<名前>.sql` として changes.md で出し、回答の末尾に実行コマンドを書きます。
-**petari は DB に接続しません。** テーブル定義の書き出しと SELECT の実行は別ツールの
+**tazuna は DB に接続しません。** テーブル定義の書き出しと SELECT の実行は別ツールの
 [ashiato](https://github.com/ishibashi0112/ashiato) が行います。
 
 ```console
@@ -551,8 +553,8 @@ DB がどう変わるべきかを確かめるとき、操作の手順と期待�
 応じて置換)。生成コマンドはありません。内蔵既定文を書き出して編集してください。
 
 ```console
-npx petari pack --print-procedure > procedure.md         # 内蔵既定文を書き出す
-npx petari pack --print-procedure --mode plan            # モード別の文面を確認
+npx tazuna pack --print-procedure > procedure.md         # 内蔵既定文を書き出す
+npx tazuna pack --print-procedure --mode plan            # モード別の文面を確認
 ```
 
 プロジェクト固有のルール(コーディング規約・禁止事項など)は
@@ -571,17 +573,17 @@ generic 向けの文面が書き出されます(`{{LAYOUT:...}}` は置換済み
 [WORKFLOW.md](WORKFLOW.md) にまとめています。迷ったらそちらを開いてください。
 
 設計書や引継ぎ書を毎回チャットに添付する代わりに、プロジェクトの `docs/` に置いて
-`petari pack` に読ませます。文書の状態から作業モードが自動で決まり、文書の作成・更新も
-AI が changes.md で出して `npx petari` が保存するので、日常のコマンドは
-`npx petari pack` と `npx petari` の 2 つだけになります。
+`tazuna pack` に読ませます。文書の状態から作業モードが自動で決まり、文書の作成・更新も
+AI が changes.md で出して `npx tazuna` が保存するので、日常のコマンドは
+`npx tazuna pack` と `npx tazuna` の 2 つだけになります。
 
 ```console
-npx petari init           # 一回だけ: docs/design/ docs/spec/ docs/README.md を作り
+npx tazuna init           # 一回だけ: docs/design/ docs/spec/ docs/README.md を作り
                           #           設定ファイルに "docs" を追記する
-                          #           (docs だけなら npx petari pack --init-docs)
-npx petari pack           # 以後はこれだけ。モードとタスクは文書の状態から自動
-npx petari                # AI の changes.md(コードも文書も)を適用する
-                          # (npx petari watch を起動しておくと、届くたびに自動で適用)
+                          #           (docs だけなら npx tazuna pack --init-docs)
+npx tazuna pack           # 以後はこれだけ。モードとタスクは文書の状態から自動
+npx tazuna                # AI の changes.md(コードも文書も)を適用する
+                          # (npx tazuna watch を起動しておくと、届くたびに自動で適用)
 ```
 
 | 文書 | 場所 | 役割 | 更新のタイミング |
@@ -634,11 +636,11 @@ AI は自分のコンテキスト残量を測れないので、手順文は会�
 
 - **引継ぎ(自動)**: 実装バッチが完了し、あなたがビルドと動作確認の成功を伝えると、
   AI は同意を待たずにその回答で仕様書の更新と `docs/HANDOFF.md` の書き直し
-  (コード変更とは別の changes.md)を出し、「`npx petari` → `npx petari pack` → 新しい
+  (コード変更とは別の changes.md)を出し、「`npx tazuna` → `npx tazuna pack` → 新しい
   チャットへ」と案内します。「1 バッチ = 1 チャット」が既定の動きです。
   続けたいときは「このチャットで続ける」と伝えます
 - **引継ぎ推奨(同意待ち)**: ①changes.md を 3 回以上出した(エラー修正のやり直しを
-  含む)②petari の失敗レポートを 2 回受けた ③パックを添付し直した、のいずれかで
+  含む)②tazuna の失敗レポートを 2 回受けた ③パックを添付し直した、のいずれかで
   理由を添えて勧め、返事を待ちます。同じエラーに 2 回以上失敗しているときは、失敗した
   試行が残るチャットより、修正途中のコードを含む最新のパックで始め直す方が早いためです
 - バッチの途中で引き継ぐときは、引継ぎ書に「着手中」「未解決のエラー」「試して効かな
@@ -647,8 +649,8 @@ AI は自分のコンテキスト残量を測れないので、手順文は会�
 ## 関連プロジェクト
 
 - [ashiato](https://github.com/ishibashi0112/ashiato) — テスト用 DB のテーブル定義の書き出し・確認用の
-  SELECT の実行・操作の前後の DB の変化の照合(DB の資格情報とドライバーを扱うため、petari とは別のツール)
+  SELECT の実行・操作の前後の DB の変化の照合(DB の資格情報とドライバーを扱うため、tazuna とは別のツール)
 - [Legacy VB.NET Workbench](https://github.com/ishibashi0112/legacy_vb_workbench)
   — VS Code 上で同じ論理ツリーを表示・ビルド・エクスポートする拡張。
-  解析コアは元々共通でしたが、現在は petari の `src/pack/` が唯一の置き場で、拡張は
+  解析コアは元々共通でしたが、現在は tazuna の `src/pack/` が唯一の置き場で、拡張は
   2026-09 時点で凍結しています

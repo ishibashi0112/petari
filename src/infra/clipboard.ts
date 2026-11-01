@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { TOOL_NAME } from "../brand.ts";
 
 const execFileP = promisify(execFile);
 
@@ -37,7 +38,7 @@ function describeRun(result: ReturnType<typeof spawnSync>, command: string): Cli
 export function writeClipboardSync(text: string): ClipboardResult {
   if (process.platform === "win32") {
     // パスは PowerShell の単一引用符で渡す (' は '' にエスケープ。展開・注入が起きない)
-    const dir = mkdtempSync(join(tmpdir(), "petari-clip-"));
+    const dir = mkdtempSync(join(tmpdir(), `${TOOL_NAME}-clip-`));
     const file = join(dir, "clip.txt");
     try {
       writeFileSync(file, text, "utf8");

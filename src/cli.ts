@@ -94,7 +94,7 @@ export async function main(argv: string[]): Promise<number> {
       return watchCommand(rest);
     }
     default:
-      process.stderr.write(`petari: "${sub}" は未実装です\n`);
+      process.stderr.write(`${TOOL_NAME}: "${sub}" は未実装です\n`);
       return 1;
   }
 }
@@ -118,7 +118,7 @@ if (invokedDirectly() || process.argv[1]?.endsWith("cli.js") || process.argv[1]?
     },
     (err: unknown) => {
       // エラーメッセージには changes.md 由来の文字が混入し得るためサニタイズして出力
-      errLine(`petari: ${err instanceof Error ? err.message : String(err)}`);
+      errLine(`${TOOL_NAME}: ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
     },
   );

@@ -40,7 +40,7 @@ suite("initConfig", () => {
     const result = initConfig(ROOT, fs.deps);
     assert.strictEqual(result.kind, "created");
     if (result.kind !== "created") return;
-    assert.strictEqual(result.path, path.join(ROOT, "petari.config.json"));
+    assert.strictEqual(result.path, path.join(ROOT, "tazuna.config.json"));
     assert.deepStrictEqual(result.roots, [
       { path: "src", kind: "src" },
       { path: "tests", kind: "test" },
@@ -52,7 +52,7 @@ suite("initConfig", () => {
         { path: "tests", kind: "test" },
       ],
     });
-    assert.strictEqual(fs.files.get(path.join(ROOT, "petari.config.json")), result.content);
+    assert.strictEqual(fs.files.get(path.join(ROOT, "tazuna.config.json")), result.content);
     assert.ok(result.content.endsWith("}\n"), "末尾は改行で終える");
   });
 

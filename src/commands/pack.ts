@@ -1,5 +1,5 @@
 /**
- * petari pack — コードベースを AI チャットに渡す 1 ファイル(repomix 互換のパック)と、
+ * tazuna pack — コードベースを AI チャットに渡す 1 ファイル(repomix 互換のパック)と、
  * チャット本文に貼る指示テキスト(.prompt.md)を作る(旧 slnmix)。
  *
  * .sln / .vbproj の論理構成(Link・DependentUpon 解決済み)か、設定ファイルの extraRoots に宣言した
@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { INIT_COMMAND, PACK_COMMAND, TOOL_NAME } from "../brand.ts";
+import { INIT_COMMAND, LEGACY_STATE_DIRECTORY, PACK_COMMAND, STATE_DIRECTORY, TOOL_NAME } from "../brand.ts";
 import { writeClipboardSync } from "../infra/clipboard.ts";
 import { err } from "../infra/term.ts";
 import { maskCredentials } from "../core/mask.ts";
@@ -368,7 +368,13 @@ export function packCommand(argv: string[]): number {
         values["prompt-output"] === undefined ? defaultPromptPath(outputFile) : path.resolve(values["prompt-output"]),
       ].map((p) => path.relative(rootDir, p).split(path.sep).join("/").toLowerCase()),
     );
-    gitFiles = listed.files.filter((file) => !ownOutputs.has(file.toLowerCase()));
+    // 適用の履歴と PC ごとの設定(.tazuna/・旧版の .petari/)も入れない(.gitignore に書いていなくても。
+    // 履歴は書き換え前後のファイルの写しと changes.md なので、入れると同じコードが重複する)
+    const stateDirectories = [STATE_DIRECTORY, LEGACY_STATE_DIRECTORY].map((d) => `${d.toLowerCase()}/`);
+    gitFiles = listed.files.filter((file) => {
+      const lower = file.toLowerCase();
+      return !ownOutputs.has(lower) && !stateDirectories.some((d) => lower.startsWith(d));
+    });
   }
   if (layout === "solution" && config.kind === "generic") {
     err(

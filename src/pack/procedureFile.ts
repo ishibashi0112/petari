@@ -6,7 +6,7 @@
  *   <task>        ← --task があるとき(依頼内容)
  *   <plan>        ← --mode implement --plan のとき(承認済みの方針)
  *   <procedure>   ← 内蔵既定文 or ルート直下の procedure.md(--no-procedure で抑止)
- *   <instruction> ← protocol.md(petari の出力規約。instructionFile.ts)
+ *   <instruction> ← protocol.md(tazuna の出力規約。instructionFile.ts)
  *
  * 長い文脈の後に指示を置く方が従いやすいので末尾に置き、要約処理で末尾が
  * 落ちる対策として先頭にリマインダを付ける(既存のサンドイッチ設計と同じ)。

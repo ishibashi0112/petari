@@ -46,7 +46,7 @@ describe("buildFailureReport (§7 拡充)", () => {
   it("照合仕様 (空白・空行・エンコーディング差は吸収済み) を必ず明記する", () => {
     const plan = crossFilePlan();
     const report = buildFailureReport(plan.failures, { outcomes: plan.outcomes });
-    expect(report).toContain("petari の照合仕様");
+    expect(report).toContain("tazuna の照合仕様");
     expect(report).toContain("空白・空行・インデント・エンコーディングの問題では");
     expect(report).toContain("空行の差は双方から空行を除いた照合で吸収されます");
   });

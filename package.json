@@ -1,7 +1,7 @@
 {
-  "name": "petari",
+  "name": "tazuna",
   "version": "0.15.0",
-  "description": "petari — pack your codebase for AI chat, then apply its patches safely (zero dependencies)",
+  "description": "tazuna — pack your codebase for AI chat, then apply its patches safely (zero dependencies; formerly petari and slnmix)",
   "keywords": [
     "cli",
     "ai",
@@ -21,15 +21,15 @@
   "author": "Yuki Sakakibara",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ishibashi0112/petari.git"
+    "url": "git+https://github.com/ishibashi0112/tazuna.git"
   },
-  "homepage": "https://github.com/ishibashi0112/petari#readme",
+  "homepage": "https://github.com/ishibashi0112/tazuna#readme",
   "bugs": {
-    "url": "https://github.com/ishibashi0112/petari/issues"
+    "url": "https://github.com/ishibashi0112/tazuna/issues"
   },
   "type": "module",
   "bin": {
-    "petari": "./dist/cli.js"
+    "tazuna": "./dist/cli.js"
   },
   "files": [
     "dist"

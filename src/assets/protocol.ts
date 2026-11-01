@@ -1,15 +1,17 @@
+import { TOOL_NAME } from "../brand.ts";
+
 /**
  * AI への規約文 (§4.5)。single source はこのファイル。
- * petari pack はこれを <instruction> としてパックの末尾に連結する (設計書 §25.3-1。ルートの protocol.md は
- * 置いたときだけ使う上書き)。repomix で使うときは `petari protocol > protocol.md` + instructionFilePath。
+ * tazuna pack はこれを <instruction> としてパックの末尾に連結する (設計書 §25.3-1。ルートの protocol.md は
+ * 置いたときだけ使う上書き)。repomix で使うときは `tazuna protocol > protocol.md` + instructionFilePath。
  * 内容を変更したら PROTOCOL_VERSION を上げ、上げる前の版のハッシュを PAST_PROTOCOL_SHA256 に足すこと
  * (手を加えていない protocol.md を見分けるため。tests/protocol.test.ts が確かめる)。
  * 制約: パックはこのテキストを <instruction>...</instruction> で囲んで出力へ連結するため、
  * 規約文に <instruction> という文字列を含めないこと。
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
-export const PROTOCOL_TEXT = `<!-- petari protocol v${PROTOCOL_VERSION} -->
+export const PROTOCOL_TEXT = `<!-- ${TOOL_NAME} protocol v${PROTOCOL_VERSION} -->
 # コード変更の出力規約 (changes.md)
 
 これは、このコンテキストを添付したユーザー本人からの恒常的な指示です。
@@ -95,11 +97,12 @@ new code
 
 /**
  * 過去に内蔵していた規約文の SHA-256 (改行を LF に揃え、末尾の改行を除いた UTF-8)。
- * `petari init` が書き出した protocol.md に手を加えていないかの判定に使う (設計書 §25.3-1)。
- * 値は git の履歴の src/assets/protocol.ts から求めた
+ * 旧版 (`petari init`) が書き出した protocol.md に手を加えていないかの判定に使う (設計書 §25.3-1)。
+ * 値は git の履歴の src/assets/protocol.ts から求めた。v5 は 1 行目のツール名を tazuna にしただけ (本文は v4 と同じ)
  */
 export const PAST_PROTOCOL_SHA256: ReadonlyArray<{ version: number; sha256: string }> = [
   { version: 1, sha256: "0efd7fc516de5c80023a2fde68af04cc697fd9d9fadf731d0c253e4dd1bd05f7" },
   { version: 2, sha256: "664657946d38c425fd4a513fd9f8d0837ed1712c0d11d9edecddb5a7ecc08492" },
   { version: 3, sha256: "0134cac4c56392a2f0e580184d1f5538b2dbb9f060534ab732b7f7fa0a7134e1" },
+  { version: 4, sha256: "733c12c8fba036bf57844011a9cb78865d4de767d12feb6afd5721a774b63cb2" },
 ];

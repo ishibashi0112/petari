@@ -36,11 +36,11 @@ suite("slnmixConfig: 設定なし", () => {
   });
 });
 
-suite("slnmixConfig: 新しい名前(petari.config.json)と旧名(slnmix.config.json)", () => {
-  test("petari.config.json を読む(出どころと診断の名前はそのファイル)", () => {
-    const result = loadSlnmixConfig(ROOT, fakeDeps({ "petari.config.json": JSON.stringify({ kind: "typescript" }) }));
-    assert.deepStrictEqual(result.config.sources, ["petari.config.json"]);
-    assert.ok(result.diagnostics.some((d) => d.message.startsWith("petari.config.json: kind は")));
+suite("slnmixConfig: 新しい名前(tazuna.config.json)と旧名(slnmix.config.json)", () => {
+  test("tazuna.config.json を読む(出どころと診断の名前はそのファイル)", () => {
+    const result = loadSlnmixConfig(ROOT, fakeDeps({ "tazuna.config.json": JSON.stringify({ kind: "typescript" }) }));
+    assert.deepStrictEqual(result.config.sources, ["tazuna.config.json"]);
+    assert.ok(result.diagnostics.some((d) => d.message.startsWith("tazuna.config.json: kind は")));
     assert.strictEqual(result.conflict, undefined);
   });
 
@@ -52,7 +52,7 @@ suite("slnmixConfig: 新しい名前(petari.config.json)と旧名(slnmix.config.
   test("両方あれば設定なしとして conflict を返す(呼び出し側が止める)", () => {
     const result = loadSlnmixConfig(
       ROOT,
-      fakeDeps({ "petari.config.json": '{ "kind": "generic" }', "slnmix.config.json": "{}" }),
+      fakeDeps({ "tazuna.config.json": '{ "kind": "generic" }', "slnmix.config.json": "{}" }),
     );
     assert.strictEqual(result.config.kind, "solution");
     assert.deepStrictEqual(result.config.sources, []);
@@ -335,7 +335,7 @@ suite("slnmixConfig: kind(generic 構成。v0.17.0)", () => {
   test("generic で extraRoots が無くても警告しない(git が管理しているファイルが対象。設計書 §25.7)", () => {
     const result = loadSlnmixConfig(
       ROOT,
-      fakeDeps({ "petari.config.json": JSON.stringify({ kind: "generic" }) }),
+      fakeDeps({ "tazuna.config.json": JSON.stringify({ kind: "generic" }) }),
     );
     assert.strictEqual(result.config.kind, "generic");
     assert.deepStrictEqual(result.config.extraRoots, []);

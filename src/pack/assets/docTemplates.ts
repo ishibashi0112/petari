@@ -443,7 +443,7 @@ export const DOC_TEMPLATES: Readonly<Record<DocKind, string>> = {
   handoff: HANDOFF_TEMPLATE,
 };
 
-/** petari init / petari pack --init-docs が docs/README.md として書く説明文 */
+/** tazuna init / tazuna pack --init-docs が docs/README.md として書く説明文 */
 export const DOCS_README = `# docs/ — AI チャットと共有するプロジェクト文書
 
 このフォルダは ${TOOL_NAME}(\`${INIT_COMMAND}\` / \`${PACK_COMMAND} --init-docs\`)が作成しました。\`${PACK_COMMAND}\` はここにある文書を
@@ -472,7 +472,7 @@ changes.md を出します。
 
 場面別の手順(新規開発・実装の続き・既存プロジェクトの乗せ替え・継続判定への
 対応・コマンド早見表)は ${TOOL_NAME} の運用ガイドを参照:
-https://github.com/ishibashi0112/petari/blob/main/docs/WORKFLOW.md
+https://github.com/ishibashi0112/tazuna/blob/main/docs/WORKFLOW.md
 `;
 
 /** 設定ファイルに --init-docs が書く docs 設定の既定値 */

@@ -1,10 +1,13 @@
-# petari 要件定義書
+# tazuna 要件定義書(適用)
 
-**petari — paste AI chat patches onto your codebase**
-**petari — AIチャットの返答を、コードベースにぺたり。**
+**tazuna — pack your codebase for AI chat, then apply its patches safely**
+**tazuna (手綱) — AI チャットにコードを渡し、返答は手元で確かめてから当てる。**
 
 上記を正式タグラインとする(npm の description・README 冒頭・リポジトリ説明に使用)。
-名前は npm / コマンド / リポジトリすべて `petari` で統一し、意味の伝達はタグラインが担う。
+名前は npm / コマンド / リポジトリすべて `tazuna` で統一し、意味の伝達はタグラインが担う。
+0.14.0 までの名前は petari(適用だけの道具)。0.15.0 で slnmix(パック)と 1 つにし、tazuna に改名した
+(2026-11-01。設計書 docs/HANDOFF-slnmix-petari-2026-09.md §25.8-1)。本書は適用の仕様の正本で、
+パックの仕様は同設計書と docs/PACK.md。
 
 チャットベースAI(M365 Copilot Chat 等)の返答をローカルのコードベースに安全に適用するための CLI ツール。
 本ドキュメントは Claude Code での実装開始を前提とした引き継ぎ仕様である。
@@ -48,14 +51,14 @@
                                                   |
                                      changes.md をダウンロード
                                                   |
-[petari] --(パース・検証・適用)--> [ローカルの作業ツリー]
+[tazuna] --(パース・検証・適用)--> [ローカルの作業ツリー]
     |                                      |
-    +--> .petari/history/ に保存      [VS Code Git差分でレビュー・手修正]
+    +--> .tazuna/history/ に保存      [VS Code Git差分でレビュー・手修正]
                                                   |
                                               [コミット]
 ```
 
-- 規約文の single source は本ツール。`petari protocol` が規約文を標準出力に出し、
+- 規約文の single source は本ツール。`tazuna protocol` が規約文を標準出力に出し、
   slnmix はそれを取り込んで出力末尾に付与、repomix は `--instruction-file-path` で読み込む。
 
 ---
@@ -111,7 +114,7 @@ new code
 
 旧スタイル `.vbproj` は `<Compile Include>` に載っていないファイルをコンパイルしない。
 AI に登録させるとパックに `.vbproj` 本体がなく SEARCH が一致しないため、
-**petari が機械的に登録する**(設計書 `slnmix/docs/HANDOFF-slnmix-petari-2026-09.md` §11.1)。
+**tazuna が機械的に登録する**(設計書 `slnmix/docs/HANDOFF-slnmix-petari-2026-09.md` §11.1)。
 
 - `create` の対象が `.vb` のとき、作成先ディレクトリから上へ辿り、プロジェクトルートまでの間で
   最寄りの `*.vbproj` を探す。見つからない / 同じディレクトリに複数ある / SDK スタイル
@@ -159,11 +162,12 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 
 ## 4. CLI コマンド体系
 
-パッケージ名・コマンド名は `petari`(確定済み。名前の由来は擬音の「ぺたり」— AI の変更を
-ローカルにペタッと貼り付ける、というツールの動作そのもの)。npm の `petari` は 2026-08-08 時点で空きを確認済み。
-実装初期に publish して名前を押さえること。
+パッケージ名・コマンド名は `tazuna`(2026-11-01 決定。名前の由来は「手綱」— AI の出力をそのまま流し込まず、
+利用者が手元で確かめてから当てる、という立ち位置)。npm の `tazuna` は 2026-11-01 時点で空きを確認済み。
+旧名の `petari`(0.14.0 まで)と `slnmix` のパッケージは、tazuna を呼ぶだけの互換パッケージとして残す
+(petari は `compat/petari/`、slnmix は slnmix のリポジトリ)。
 
-### 4.1 `petari [path]` — 適用(デフォルトコマンド)
+### 4.1 `tazuna [path]` — 適用(デフォルトコマンド)
 
 入力ソースの優先順位:
 
@@ -192,7 +196,7 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 - `--no-vbproj` : create した `.vb` の `.vbproj` 自動登録(§3.2.1)を今回だけ無効化
 - `--force` : 履歴で適用済みの changes.md でも再適用する(§6.1 の二重適用防止を今回だけ解除)
 
-### 4.2 `petari undo [ID]`
+### 4.2 `tazuna undo [ID]`
 
 - ID 省略時は直近の履歴を巻き戻す。
 - manifest の操作種別に基づき正しく逆適用する:
@@ -200,7 +204,7 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 - **適用後に手修正されている場合**(現状ファイルのハッシュ ≠ after のハッシュ)は
   「手修正が失われますが戻しますか?」と警告・確認する。
 
-### 4.3 `petari show [ID]`
+### 4.3 `tazuna show [ID]`
 
 - ID 省略時は直近の履歴を対象にする。
 - 既定は `code --diff <before> <after>` を実行し、VS Code のネイティブ差分ビューを開く。
@@ -221,18 +225,18 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
     前提にした時点で差分確認は git で足り、Monaco がパッケージの 99% (約 24.5MB) を占めて
     `npx` の取得・導入審査 (待ち受けポートと同梱サードパーティの説明) の負担になっていたため
 
-### 4.4 `petari list`
+### 4.4 `tazuna list`
 
 - history の一覧(ID・日時・概要・対象ファイル数・成否)を表示。
 
-### 4.5 `petari protocol`
+### 4.5 `tazuna protocol`
 
 - 規約文(AI への指示テキスト)を標準出力に出す。
-- 規約文はツール内に同梱し、バージョン管理する(single source)。`petari pack` はこれを直接パックに入れる
+- 規約文はツール内に同梱し、バージョン管理する(single source)。`tazuna pack` はこれを直接パックに入れる
   (v0.15.0。ルートの `protocol.md` は置いたときだけ使う上書き)。repomix など別のツールでパックを作るとき、
   または上書きの元にするときに使う。
 
-### 4.6 `petari init` — プロジェクト初回セットアップの一括実行
+### 4.6 `tazuna init` — プロジェクト初回セットアップの一括実行
 
 各プロジェクトで **1 回だけ** 実行すれば運用開始に必要な準備がすべて整うコマンド。
 「初回セットアップの手順を覚えておかなくてよい」体験にすることが目的。
@@ -240,37 +244,37 @@ AI チャットが規約から軽微に逸脱した出力(実運用で観測)を
 v0.15.0 で旧 slnmix init と 1 つにした(設計書 docs/HANDOFF-slnmix-petari-2026-09.md §20・§25)。
 対話なしで、既存のファイルは変えない(何度実行しても同じ結果)。実行内容:
 
-1. 構成の判定: 設定ファイル(`petari.config.json`。旧名 `slnmix.config.json` も)があればそのまま使う。
+1. 構成の判定: 設定ファイル(`tazuna.config.json`。旧名 `slnmix.config.json` も)があればそのまま使う。
    なければ、直下に `.sln` / `.vbproj` があれば作らない。1 段下に `.sln` が 1 つだけあれば `target` で指す設定を作る。
    どちらも無ければ generic 構成(git のリポジトリでは `{ "kind": "generic" }`、それ以外は実在する `src` / `tests`
    などを `extraRoots` に書く)
 2. docs/ 連携(`docs/design/` `docs/spec/` `docs/README.md` と設定の `docs`)
-3. `.gitignore` に生成物(`repomix-output.xml` / `repomix-output.prompt.md`)と `.petari/` を追記
-4. `.petari/config.json` の雛形を生成
+3. `.gitignore` に生成物(`repomix-output.xml` / `repomix-output.prompt.md`)と `.tazuna/` を追記
+4. `.tazuna/config.json` の雛形を生成
 5. 規約文は内蔵なので書き出さない。旧 init が書いた `protocol.md` があれば、手を加えていないか(削除してよいか)を表示する
 
 補足:
 
 - v0.14 までの init は `protocol.md` の書き出しと `repomix.config.json` の `instructionFilePath` の提案(対話)を
-  していた。v0.15.0 では行わない(`petari pack` が本家 repomix の代わりになる。repomix を使い続ける場合は
-  `petari protocol > protocol.md` と `instructionFilePath` を手で設定する)
+  していた。v0.15.0 では行わない(`tazuna pack` が本家 repomix の代わりになる。repomix を使い続ける場合は
+  `tazuna protocol > protocol.md` と `instructionFilePath` を手で設定する)
 - `--yes` / `--no-repomix` は受け付けて無視する(旧 slnmix init が `--yes --no-repomix` で呼んでいたため)
 - ルートはパック・適用と同じ決め方(`--root` > 上に向かって最初の設定ファイル > 最初の `.git` > カレント)
 
-### 4.7 `petari watch` — 届いた changes.md の自動適用(v0.12.0)
+### 4.7 `tazuna watch` — 届いた changes.md の自動適用(v0.12.0)
 
-往復のたびに `petari` を打つ手間をなくすため、起動しておくと Downloads と
+往復のたびに `tazuna` を打つ手間をなくすため、起動しておくと Downloads と
 プロジェクト直下を見張り、新しく届いた `changes*.md` を **確認なしで** 適用する。
 Ctrl+C で終了する。
 
 - 対象は監視開始**後**に現れた・更新された `changes*.md` だけ(開始時に既にあるものは
-  当てない。古いファイルを黙って当てないため。当てるときは `petari` を実行する)
+  当てない。古いファイルを黙って当てないため。当てるときは `tazuna` を実行する)
 - 書き込み途中を読まないよう、同じ更新時刻・サイズを 2 回続けて観測(約 1 秒間隔)して
   から適用する。0 バイトは待つ(Firefox は最終名の空ファイルを先に作り、完了時に置き換える)
 - `## CHANGES` 見出し(寛容パースのレベル違いを含む)がないファイルは changes.md ではないと
   判断して当てない(プロジェクト直下の変更履歴 `CHANGES.md` 等。失敗レポートで
   クリップボードを上書きしないため)
-- 適用は `petari`(引数なし)と同じ経路を `--yes` で通す: all-or-nothing の検証、
+- 適用は `tazuna`(引数なし)と同じ経路を `--yes` で通す: all-or-nothing の検証、
   失敗レポートの自動コピー、二重適用の防止(§6.1.1。同じ changes.md を取り違えて
   再ダウンロードしても止まる)、成功後の履歴への移動、Git 作業ツリーの警告
 - 失敗した changes.md はそのまま残し、内容が変わるまで当て直さない(毎回のレポートで
@@ -279,7 +283,7 @@ Ctrl+C で終了する。
 - オプション: `--root <dir>` / `--dry-run`(検証と差分プレビューだけ)/ `--no-vbproj`。
   `--partial` と `--force` は自動適用では受け付けない(確認なしで部分適用・再適用しない)
 - 前提: ブラウザのダウンロード先とコードが同じ PC にあること。RDP 越しに changes.md を
-  受け渡す運用では効かない(従来どおり `petari` / `petari --clip`)
+  受け渡す運用では効かない(従来どおり `tazuna` / `tazuna --clip`)
 
 ---
 
@@ -288,7 +292,7 @@ Ctrl+C で終了する。
 プロジェクトルート直下:
 
 ```
-.petari/
+.tazuna/
   config.json
   history/
     2026-08-08_1432/
@@ -302,9 +306,12 @@ Ctrl+C で終了する。
 - manifest.json に最低限含めるもの:
   対象ファイル一覧、各ファイルの操作種別、ブロック数、before/after の SHA-256、
   適用日時、成否、`--partial` 時のスキップ情報、入力ソース(パス/クリップボード)。
-  加えて changes.md の指紋 `changesFingerprint`(§6.1)と、`petari undo` で巻き戻した
+  加えて changes.md の指紋 `changesFingerprint`(§6.1)と、`tazuna undo` で巻き戻した
   日時 `undoneAt`(巻き戻し時に追記)。
-- `.petari/` は個人の作業ログのため `.gitignore` 推奨(初回に追記を提案)。
+- `.tazuna/` は個人の作業ログのため `.gitignore` 推奨(初回に追記を提案)。パックにも入れない
+  (.gitignore に書いていなくても)。
+- 旧名(petari)のリポジトリ: `.tazuna/` が無く `.petari/` だけがあれば、`.petari/` を使い続ける
+  (履歴・設定を引き継ぐ。`.tazuna/` は作らない。brand.ts の stateDirectoryName)。
 
 ---
 
@@ -370,7 +377,7 @@ SEARCH がどの段階でも見つからない場合、即失敗にする前に 
 - すべて適用済みで書き込みが発生しない場合は従来どおり正常終了(exit 0。履歴 ID を併記)
 - 検証失敗時は失敗レポートの前に「適用済みの changes.md である」旨を注記する
   (レポート本文には含めない — AI に渡す情報ではないため)
-- `petari undo` した履歴は対象外(undo 時に manifest へ `undoneAt` を記録)。
+- `tazuna undo` した履歴は対象外(undo 時に manifest へ `undoneAt` を記録)。
   git 等で手動で戻した場合は `--force` が必要
 - 指紋を持たない旧形式の履歴は、保存済みの changes.md 原本をパースして算出する
   (過去の適用分にもさかのぼって効く)。読めない manifest は対象外として無視する
@@ -390,7 +397,7 @@ SEARCH がどの段階でも見つからない場合、即失敗にする前に 
 v0.6.0 から、AI 側の誤診断による往復の浪費を防ぐため次を追加する
 (2026-08-25 の実運用事例: AI が失敗原因を空白/エンコーディング差と誤診し 4 往復):
 
-- **照合仕様の明記**: petari は行末空白・インデント・改行コード・文字コードの差を
+- **照合仕様の明記**: tazuna は行末空白・インデント・改行コード・文字コードの差を
   吸収済みであり、「見つからない」= 行の文字内容の差であることをレポート冒頭に明記
 - **全ブロックの検証結果一覧**: 成功したブロックも含めた成否一覧 (成功はマッチ段階付き)。
   「同じ SEARCH が別ファイルでは通る」等の対比が原因切り分けの決定的な材料になる
@@ -432,7 +439,7 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
 - Shift_JIS に変換不能な文字が REPLACE 側に含まれる場合は検証段階でエラーにする。
 - 新規ファイル(create)の既定は UTF-8 / LF。config で上書き可
   (例: `"newFile": { "encoding": "shift_jis", "eol": "crlf" }`)。
-- `"newFile": { "encoding": "auto" }`(v0.9.0。`petari init` の雛形の既定)は作成先と同じ
+- `"newFile": { "encoding": "auto" }`(v0.9.0。`tazuna init` の雛形の既定)は作成先と同じ
   ディレクトリの既存テキストファイル(同じ拡張子を優先、なければ任意のテキスト。なければ上位
   ディレクトリを 1 段ずつルートまで)の多数決でエンコーディング / BOM / 改行を決める。
   手本がなければ `.vb` → UTF-8 + BOM + CRLF、それ以外 → UTF-8 / BOM なし / LF。
@@ -457,7 +464,7 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
 
 ---
 
-## 10. 設定(.petari/config.json)
+## 10. 設定(.tazuna/config.json)
 
 ```jsonc
 {
@@ -474,7 +481,8 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
   - macOS / Linux: `~/Downloads` 相当
   - Windows: **Known Folder(レジストリ)から取得**。
     OneDrive リダイレクトで `Downloads` が移動されている社用 PC を確実に想定すること。
-- グローバル設定(`~/.config/petari/config.json` 等)とプロジェクト設定のマージ(プロジェクト優先)。
+- グローバル設定(`~/.config/tazuna/config.json` 等。無ければ旧名の `~/.config/petari/config.json` 等)と
+  プロジェクト設定のマージ(プロジェクト優先)。プロジェクト設定は旧名の `.petari/config.json` も読む(§5)。
 
 ---
 
@@ -501,7 +509,7 @@ AI チャットへの貼り返しが 1 ペーストで済む。config で無効�
 
 ## 13. 未確定事項(実装時に決定)
 
-- `petari init` を独立コマンドにするか、初回 apply 時の自動提案に統合するか
+- `tazuna init` を独立コマンドにするか、初回 apply 時の自動提案に統合するか
 - 失敗レポートのクリップボードコピー(`--clip-report`)の要否
 - 履歴の保持件数上限の既定値
 - Mermaid 図の history からの取り出しやすさ(将来: `show --changes` で CHANGES を表示 等)

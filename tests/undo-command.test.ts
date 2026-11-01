@@ -36,7 +36,7 @@ const CHANGES = doc(
 const ORIGINAL_VB = sjis("' コメント\r\nDim count As Integer = 1\r\nEnd Module");
 
 async function setupApplied(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "petari-undo-"));
+  const dir = mkdtempSync(join(tmpdir(), "tazuna-undo-"));
   writeFileSync(join(dir, "legacy.vb"), ORIGINAL_VB);
   writeFileSync(join(dir, "old.txt"), utf8("obsolete\n"));
   writeFileSync(join(dir, "changes.md"), CHANGES, "utf8");
@@ -72,7 +72,7 @@ describe("undoCommand (§4.2)", () => {
   });
 
   it("履歴がなければエラー", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-undo-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-undo-empty-"));
     expect(await undoCommand(["--root", dir, "--yes"])).toBe(1);
   });
 
@@ -91,7 +91,7 @@ describe("listCommand (§4.4)", () => {
   });
 
   it("履歴がなくても 0 で終了する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-list-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-list-empty-"));
     expect(await listCommand(["--root", dir])).toBe(0);
   });
 });
@@ -100,7 +100,7 @@ describe("resolveDiffPair (§4.3)", () => {
   it("通常は before/after、create は空 vs after、--mine は after vs 現在", async () => {
     const dir = await setupApplied();
     const id = listHistoryIds(dir)[0] as string;
-    const hdir = join(dir, ".petari", "history", id);
+    const hdir = join(dir, ".tazuna", "history", id);
 
     const rep = resolveDiffPair(
       dir,

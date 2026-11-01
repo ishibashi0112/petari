@@ -8,7 +8,7 @@
  * - 文字コードはレガシー VB で多い Shift_JIS(CP932)を自動判定して UTF-8 へ統一
  * - EmbeddedResource(.resx)は常に除外、Designer 関連は既定で除外(オプションで含める)
  * - 除外・未解決のファイルは skipped_files に明記する(黙って捨てない)
- * - <file path> は既定でルート相対の物理パス(`/` 区切り)。petari 等の
+ * - <file path> は既定でルート相対の物理パス(`/` 区切り)。tazuna 等の
  *   適用ツールがそのまま使える形にする。<directory_structure> は従来どおり
  *   論理ツリー(人が読む用)。rootDir を渡さなければ従来の
  *   `プロジェクト名\論理パス` 表記(--legacy-paths)
@@ -158,7 +158,7 @@ export interface RepomixExportResult {
 /**
  * ソースファイルのバイト列を文字列へデコードする。
  * BOM → UTF-16 / UTF-8 を優先し、UTF-8 として不正なら CP932(Shift_JIS)とみなす。
- * Shift_JIS は petari の適用と同じデコーダー(decodeShiftJis)で読む(AI が見る文字と照合する文字を揃える)
+ * Shift_JIS は tazuna の適用と同じデコーダー(decodeShiftJis)で読む(AI が見る文字と照合する文字を揃える)
  */
 export function decodeSourceBuffer(buffer: Buffer): string {
   if (buffer.length >= 2) {

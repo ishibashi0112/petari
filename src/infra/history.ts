@@ -1,12 +1,13 @@
 /**
- * 履歴ディレクトリ (.petari/history/) の読み書き (§5)。
+ * 履歴ディレクトリ (.tazuna/history/。旧版の .petari/ だけがあればそちら) の読み書き (§5)。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stateDirectoryName } from "../brand.ts";
 import type { Operation } from "../types.ts";
 import { sha256, writeBytes } from "./files.ts";
 
-/** manifest 上の操作種別。"vbproj" は petari が自動で行った .vbproj への Compile 登録 (設計書 §11.1) */
+/** manifest 上の操作種別。"vbproj" は tazuna が自動で行った .vbproj への Compile 登録 (設計書 §11.1) */
 export type ManifestOp = Operation | "vbproj";
 
 export interface ManifestFileEntry {
@@ -38,17 +39,31 @@ export interface Manifest {
   source: { type: "file" | "clipboard" | "downloads" | "project-root"; path?: string };
   /** changes.md の指紋 (core/fingerprint.ts)。同じ changes.md の再適用検出に使う (v0.10.0〜) */
   changesFingerprint?: string;
-  /** petari undo で巻き戻した日時 (ISO 8601)。巻き戻し済みの履歴は再適用検出の対象外 */
+  /** undo で巻き戻した日時 (ISO 8601)。巻き戻し済みの履歴は再適用検出の対象外 */
   undoneAt?: string;
   files: ManifestFileEntry[];
 }
 
-export function petariDir(root: string): string {
-  return join(root, ".petari");
+function isDirectory(absPath: string): boolean {
+  try {
+    return statSync(absPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** 状態ディレクトリの名前 (.tazuna。旧版の .petari だけがあれば .petari。brand.ts の stateDirectoryName) */
+export function stateDirName(root: string): string {
+  return stateDirectoryName(root, isDirectory);
+}
+
+/** 状態ディレクトリ (PC ごとの設定と履歴) の絶対パス */
+export function stateDir(root: string): string {
+  return join(root, stateDirName(root));
 }
 
 export function historyRoot(root: string): string {
-  return join(petariDir(root), "history");
+  return join(stateDir(root), "history");
 }
 
 /** 履歴 ID: YYYY-MM-DD_HHmm。同分内の衝突は連番サフィックス (§5) */

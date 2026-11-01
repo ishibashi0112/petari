@@ -54,7 +54,7 @@ interface CurrentSection {
 
 /**
  * CHANGES 見出し (寛容パースが受け付けるレベル違いを含む) があるか。
- * petari watch が changes.md 以外の CHANGES.md 等 (変更履歴) を当てに行かないための判定
+ * tazuna watch が changes.md 以外の CHANGES.md 等 (変更履歴) を当てに行かないための判定
  */
 export function hasChangesHeading(text: string): boolean {
   return text

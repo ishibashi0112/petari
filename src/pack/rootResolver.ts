@@ -1,11 +1,11 @@
 /**
  * ルート(物理パス・設定ファイル・protocol.md / procedure.md・docs/・出力先の基準)を決める。
- * パック(petari pack / build)と適用(petari / undo / show / list / watch / init)で同じ決め方をし、
+ * パック(tazuna pack / build)と適用(tazuna / undo / show / list / watch / init)で同じ決め方をし、
  * パックの `<file path>` と changes.md のパスの基準を必ず一致させる(設計書 §25.3-2)。
  *
  *   1. `--root <dir>` の明示指定(パックでは入力がその配下にあること)
  *   2. 起点(パック: 入力のディレクトリ、適用: カレント)から上に向かって設定ファイル
- *      (petari.config.json / slnmix.config.json)を探し、最初に見つかったディレクトリ。
+ *      (tazuna.config.json / slnmix.config.json)を探し、最初に見つかったディレクトリ。
  *      `.git` のあるディレクトリ(リポジトリの境界)より上には行かない
  *   3. 上に向かって最初の `.git` のあるディレクトリ
  *   4. どちらもなければ起点

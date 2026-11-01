@@ -22,7 +22,7 @@ const simpleChanges = (path: string): string =>
   );
 
 async function setupApplied(): Promise<{ root: string; id: string }> {
-  const root = mkdtempSync(join(tmpdir(), "petari-show-cmd-"));
+  const root = mkdtempSync(join(tmpdir(), "tazuna-show-cmd-"));
   writeFileSync(join(root, "a.txt"), "hello\n");
   const changesPath = join(root, "changes.md");
   writeFileSync(changesPath, simpleChanges("a.txt"), "utf8");
@@ -50,8 +50,8 @@ describe("showCommand: ブラウザ経路 (§4.3)", () => {
   it("vscodeCommand が見つからない場合はブラウザレポートにフォールバックして 0", async () => {
     const { root } = await setupApplied();
     writeFileSync(
-      join(root, ".petari", "config.json"),
-      JSON.stringify({ vscodeCommand: "petari-test-no-such-cmd" }),
+      join(root, ".tazuna", "config.json"),
+      JSON.stringify({ vscodeCommand: "tazuna-test-no-such-cmd" }),
       "utf8",
     );
     expect(await showCommand(["--root", root, "--no-open"])).toBe(0);
@@ -61,7 +61,7 @@ describe("showCommand: ブラウザ経路 (§4.3)", () => {
     const { root } = await setupApplied();
     // POSIX の false は必ず終了コード 1 (ENOENT/EINVAL ではない)
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ vscodeCommand: "false" }),
       "utf8",
     );
@@ -83,8 +83,8 @@ describe("showCommand: --edit は VS Code 専用 (v0.13.0)", () => {
   it("--edit で vscodeCommand が見つからない場合はブラウザにフォールバックせず 1", async () => {
     const { root } = await setupApplied();
     writeFileSync(
-      join(root, ".petari", "config.json"),
-      JSON.stringify({ vscodeCommand: "petari-test-no-such-cmd" }),
+      join(root, ".tazuna", "config.json"),
+      JSON.stringify({ vscodeCommand: "tazuna-test-no-such-cmd" }),
       "utf8",
     );
     expect(await showCommand(["--root", root, "--edit", "--no-open"])).toBe(1);
@@ -93,7 +93,7 @@ describe("showCommand: --edit は VS Code 専用 (v0.13.0)", () => {
   it("--edit は VS Code があれば差分を開いて 0", async () => {
     const { root } = await setupApplied();
     // POSIX の true は引数を無視して終了コード 0 (VS Code の代わり)
-    writeFileSync(join(root, ".petari", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
+    writeFileSync(join(root, ".tazuna", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
     expect(await showCommand(["--root", root, "--edit"])).toBe(0);
   });
 });
@@ -116,7 +116,7 @@ describe("vscodeMissingHint", () => {
 
 describe("showCommand: manifest 改ざん耐性 (§9)", () => {
   const tamper = (root: string, id: string, path: string): void => {
-    const mpath = join(root, ".petari", "history", id, "manifest.json");
+    const mpath = join(root, ".tazuna", "history", id, "manifest.json");
     const manifest = JSON.parse(readFileSync(mpath, "utf8")) as Manifest;
     (manifest.files[0] as ManifestFileEntry).path = path;
     writeFileSync(mpath, JSON.stringify(manifest), "utf8");
@@ -126,7 +126,7 @@ describe("showCommand: manifest 改ざん耐性 (§9)", () => {
     const { root, id } = await setupApplied();
     tamper(root, id, "../evil.txt");
     // 検証が無ければ true が 0 で終わるため、1 は改ざんの拒否による
-    writeFileSync(join(root, ".petari", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
+    writeFileSync(join(root, ".tazuna", "config.json"), JSON.stringify({ vscodeCommand: "true" }), "utf8");
     expect(await showCommand(["--root", root, "--edit"])).toBe(1);
   });
 
@@ -139,17 +139,22 @@ describe("showCommand: manifest 改ざん耐性 (§9)", () => {
 
 describe("cleanupOldReports (§4.3)", () => {
   it("1 時間より古いレポートだけを削除し、直近分と他の接頭辞は残す", () => {
-    const oldDir = mkdtempSync(join(tmpdir(), "petari-report-"));
+    const oldDir = mkdtempSync(join(tmpdir(), "tazuna-report-"));
     writeFileSync(join(oldDir, "report.html"), "<html>old</html>");
     const past = new Date(Date.now() - 2 * 60 * 60_000);
     utimesSync(oldDir, past, past);
 
-    const freshDir = mkdtempSync(join(tmpdir(), "petari-report-"));
-    const otherDir = mkdtempSync(join(tmpdir(), "petari-other-"));
+    // 旧版 (petari) が残したレポートも消す (コードの中身を平文で含むため)
+    const legacyDir = mkdtempSync(join(tmpdir(), "petari-report-"));
+    utimesSync(legacyDir, past, past);
+
+    const freshDir = mkdtempSync(join(tmpdir(), "tazuna-report-"));
+    const otherDir = mkdtempSync(join(tmpdir(), "tazuna-other-"));
     utimesSync(otherDir, past, past);
 
     cleanupOldReports();
     expect(existsSync(oldDir)).toBe(false);
+    expect(existsSync(legacyDir)).toBe(false);
     expect(existsSync(freshDir)).toBe(true);
     expect(existsSync(otherDir)).toBe(true);
   });
@@ -157,8 +162,8 @@ describe("cleanupOldReports (§4.3)", () => {
 
 describe("generateReportHtml (§4.3)", () => {
   it("replace / create / delete / バイナリを 1 ページに描画する", () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-show-rep-"));
-    const hdir = join(root, ".petari", "history", "X");
+    const root = mkdtempSync(join(tmpdir(), "tazuna-show-rep-"));
+    const hdir = join(root, ".tazuna", "history", "X");
     mkdirSync(join(hdir, "before"), { recursive: true });
     mkdirSync(join(hdir, "after"), { recursive: true });
     writeFileSync(join(hdir, "before", "a.txt"), "old line\n");
@@ -185,8 +190,8 @@ describe("generateReportHtml (§4.3)", () => {
   });
 
   it("--mine で delete は注記、現在ファイル欠損も注記になる", () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-show-rep2-"));
-    const hdir = join(root, ".petari", "history", "X");
+    const root = mkdtempSync(join(tmpdir(), "tazuna-show-rep2-"));
+    const hdir = join(root, ".tazuna", "history", "X");
     mkdirSync(join(hdir, "after"), { recursive: true });
     writeFileSync(join(hdir, "after", "gone.txt"), "x\n");
 

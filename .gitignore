@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.tazuna/
 .petari/
 # v0.12.0 までの Monaco 同梱先。手元に残っていれば削除してよい
 vendor/

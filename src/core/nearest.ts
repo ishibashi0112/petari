@@ -18,6 +18,8 @@
  * 差がある」ケースだけなので、注記は空行が原因と読めない文言にする (誤誘導防止)。
  */
 
+import { TOOL_NAME } from "../brand.ts";
+
 /** ウィンドウ内の 1 行と SEARCH 対応行の照合結果。extra = 実ファイル側にだけある行 */
 export type LineVerdict = "match" | "ws-only" | "differ" | "extra";
 
@@ -465,7 +467,7 @@ function buildHint(w: NearestWindow): string[] {
 
 /** 失敗レポートに埋め込む診断テキスト。抜粋行は「│」の右側が実ファイルの verbatim */
 export function renderNearest(a: NearestAnalysis): string[] {
-  const out: string[] = ["#### 参考: 実ファイルの該当箇所 (petari が現在のファイル内容から自動抽出)"];
+  const out: string[] = [`#### 参考: 実ファイルの該当箇所 (${TOOL_NAME} が現在のファイル内容から自動抽出)`];
   if (a.afterPriorBlocks) {
     out.push(
       "(同一ファイル内の先行ブロックを適用した後の想定内容です。SEARCH はこの内容に一致させてください)",

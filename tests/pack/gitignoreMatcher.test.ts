@@ -89,7 +89,7 @@ describe("gitignoreMatcher: git check-ignore と同じ結果", () => {
     const pick = <T>(a: readonly T[]): T => a[Math.floor(rnd() * a.length)] as T;
     const parts = ["a", "b", "ab", "*", "**", "?", "[ab]", "[!a]", "[a-c]", ".", "A", "x.y", "\\*", "[[:alpha:]]", "bin", "*.log"];
     const names = ["a", "b", "ab", "A", "x.y", "c", ".a", "ba", "abc", "bin", "x.log", "Bin"];
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "petari-gitignore-"));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "tazuna-gitignore-"));
     try {
       spawnSync("git", ["init", "-q", repo]);
       let compared = 0;

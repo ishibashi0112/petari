@@ -1,5 +1,5 @@
 /**
- * petari build — MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
+ * tazuna build — MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
  * Copilot Chat に貼れる文面にしてクリップボードへ入れる(旧 slnmix build。設計書 §22)。
  * 入力の決め方とルートはパックと同じ。
  */
@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { BUILD_COMMAND } from "../brand.ts";
+import { BUILD_COMMAND, TOOL_NAME } from "../brand.ts";
 import { writeClipboardSync } from "../infra/clipboard.ts";
 import { err } from "../infra/term.ts";
 import { buildErrorReport, parseMsbuildErrors } from "../pack/buildErrors.ts";
@@ -89,7 +89,7 @@ function runBuild(
   err(`MSBuild: ${located.path}(${located.source})`);
 
   // エラーだけを UTF-8 のログに書かせる(コンソールのコードページに左右されない)
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "petari-build-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${TOOL_NAME}-build-`));
   try {
     const logFile = path.join(tempDir, "errors.log");
     const run = runMsbuild(located.path, targetPath, {

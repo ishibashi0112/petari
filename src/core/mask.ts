@@ -1,13 +1,13 @@
 /**
  * 認証情報の伏せ字 (§7 失敗レポート / 伏せ字の行の照合)。
  *
- * petari pack (旧 slnmix) がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
+ * tazuna pack (旧 slnmix) がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
  * (SEARCH / REPLACE / CONTENT) にも [MASKED] が入る。適用では次の 3 点でこれを扱う:
  * - 失敗レポートの「実ファイルの該当箇所」を伏せる (AI に貼るレポートから実際の値が漏れない)
  * - SEARCH の [MASKED] を「伏せた後の実ファイル」と照合する (伏せ字の行も変更できる)
  * - 書き込む行の [MASKED] を元の値に戻す。戻せなければ書かずに止める
  *
- * 伏せる処理 (maskCredentials) はパック・petari build のエラーの文面・適用の失敗レポートで共通の 1 本
+ * 伏せる処理 (maskCredentials) はパック・tazuna build のエラーの文面・適用の失敗レポートで共通の 1 本
  * (0.15.0 の統合で slnmix の credentialMasker.ts の写しから 1 つに戻した。設計書 §25)。旧 slnmix のパック
  * (言語ごとの伏せ方の前の版) から写した SEARCH も照合できるよう、照合用の表示は旧版の伏せ方の分も作る。
  * I/O を持たない純粋ロジック。
@@ -1697,7 +1697,7 @@ function maskLanguageSource(content: string, strict: boolean, language: SourceLa
 }
 
 // ---------------------------------------------------------------------------
-// 伏せた表示 (行の位置を保つ)。petari build のエラーの抜粋と失敗レポートの抜粋で使う
+// 伏せた表示 (行の位置を保つ)。tazuna build のエラーの抜粋と失敗レポートの抜粋で使う
 // ---------------------------------------------------------------------------
 
 /** パックで置き換える伏せ字 */
@@ -1728,7 +1728,7 @@ interface MaskSpan {
 function maskModes(path: string, stricts: boolean[]): MaskMode[] {
   const vbs = /\.vb$/i.test(path) ? [true, false] : [false];
   const modes: MaskMode[] = vbs.flatMap((vbSource) => stricts.map((strict) => ({ vbSource, strict })));
-  // 言語の分かるソースは、言語ごとの伏せ方 (petari pack) と汎用テキストの伏せ方 (旧 slnmix のパック) の両方
+  // 言語の分かるソースは、言語ごとの伏せ方 (tazuna pack) と汎用テキストの伏せ方 (旧 slnmix のパック) の両方
   const language = sourceLanguageOf(path);
   if (language !== undefined) {
     modes.push(...stricts.map((strict) => ({ vbSource: false, strict, language })));
@@ -1859,7 +1859,7 @@ export interface MaskLinesOptions {
   /** 高エントロピー文字列も伏せるか (省略時は true) */
   strict?: boolean;
   /**
-   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (petari build) に指定する。
+   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (tazuna build) に指定する。
    * 省略時は拡張子から、パックが取り得る伏せ方をすべて使う (.vb は VB / 汎用テキストの両方)
    */
   vbSource?: boolean;
@@ -1916,7 +1916,7 @@ export function maskedValuesForDisplay(lines: string[], options: MaskLinesOption
 }
 
 // ---------------------------------------------------------------------------
-// petari 側の扱い (伏せ字の行の照合と復元)
+// 適用側の扱い (伏せ字の行の照合と復元)
 // ---------------------------------------------------------------------------
 
 /**

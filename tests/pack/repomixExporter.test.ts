@@ -793,7 +793,7 @@ suite("repomixExporter: generic 構成(layout: generic、hybrid fixture の web 
   });
 
   test("ヘッダーは extraRoots に基づく旨を述べ、Visual Studio / Designer / .resx / Link の記述を持たない", () => {
-    assert.ok(result.content.includes("「hybrid」の petari.config.json(extraRoots)に宣言されたディレクトリに基づき"));
+    assert.ok(result.content.includes("「hybrid」の tazuna.config.json(extraRoots)に宣言されたディレクトリに基づき"));
     assert.ok(result.content.includes(".sln / .vbproj の論理構成は使っていない"));
     assert.ok(result.content.includes("ルート「hybrid」からの相対物理パス(/ 区切り)"));
     assert.ok(result.content.includes("新規ファイルも同じ規則で書くこと"));

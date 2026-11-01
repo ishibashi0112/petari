@@ -69,8 +69,8 @@ suite("rootResolver: 上位の設定ファイル", () => {
     });
   });
 
-  test("新しい名前の設定ファイル(petari.config.json)も同じ", () => {
-    const deps = fakeDeps([path.join(CWD, "petari.config.json")], [CWD, path.resolve("/work/.git")]);
+  test("新しい名前の設定ファイル(tazuna.config.json)も同じ", () => {
+    const deps = fakeDeps([path.join(CWD, "tazuna.config.json")], [CWD, path.resolve("/work/.git")]);
     assert.deepStrictEqual(resolveRoot(TARGET, undefined, CWD, deps), {
       kind: "root",
       rootDir: CWD,
@@ -79,7 +79,7 @@ suite("rootResolver: 上位の設定ファイル", () => {
   });
 
   test("サブフォルダの設定は .git より先に見つかる(パックも適用もそこがルート)", () => {
-    const deps = fakeDeps([path.join(CWD, "dotnet", "petari.config.json")], [CWD, path.join(CWD, ".git")]);
+    const deps = fakeDeps([path.join(CWD, "dotnet", "tazuna.config.json")], [CWD, path.join(CWD, ".git")]);
     assert.deepStrictEqual(findRoot(path.join(CWD, "dotnet", "Forms"), deps), {
       rootDir: path.join(CWD, "dotnet"),
       reason: "config",

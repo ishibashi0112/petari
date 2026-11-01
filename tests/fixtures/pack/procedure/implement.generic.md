@@ -1,4 +1,4 @@
-<!-- petari procedure v9 (mode: implement, layout: generic) -->
+<!-- tazuna procedure v9 (mode: implement, layout: generic) -->
 # 作業手順
 
 これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。

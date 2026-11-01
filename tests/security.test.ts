@@ -48,8 +48,8 @@ describe("invalidPathReason: Windows 特殊パス (指摘 6)", () => {
 
 describe("symlink ディレクトリ経由のルート外書き込み防止 (指摘 2)", () => {
   it("isInsideRoot は symlink 経由の外部パスを検出する", () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-root-"));
-    const outside = mkdtempSync(join(tmpdir(), "petari-sec-out-"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "tazuna-sec-out-"));
     symlinkSync(outside, join(root, "linkdir"));
     mkdirSync(join(root, "realdir"));
 
@@ -60,14 +60,14 @@ describe("symlink ディレクトリ経由のルート外書き込み防止 (指
   });
 
   it("apply は symlink 経由の変更を検証段階で失敗させ、外部ファイルを守る", async () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-a-"));
-    const outside = mkdtempSync(join(tmpdir(), "petari-sec-b-"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-a-"));
+    const outside = mkdtempSync(join(tmpdir(), "tazuna-sec-b-"));
     writeFileSync(join(outside, "target.txt"), "hello\n");
     symlinkSync(outside, join(root, "linkdir"));
     // 失敗レポートの自動コピーがテスト実行機のクリップボードを書き換えないよう無効化
-    mkdirSync(join(root, ".petari"), { recursive: true });
+    mkdirSync(join(root, ".tazuna"), { recursive: true });
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ clipReportOnFailure: false }),
       "utf8",
     );
@@ -83,13 +83,13 @@ describe("symlink ディレクトリ経由のルート外書き込み防止 (指
 
 describe("undo は改ざんされた manifest を拒否する (指摘 1)", () => {
   async function setupApplied(): Promise<{ root: string; manifestPath: string; manifest: Manifest }> {
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-undo-"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-undo-"));
     writeFileSync(join(root, "a.txt"), "hello\n");
     const changesPath = join(root, "changes.md");
     writeFileSync(changesPath, simpleChanges("a.txt"), "utf8");
     expect(await applyCommand([changesPath, "--root", root, "--yes"])).toBe(0);
     const id = listHistoryIds(root)[0] as string;
-    const manifestPath = join(root, ".petari", "history", id, "manifest.json");
+    const manifestPath = join(root, ".tazuna", "history", id, "manifest.json");
     const manifest = readManifest(root, id) as Manifest;
     return { root, manifestPath, manifest };
   }
@@ -123,13 +123,13 @@ describe("vscodeCommand の形式制限 (指摘 3)", () => {
   });
 
   it("show は不正な vscodeCommand を実行前に拒否する", async () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-show-"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-show-"));
     writeFileSync(join(root, "a.txt"), "hello\n");
     const changesPath = join(root, "changes.md");
     writeFileSync(changesPath, simpleChanges("a.txt"), "utf8");
     expect(await applyCommand([changesPath, "--root", root, "--yes"])).toBe(0);
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ vscodeCommand: "./evil.sh" }),
       "utf8",
     );
@@ -153,24 +153,24 @@ describe("sanitizeForTerminal (指摘 4)", () => {
 describe("config の実行時検証 (指摘 5 追補)", () => {
   it("不正な newFile.encoding / historyLimit は明確なエラーになる", async () => {
     const { loadConfig } = await import("../src/infra/config.ts");
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-cfg-"));
-    mkdirSync(join(root, ".petari"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-cfg-"));
+    mkdirSync(join(root, ".tazuna"));
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ newFile: { encoding: "utf16" } }),
       "utf8",
     );
     expect(() => loadConfig(root)).toThrow(/newFile\.encoding/);
 
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ historyLimit: -5 }),
       "utf8",
     );
     expect(() => loadConfig(root)).toThrow(/historyLimit/);
 
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ vbproj: { register: "yes" } }),
       "utf8",
     );
@@ -179,10 +179,10 @@ describe("config の実行時検証 (指摘 5 追補)", () => {
 
   it('newFile.encoding "auto" は eol / bom を省略でき、既定の lf を混ぜない (設計書 §11.2)', async () => {
     const { loadConfig } = await import("../src/infra/config.ts");
-    const root = mkdtempSync(join(tmpdir(), "petari-sec-cfg2-"));
-    mkdirSync(join(root, ".petari"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-sec-cfg2-"));
+    mkdirSync(join(root, ".tazuna"));
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ newFile: { encoding: "auto" } }),
       "utf8",
     );
@@ -190,7 +190,7 @@ describe("config の実行時検証 (指摘 5 追補)", () => {
     expect(loadConfig(root).vbproj).toEqual({ register: true });
     // 従来形式 (eol のみ指定) は既定とマージされる
     writeFileSync(
-      join(root, ".petari", "config.json"),
+      join(root, ".tazuna", "config.json"),
       JSON.stringify({ newFile: { eol: "crlf" } }),
       "utf8",
     );

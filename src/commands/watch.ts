@@ -1,11 +1,12 @@
 /**
- * petari watch — Downloads とプロジェクト直下を監視し、届いた changes*.md を自動で適用する (§4.7)。
+ * tazuna watch — Downloads とプロジェクト直下を監視し、届いた changes*.md を自動で適用する (§4.7)。
  * 新着 1 件ごとに applyCommand へ確認なしで渡す。検証・失敗レポートの自動コピー・
- * 二重適用の防止・成功後の履歴への移動は `petari` (引数なし) と同じ。Ctrl+C で終了する。
+ * 二重適用の防止・成功後の履歴への移動は `tazuna` (引数なし) と同じ。Ctrl+C で終了する。
  */
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { TOOL_NAME } from "../brand.ts";
 import { hasChangesHeading } from "../core/parser.ts";
 import { initialWatchState, observeWatch, type WatchedFile } from "../core/watch.ts";
 import { loadConfig } from "../infra/config.ts";
@@ -67,7 +68,7 @@ export async function watchCommand(argv: string[], options: WatchOptions = {}): 
     out(`  プロジェクト直下: ${root}`);
     if (values["dry-run"]) out("  --dry-run: 検証と差分プレビューだけで、書き込みはしません");
     if (state.settled.size > 0) {
-      out(`  (既にある ${state.settled.size} 件は対象外です。それを当てるときは petari を実行してください)`);
+      out(`  (既にある ${state.settled.size} 件は対象外です。それを当てるときは ${TOOL_NAME} を実行してください)`);
     }
 
     const interval = options.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -85,20 +86,20 @@ export async function watchCommand(argv: string[], options: WatchOptions = {}): 
         try {
           text = readFileSync(f.path, "utf8");
         } catch {
-          err(`petari: ファイルを読めません: ${f.path}`);
+          err(`${TOOL_NAME}: ファイルを読めません: ${f.path}`);
           continue;
         }
         // 変更履歴の CHANGES.md 等を当てに行かない (失敗レポートでクリップボードを上書きしないため)
         if (!hasChangesHeading(text.replace(/^﻿/, ""))) {
           out("  ## CHANGES の見出しがないため、changes.md ではないと判断して適用しません");
-          out("  (AI の返答なら `petari <パス>` で実行すると失敗の理由を確認できます)");
+          out(`  (AI の返答なら \`${TOOL_NAME} <パス>\` で実行すると失敗の理由を確認できます)`);
           continue;
         }
         try {
           await applyCommand(applyArgs, { path: f.path, origin: f.origin });
         } catch (e) {
           // 1 件の失敗で監視ごと止めない
-          err(`petari: ${e instanceof Error ? e.message : String(e)}`);
+          err(`${TOOL_NAME}: ${e instanceof Error ? e.message : String(e)}`);
         }
         out("");
         out("引き続き待っています (Ctrl+C で終了)");

@@ -1,5 +1,5 @@
 /**
- * initProject(petari init。旧 slnmix init + petari init)の単体テスト。ファイルシステムは fake を注入する。
+ * initProject(tazuna init。旧 slnmix init + tazuna init)の単体テスト。ファイルシステムは fake を注入する。
  */
 
 import { suite, test } from "vitest";
@@ -92,29 +92,29 @@ function readJson(fs: FakeFs, relative: string, base: string = REPO): unknown {
 const DOCS_CONFIG = { design: "docs/design", spec: "docs/spec", handoff: "docs/HANDOFF.md" };
 
 suite("initProject", () => {
-  test("直下に .sln があれば target は書かず、docs / .gitignore / .petari/ までまとめて行う", () => {
+  test("直下に .sln があれば target は書かず、docs / .gitignore / .tazuna/ までまとめて行う", () => {
     const fs = fakeFs([".git/", "App.sln"]);
     const result = initProject(REPO, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "solution" });
-    assert.deepStrictEqual(readJson(fs, "petari.config.json"), { docs: DOCS_CONFIG });
+    assert.deepStrictEqual(readJson(fs, "tazuna.config.json"), { docs: DOCS_CONFIG });
     assert.ok(fs.dirs.has(path.join(REPO, "docs", "design")));
     assert.ok(fs.dirs.has(path.join(REPO, "docs", "spec")));
     assert.ok(fs.files.has(path.join(REPO, "docs", "README.md")));
     assert.strictEqual(
       fs.files.get(path.join(REPO, ".gitignore")),
-      "repomix-output.xml\nrepomix-output.prompt.md\n.petari/\n",
+      "repomix-output.xml\nrepomix-output.prompt.md\n.tazuna/\n",
     );
-    assert.strictEqual(fs.files.get(path.join(REPO, ".petari", "config.json")), CONFIG_TEMPLATE);
+    assert.strictEqual(fs.files.get(path.join(REPO, ".tazuna", "config.json")), CONFIG_TEMPLATE);
     // 規約文は内蔵。protocol.md も repomix.config.json も作らない
     assert.ok(!fs.files.has(path.join(REPO, "protocol.md")));
     assert.ok(!fs.files.has(path.join(REPO, "repomix.config.json")));
     assert.ok(fs.logs.includes(`5. 規約文: 内蔵 v${PROTOCOL_VERSION}`));
     assert.ok(fs.logs.some((line) => line.includes("App.sln(直下を自動検出")));
     assert.ok(fs.logs.some((line) => line.includes("セットアップ完了")));
-    assert.ok(fs.logs.some((line) => line.includes("npx petari pack")));
+    assert.ok(fs.logs.some((line) => line.includes("npx tazuna pack")));
     // VB.NET の構成ではビルドのコマンドも案内する
-    assert.ok(fs.logs.some((line) => line.includes("npx petari build")));
-    assert.ok(fs.logs.some((line) => line.startsWith("petari.config.json・docs/ は git にコミット")));
+    assert.ok(fs.logs.some((line) => line.includes("npx tazuna build")));
+    assert.ok(fs.logs.some((line) => line.startsWith("tazuna.config.json・docs/ は git にコミット")));
   });
 
   test("旧 init が書いた手を加えていない protocol.md は、削除してよいと案内する(消さない)", () => {
@@ -131,16 +131,16 @@ suite("initProject", () => {
     assert.ok(fs.logs.some((line) => line.includes("[warning]") && line.includes("v2")));
   });
 
-  test("既存の .petari/config.json・.gitignore の .petari 行は変えない", () => {
+  test("既存の .tazuna/config.json・.gitignore の .tazuna 行は変えない", () => {
     const fs = fakeFs([".git/", "App.sln"], {
-      ".petari/config.json": '{ "downloadsDir": "D:/dl" }\n',
-      ".gitignore": ".petari\n",
+      ".tazuna/config.json": '{ "downloadsDir": "D:/dl" }\n',
+      ".gitignore": ".tazuna\n",
     });
     assert.strictEqual(initProject(REPO, fs.deps).exitCode, 0);
-    assert.strictEqual(fs.files.get(path.join(REPO, ".petari", "config.json")), '{ "downloadsDir": "D:/dl" }\n');
+    assert.strictEqual(fs.files.get(path.join(REPO, ".tazuna", "config.json")), '{ "downloadsDir": "D:/dl" }\n');
     assert.strictEqual(
       fs.files.get(path.join(REPO, ".gitignore")),
-      ".petari\nrepomix-output.xml\nrepomix-output.prompt.md\n",
+      ".tazuna\nrepomix-output.xml\nrepomix-output.prompt.md\n",
     );
   });
 
@@ -151,8 +151,8 @@ suite("initProject", () => {
     const result = initProject(REPO, fs.deps);
     assert.strictEqual(result.exitCode, 0);
     assert.deepStrictEqual(fs.files, snapshot);
-    assert.ok(fs.logs.some((line) => line.includes("生成物と .petari/ は除外済み")));
-    assert.ok(fs.logs.some((line) => line.includes(".petari/config.json: 既存")));
+    assert.ok(fs.logs.some((line) => line.includes("生成物と .tazuna/ は除外済み")));
+    assert.ok(fs.logs.some((line) => line.includes(".tazuna/config.json: 既存")));
   });
 
   test("1 段下に .sln が 1 つだけなら target に書く(node_modules / ドット始まりは見ない)", () => {
@@ -166,7 +166,7 @@ suite("initProject", () => {
     ]);
     const result = initProject(REPO, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "solution" });
-    assert.deepStrictEqual(readJson(fs, "petari.config.json"), {
+    assert.deepStrictEqual(readJson(fs, "tazuna.config.json"), {
       target: "dotnet/App.sln",
       docs: DOCS_CONFIG,
     });
@@ -187,7 +187,7 @@ suite("initProject", () => {
     const fs = fakeFs([".git/", "A.sln", "B.sln"]);
     const result = initProject(REPO, fs.deps);
     assert.strictEqual(result.exitCode, 1);
-    assert.ok(!fs.files.has(path.join(REPO, "petari.config.json")));
+    assert.ok(!fs.files.has(path.join(REPO, "tazuna.config.json")));
     assert.ok(fs.logs.some((line) => line.includes("複数") && line.includes("target")));
   });
 
@@ -195,8 +195,8 @@ suite("initProject", () => {
     const fs = fakeFs([".git/", "lib2/", "package.json"]);
     const result = initProject(REPO, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "generic" });
-    assert.ok(!fs.logs.some((line) => line.includes("npx petari build")));
-    assert.deepStrictEqual(readJson(fs, "petari.config.json"), { kind: "generic", docs: DOCS_CONFIG });
+    assert.ok(!fs.logs.some((line) => line.includes("npx tazuna build")));
+    assert.deepStrictEqual(readJson(fs, "tazuna.config.json"), { kind: "generic", docs: DOCS_CONFIG });
     assert.ok(fs.logs.some((line) => line.includes("git が管理しているファイルを対象にする")));
     assert.ok(fs.logs.some((line) => line.includes(".repomixignore")));
     assert.ok(fs.logs.some((line) => line.includes("2 段以上深い") && line.includes('"target"')));
@@ -207,8 +207,8 @@ suite("initProject", () => {
     const result = initProject(REPO, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "generic" });
     // generic では MSBuild のビルドを案内しない
-    assert.ok(!fs.logs.some((line) => line.includes("npx petari build")));
-    assert.deepStrictEqual(readJson(fs, "petari.config.json"), {
+    assert.ok(!fs.logs.some((line) => line.includes("npx tazuna build")));
+    assert.deepStrictEqual(readJson(fs, "tazuna.config.json"), {
       kind: "generic",
       extraRoots: [
         { path: "src", kind: "src" },
@@ -224,7 +224,7 @@ suite("initProject", () => {
     const fs = fakeFs(["package.json", "lib2/"]);
     const result = initProject(REPO, fs.deps);
     assert.strictEqual(result.exitCode, 1);
-    assert.ok(!fs.files.has(path.join(REPO, "petari.config.json")));
+    assert.ok(!fs.files.has(path.join(REPO, "tazuna.config.json")));
     assert.ok(!fs.files.has(path.join(REPO, ".gitignore")));
     assert.ok(fs.logs.some((line) => line.includes('"target"') && line.includes("extraRoots")));
   });
@@ -246,26 +246,26 @@ suite("initProject", () => {
     fs.dirs.add(path.join(REPO, ".git"));
     const result = initProject(sub, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "solution" });
-    assert.ok(fs.files.has(path.join(sub, ".petari", "config.json")));
+    assert.ok(fs.files.has(path.join(sub, ".tazuna", "config.json")));
   });
 
   test(".git が無ければ実行した場所をそのまま使う", () => {
     const fs = fakeFs(["App.sln"]);
     const result = initProject(REPO, fs.deps);
     assert.strictEqual(result.exitCode, 0);
-    assert.ok(fs.files.has(path.join(REPO, ".petari", "config.json")));
+    assert.ok(fs.files.has(path.join(REPO, ".tazuna", "config.json")));
   });
 
   test("旧名の slnmix.config.json はそのままの名前で使い、新しい名前の設定を作らない", () => {
     const fs = fakeFs([".git/", "App.sln"], { "slnmix.config.json": "{}" });
     assert.strictEqual(initProject(REPO, fs.deps).exitCode, 0);
     assert.deepStrictEqual(readJson(fs, "slnmix.config.json"), { docs: DOCS_CONFIG });
-    assert.ok(!fs.files.has(path.join(REPO, "petari.config.json")));
+    assert.ok(!fs.files.has(path.join(REPO, "tazuna.config.json")));
     assert.ok(fs.logs.some((line) => line.startsWith("slnmix.config.json・docs/ は git にコミット")));
   });
 
   test("設定ファイルが新旧の名前で両方あれば何も書かずに止まる", () => {
-    const fs = fakeFs([".git/", "App.sln"], { "slnmix.config.json": "{}", "petari.config.json": "{}" });
+    const fs = fakeFs([".git/", "App.sln"], { "slnmix.config.json": "{}", "tazuna.config.json": "{}" });
     const before = new Map(fs.files);
     assert.strictEqual(initProject(REPO, fs.deps).exitCode, 1);
     assert.deepStrictEqual(fs.files, before);
@@ -310,7 +310,7 @@ suite("initProject", () => {
     initProject(REPO, fs.deps);
     assert.strictEqual(
       fs.files.get(path.join(REPO, ".gitignore")),
-      "bin/\r\n*.xml\r\nrepomix-output.prompt.md\r\n.petari/\r\n",
+      "bin/\r\n*.xml\r\nrepomix-output.prompt.md\r\n.tazuna/\r\n",
     );
   });
 
@@ -333,9 +333,9 @@ suite("planGitignoreAppend", () => {
   });
 
   test("末尾 / の項目は、その中のファイルが除外されているかで判定する", () => {
-    assert.strictEqual(planGitignoreAppend(".petari\n", [".petari/"]), undefined);
-    assert.strictEqual(planGitignoreAppend("/.petari/\n", [".petari/"]), undefined);
-    assert.deepStrictEqual(planGitignoreAppend(".petari.bak\n", [".petari/"]), { append: ".petari/\n", added: [".petari/"] });
+    assert.strictEqual(planGitignoreAppend(".tazuna\n", [".tazuna/"]), undefined);
+    assert.strictEqual(planGitignoreAppend("/.tazuna/\n", [".tazuna/"]), undefined);
+    assert.deepStrictEqual(planGitignoreAppend(".tazuna.bak\n", [".tazuna/"]), { append: ".tazuna/\n", added: [".tazuna/"] });
   });
 
   test("末尾に改行が無ければ改行を足してから追記する", () => {

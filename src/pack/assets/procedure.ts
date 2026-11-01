@@ -3,10 +3,10 @@
  *
  * M365 Copilot 等で思考エフォートを外から上げられない環境向けに、
  * 「調査 → 方針 → 変更 → 自己検証」の手順を回答本文の中で踏ませる。
- * 出力形式の規約(petari の protocol.md、<instruction>)とは責務が違うため、
+ * 出力形式の規約(tazuna の protocol.md、<instruction>)とは責務が違うため、
  * 別ブロック <procedure> として出力末尾に付ける。
  *
- * petari の protocol.ts と同じく single source とし、モードにより
+ * tazuna の protocol.ts と同じく single source とし、モードにより
  * 「回答の構成」の部分だけ差し替える(テンプレート内の {{MODE_SECTIONS}} と
  * {{MODE}} を置換)。ルート直下の procedure.md があればこの内蔵文の代わりに
  * その内容を使う(procedureFile.ts)。

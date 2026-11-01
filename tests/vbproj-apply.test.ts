@@ -35,15 +35,15 @@ const VBPROJ_LINES = [
 const VBPROJ = sjis(VBPROJ_LINES.join("\r\n"));
 
 function setup(config: Record<string, unknown> = {}): string {
-  const dir = mkdtempSync(join(tmpdir(), "petari-vbproj-"));
+  const dir = mkdtempSync(join(tmpdir(), "tazuna-vbproj-"));
   mkdirSync(join(dir, "App", "Services"), { recursive: true });
   mkdirSync(join(dir, "App", "Forms"), { recursive: true });
   writeFileSync(join(dir, "App", "App.vbproj"), VBPROJ);
   writeFileSync(join(dir, "App", "Services", "Existing.vb"), sjis("' 既存\r\nEnd Module\r\n"));
   writeFileSync(join(dir, "App", "Services", "Other.vb"), sjis("' 既存2\r\nEnd Module\r\n"));
-  mkdirSync(join(dir, ".petari"), { recursive: true });
+  mkdirSync(join(dir, ".tazuna"), { recursive: true });
   writeFileSync(
-    join(dir, ".petari", "config.json"),
+    join(dir, ".tazuna", "config.json"),
     JSON.stringify({ clipReportOnFailure: false, ...config }),
     "utf8",
   );
@@ -51,15 +51,15 @@ function setup(config: Record<string, unknown> = {}): string {
 }
 
 function manifestOf(dir: string): Manifest {
-  const ids = readdirSync(join(dir, ".petari", "history"));
+  const ids = readdirSync(join(dir, ".tazuna", "history"));
   return JSON.parse(
-    readFileSync(join(dir, ".petari", "history", ids[0] as string, "manifest.json"), "utf8"),
+    readFileSync(join(dir, ".tazuna", "history", ids[0] as string, "manifest.json"), "utf8"),
   ) as Manifest;
 }
 
 async function apply(dir: string, changes: string, extra: string[] = []): Promise<number> {
   // changes.md はルートの外に置く (ルート直下に置くと形式推定の手本に数えられる)
-  const path = join(mkdtempSync(join(tmpdir(), "petari-changes-")), "changes.md");
+  const path = join(mkdtempSync(join(tmpdir(), "tazuna-changes-")), "changes.md");
   writeFileSync(path, changes, "utf8");
   return applyCommand([path, "--root", dir, "--yes", ...extra]);
 }
@@ -99,7 +99,7 @@ describe("apply: .vbproj への自動登録 (§11.1)", () => {
     expect(entry?.applied).toBe(true);
     expect(entry?.registered).toEqual(["App/Services/OrderService.vb"]);
     expect(entry?.beforeSha256).toMatch(/^[0-9a-f]{64}$/);
-    const hdir = join(dir, ".petari", "history", m.id);
+    const hdir = join(dir, ".tazuna", "history", m.id);
     expect(new Uint8Array(readFileSync(join(hdir, "before", "App", "App.vbproj")))).toEqual(VBPROJ);
     expect(existsSync(join(hdir, "after", "App", "App.vbproj"))).toBe(true);
   });
@@ -275,7 +275,7 @@ describe("apply: .vbproj への自動登録 (§11.1)", () => {
     const dir = setup();
     expect(await apply(dir, CREATE_SERVICE, ["--dry-run"])).toBe(0);
     expect(new Uint8Array(readFileSync(join(dir, "App", "App.vbproj")))).toEqual(VBPROJ);
-    expect(existsSync(join(dir, ".petari", "history"))).toBe(false);
+    expect(existsSync(join(dir, ".tazuna", "history"))).toBe(false);
   });
 });
 

@@ -1,13 +1,13 @@
 /**
- * petari init: 初回セットアップを 1 コマンドにまとめる(旧 slnmix init + petari init。設計書 §20・§25)。
+ * tazuna init: 初回セットアップを 1 コマンドにまとめる(旧 slnmix init + petari init。設計書 §20・§25)。
  *
- * 1. 構成: 設定ファイル(petari.config.json。旧名 slnmix.config.json も)があればそのまま使う。なければ
+ * 1. 構成: 設定ファイル(tazuna.config.json。旧名 slnmix.config.json も)があればそのまま使う。なければ
  *    - 直下に .sln / .vbproj があれば設定を作らない(従来どおり自動検出)
  *    - 直下に無く、1 段下のフォルダに .sln が 1 つだけあれば target で指す設定を作る
  *    - どちらも無ければ --init-config と同じ generic 構成を作る
  * 2. docs/ 連携(--init-docs と同じ)
- * 3. .gitignore に生成物(repomix-output.xml / repomix-output.prompt.md)と .petari/ を追記
- * 4. .petari/config.json(PC ごとの設定。雛形)
+ * 3. .gitignore に生成物(repomix-output.xml / repomix-output.prompt.md)と .tazuna/ を追記
+ * 4. .tazuna/config.json(PC ごとの設定。雛形。旧版の .petari/ だけがあれば .petari/ のものを使う)
  * 5. 規約文: 内蔵なので書き出さない。旧 init が書いた protocol.md があれば、手を加えていないか
  *    (削除してよいか)を案内する
  *
@@ -25,7 +25,7 @@ import * as path from "node:path";
 import { GitignoreRules } from "./services/gitignoreMatcher.ts";
 import { initConfig, type InitConfigDeps } from "./initConfig.ts";
 import { initDocs, type InitDocsDeps } from "./initDocs.ts";
-import { BUILD_COMMAND, PACK_COMMAND, TOOL_NAME } from "../brand.ts";
+import { BUILD_COMMAND, PACK_COMMAND, TOOL_NAME, stateDirectoryName } from "../brand.ts";
 import { CONFIG_TEMPLATE } from "../infra/config.ts";
 import { describeInstruction, resolveInstructionFile } from "./instructionFile.ts";
 import {
@@ -57,9 +57,6 @@ export const GENERATED_OUTPUTS: readonly string[] = [
   "repomix-output.xml",
   "repomix-output.prompt.md",
 ];
-
-/** PC ごとの設定と適用の履歴。git の管理外にする */
-export const LOCAL_STATE_DIRECTORY = ".petari";
 
 /** 1 段下の .sln を探すときに見ないフォルダ(ドットで始まるものも見ない) */
 const SKIPPED_SUBDIRECTORIES = new Set(["node_modules", "bin", "obj", "packages"]);
@@ -195,7 +192,7 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
   }
 
   // .sln がサブフォルダにある構成(例: dotnet/App.sln)。target で指せばルートは
-  // ここ(= petari のルート)のまま
+  // ここ(= tazuna のルート)のまま
   const solutions = findSolutionsOneLevelDown(rootDir, deps);
   if (solutions.length === 1) {
     const target = solutions[0];
@@ -301,12 +298,14 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
     return fail(docs.errors.join("\n"), layout.layout);
   }
 
-  // 3. .gitignore(既存部分は書き換えず末尾に追記)
+  // 3. .gitignore(既存部分は書き換えず末尾に追記)。PC ごとの設定と適用の履歴(.tazuna/。旧版の
+  // .petari/ だけがあればそれを使い続ける)も git の管理外にする
+  const stateDirectory = stateDirectoryName(rootDir, deps.isDirectory);
   const gitignorePath = path.join(rootDir, ".gitignore");
   const gitignore = deps.readTextFile(gitignorePath);
-  const plan = planGitignoreAppend(gitignore, [...GENERATED_OUTPUTS, `${LOCAL_STATE_DIRECTORY}/`]);
+  const plan = planGitignoreAppend(gitignore, [...GENERATED_OUTPUTS, `${stateDirectory}/`]);
   if (plan === undefined) {
-    deps.log(`3. .gitignore: 生成物と ${LOCAL_STATE_DIRECTORY}/ は除外済み(変更なし)`);
+    deps.log(`3. .gitignore: 生成物と ${stateDirectory}/ は除外済み(変更なし)`);
   } else {
     if (gitignore === undefined) {
       deps.writeTextFile(gitignorePath, plan.append);
@@ -317,12 +316,12 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
   }
 
   // 4. PC ごとの設定(Downloads の場所・VS Code のパスなど)
-  const localConfig = `${LOCAL_STATE_DIRECTORY}/config.json`;
-  const localConfigPath = path.join(rootDir, LOCAL_STATE_DIRECTORY, "config.json");
+  const localConfig = `${stateDirectory}/config.json`;
+  const localConfigPath = path.join(rootDir, stateDirectory, "config.json");
   if (deps.exists(localConfigPath)) {
     deps.log(`4. ${localConfig}: 既存(変更なし)`);
   } else {
-    deps.makeDirectory(path.join(rootDir, LOCAL_STATE_DIRECTORY));
+    deps.makeDirectory(path.join(rootDir, stateDirectory));
     deps.writeTextFile(localConfigPath, CONFIG_TEMPLATE);
     deps.log(`4. ${localConfig}: 雛形を作りました(PC ごとの設定。git の管理外)`);
   }
@@ -344,7 +343,7 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
     deps.log(`  ビルドは npx ${BUILD_COMMAND} で。失敗するとエラーと周辺のコードがクリップボードに入ります`);
   }
   deps.log(
-    `${configFileNameIn(rootDir, deps.isFile)}・docs/ は git にコミットしてください(${LOCAL_STATE_DIRECTORY}/ は PC ごとの設定と適用の履歴なのでコミットしません)。`,
+    `${configFileNameIn(rootDir, deps.isFile)}・docs/ は git にコミットしてください(${stateDirectory}/ は PC ごとの設定と適用の履歴なのでコミットしません)。`,
   );
   return { exitCode: 0, layout: layout.layout };
 }

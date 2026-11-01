@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { PAST_PROTOCOL_SHA256, PROTOCOL_TEXT, PROTOCOL_VERSION } from "../assets/protocol.ts";
-import { TOOL_NAME } from "../brand.ts";
+import { FORMER_TOOL_NAME, TOOL_NAME } from "../brand.ts";
 
 export interface InstructionFileDeps {
   /** ファイルを読み文字列で返す(存在しない・読めないときは undefined) */
@@ -40,7 +40,8 @@ export type InstructionResolution =
 
 export const DEFAULT_INSTRUCTION_FILE_NAME = "protocol.md";
 
-const VERSION_LINE = /^\s*<!--\s*petari protocol v(\d+)\s*-->/;
+/** 1 行目の版。旧版 (petari) が書いたものも読む */
+const VERSION_LINE = new RegExp(`^\\s*<!--\\s*(?:${TOOL_NAME}|${FORMER_TOOL_NAME}) protocol v(\\d+)\\s*-->`);
 
 function normalizeForComparison(text: string): string {
   return text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\n+$/, "");
@@ -50,7 +51,7 @@ function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/** 1 行目の版(`<!-- petari protocol vN -->`)。無ければ undefined */
+/** 1 行目の版(`<!-- tazuna protocol vN -->`。旧版の `<!-- petari protocol vN -->` も)。無ければ undefined */
 export function protocolVersionOf(text: string): number | undefined {
   const match = VERSION_LINE.exec(text.replace(/^\uFEFF/, ""));
   return match === null ? undefined : Number(match[1]);

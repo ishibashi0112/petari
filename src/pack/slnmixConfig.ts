@@ -1,5 +1,5 @@
 /**
- * リポジトリにコミットする設定ファイル(petari.config.json。旧名 slnmix.config.json も読む。任意)の読み込み。
+ * リポジトリにコミットする設定ファイル(tazuna.config.json。旧名 slnmix.config.json も読む。任意)の読み込み。
  *
  * ルート直下に置く。**なくても動く**。
  * ハイブリッド構成(WinForms + WebView2 + React)で、.vbproj に乗らない
@@ -94,7 +94,7 @@ export interface DocsConfig {
  * プロジェクトの構成の種類。
  * - "solution": .sln / .vbproj の論理構成に基づく(既定。従来どおり)
  * - "generic": .sln / .vbproj を使わず、extraRoots に宣言されたディレクトリだけで
- *   パックする(VB.NET 以外のプロジェクト向け。v0.17.0〜)。引数なしの `petari pack`
+ *   パックする(VB.NET 以外のプロジェクト向け。v0.17.0〜)。引数なしの `tazuna pack`
  *   がこの設定を見て .sln の探索を省く。明示フラグにしたのは「.sln を探さなかった」
  *   理由をログで示すため(決定ログ 2026-10-10)
  */
@@ -109,7 +109,7 @@ export interface SlnmixConfig {
   /** 構成の種類(省略時 "solution") */
   kind: ConfigKind;
   /**
-   * 入力(.sln / .vbproj)のルート相対パス。引数なしの `petari pack` がこれを使う
+   * 入力(.sln / .vbproj)のルート相対パス。引数なしの `tazuna pack` がこれを使う
    * (web + dotnet を分けた構成で .sln がサブディレクトリにあるとき用)
    */
   target?: string | undefined;
@@ -122,7 +122,7 @@ export interface SlnmixConfig {
   contractFile?: string | undefined;
   /** 生成コードのディレクトリ(ルート相対)。既定で除外し要約で代替する */
   generatedDirs: string[];
-  /** 設定の出どころ(表示用)。例: ["petari.config.json", "webview2-bridge.gen.json"] */
+  /** 設定の出どころ(表示用)。例: ["tazuna.config.json", "webview2-bridge.gen.json"] */
   sources: string[];
 }
 
