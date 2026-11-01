@@ -25,6 +25,7 @@ import { buildDesignerFileMatcher } from "../pack/designerFileFilter.ts";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "../pack/docs.ts";
 import { planHandoff } from "../pack/handoff.ts";
 import { initConfig } from "../pack/initConfig.ts";
+import { findRepositoryRoot } from "../pack/initProject.ts";
 import { initDocs } from "../pack/initDocs.ts";
 import { describeInstruction, resolveInstructionFile } from "../pack/instructionFile.ts";
 import {
@@ -36,15 +37,18 @@ import {
   resolveTask,
   type TaskResolution,
 } from "../pack/procedureFile.ts";
+import { DOC_TEMPLATES_DIR } from "../pack/assets/docTemplates.ts";
 import { buildRepomixOutput, type RepomixSource } from "../pack/services/repomixExporter.ts";
 import { CONFIG_FILE_NAME, configFileNameIn, LEGACY_CONFIG_FILE_NAME, loadSlnmixConfig } from "../pack/slnmixConfig.ts";
 import { parseSln } from "../pack/slnParser.ts";
 import { parseVbproj } from "../pack/vbprojParser.ts";
 import {
   createGitignoreEvaluator,
+  fileSizeOf,
   FS_DEPS,
   isDirectoryPath,
   isFilePath,
+  listGitFiles,
   printDiagnostics,
   readSourceTextFile,
   resolveTargetAndRoot,
@@ -236,12 +240,16 @@ export function packCommand(argv: string[]): number {
   // VB.NET 以外のプロジェクト向けの設定ファイルを作る(入力の解決より前。.sln は無い前提)
   if (values["init-config"]) {
     const initRoot = path.resolve(process.cwd(), values.root ?? positionals[0] ?? ".");
-    const result = initConfig(initRoot, {
-      isDirectory: isDirectoryPath,
-      isFile: isFilePath,
-      listFileNames: FS_DEPS.listFileNames,
-      writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
-    });
+    const result = initConfig(
+      initRoot,
+      {
+        isDirectory: isDirectoryPath,
+        isFile: isFilePath,
+        listFileNames: FS_DEPS.listFileNames,
+        writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
+      },
+      { gitRepository: findRepositoryRoot(initRoot, (p) => fs.existsSync(p)) !== undefined },
+    );
     if (result.kind === "error") {
       err(result.message);
       return 1;
@@ -251,6 +259,12 @@ export function packCommand(argv: string[]): number {
       return 0;
     }
     err(`作成: ${result.path}`);
+    if (result.roots.length === 0) {
+      err(
+        `以後は同じ場所で npx ${PACK_COMMAND} を実行すると、git が管理しているファイルでパックと本文用テキストを作ります。対象を絞るときは .repomixignore に除外を書くか、extraRoots にディレクトリを書いてください。`,
+      );
+      return 0;
+    }
     for (const root of result.roots) {
       err(`  extraRoots: ${root.path}/(kind: "${root.kind}")`);
     }
@@ -333,11 +347,17 @@ export function packCommand(argv: string[]): number {
   printDiagnostics(configName, configResult.diagnostics);
   const config = configResult.config;
   const layout = targetPath === undefined ? "generic" : "solution";
+  // generic 構成で extraRoots が無ければ、git が管理しているファイルを対象にする(設計書 §25.7)
+  let gitFiles: string[] | undefined;
   if (layout === "generic" && config.extraRoots.length === 0) {
-    err(
-      `出力対象のディレクトリがありません。${configName} の extraRoots に少なくとも 1 つ path を書いてください(例: { "path": "src", "kind": "src" })。`,
-    );
-    return 1;
+    const listed = listGitFiles(rootDir);
+    if (!listed.ok) {
+      err(
+        `git が管理しているファイルを一覧できません(${listed.message})。git のリポジトリで実行するか、${configName} の extraRoots に対象のディレクトリを書いてください(例: { "path": "src", "kind": "src" })。`,
+      );
+      return 1;
+    }
+    gitFiles = listed.files;
   }
   if (layout === "solution" && config.kind === "generic") {
     err(
@@ -345,7 +365,7 @@ export function packCommand(argv: string[]): number {
     );
   }
   if (config.sources.length > 0) {
-    const parts = [`extraRoots ${config.extraRoots.length} 件`];
+    const parts = [gitFiles !== undefined ? "git が管理しているファイル" : `extraRoots ${config.extraRoots.length} 件`];
     if (config.contractSchema !== undefined) {
       parts.push(`契約スキーマ ${config.contractSchema}`);
     }
@@ -353,6 +373,26 @@ export function packCommand(argv: string[]): number {
       parts.push(`生成コード ${config.generatedDirs.length} ディレクトリ`);
     }
     err(`設定: ${config.sources.join(", ")}(${parts.join(" / ")})`);
+  }
+
+  // 文書(<docs>)と DB のテーブル定義(<db_schema>)。git が管理しているファイルを対象にするときは、
+  // これらに入るファイルを <file> に重ねて入れない
+  const docsRead =
+    config.docs === undefined
+      ? undefined
+      : resolveDocs(rootDir, config.docs, { readTextFile: readSourceTextFile, listFileNames: FS_DEPS.listFileNames });
+  const dbSchema = resolveDbSchema(rootDir, { readTextFile: readSourceTextFile });
+  const shownElsewhere = new Map<string, string>();
+  for (const entry of docsRead === undefined ? [] : [...docsRead.design, ...docsRead.spec, ...(docsRead.handoff === undefined ? [] : [docsRead.handoff])]) {
+    shownElsewhere.set(entry.relativePath.toLowerCase(), "<docs>");
+  }
+  for (const [kind, template] of Object.entries(docsRead?.templates ?? {})) {
+    if (template.source === "file") {
+      shownElsewhere.set(`${DOC_TEMPLATES_DIR}/${kind}.md`.toLowerCase(), "<templates>");
+    }
+  }
+  if (dbSchema !== undefined) {
+    shownElsewhere.set(dbSchema.relativePath.toLowerCase(), "<db_schema>");
   }
 
   // .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
@@ -367,6 +407,7 @@ export function packCommand(argv: string[]): number {
       readTextFile: readSourceTextFile,
       ignoreReasonFor: values["no-gitignore"] ? undefined : (absolutePath) => gitignore.ignoreReasonFor(absolutePath),
       listFilesRecursive: FS_DEPS.listFilesRecursive,
+      fileSize: fileSizeOf,
     },
     {
       includeSensitive,
@@ -375,6 +416,8 @@ export function packCommand(argv: string[]): number {
       uiSummary: !values["no-ui-summary"],
       rootDir: values["legacy-paths"] ? undefined : rootDir,
       extraRoots: config.extraRoots,
+      gitFiles,
+      gitFilesShownElsewhere: (relativePath) => shownElsewhere.get(relativePath.toLowerCase()),
       configFileName: configName,
       contractSchema: config.contractSchema,
       contractFile: config.contractFile,
@@ -386,7 +429,9 @@ export function packCommand(argv: string[]): number {
   printDiagnostics("出力", output.diagnostics);
   if (layout === "generic" && output.fileCount === 0) {
     err(
-      `出力対象のファイルがありません(extraRoots の include / exclude と .gitignore を確認してください。除外の理由は --stdout の <skipped_files> に出ます)。`,
+      gitFiles !== undefined
+        ? `出力対象のファイルがありません(git が管理しているファイルが無いか、すべて除外されました。除外の理由は --stdout の <skipped_files> に出ます)。`
+        : `出力対象のファイルがありません(extraRoots の include / exclude と .gitignore を確認してください。除外の理由は --stdout の <skipped_files> に出ます)。`,
     );
     return 1;
   }
@@ -398,7 +443,7 @@ export function packCommand(argv: string[]): number {
   let modeReason = explicitMode === undefined ? "既定" : "指定";
   let defaultTask: string | undefined;
   if (config.docs !== undefined) {
-    docs = resolveDocs(rootDir, config.docs, {
+    docs = docsRead ?? resolveDocs(rootDir, config.docs, {
       readTextFile: readSourceTextFile,
       listFileNames: FS_DEPS.listFileNames,
     });
@@ -438,7 +483,6 @@ export function packCommand(argv: string[]): number {
 
   // DB の確認・動作検証(手順文 v8 / v9): ルートの docs/db/schema.md(ashiato schema の出力)が
   // あればパックに <db_schema> を入れ、手順文に「DB の確認」「動作検証」の節を足す。無ければ従来と同一
-  const dbSchema = resolveDbSchema(rootDir, { readTextFile: readSourceTextFile });
   err(`DB の確認・動作検証: ${describeDbSchema(dbSchema)}`);
 
   // 規約文を出力末尾へ連結する(内蔵。ルートの protocol.md は置いたときだけ使う上書き)
@@ -561,7 +605,10 @@ export function packCommand(argv: string[]): number {
 
   const maskNote = values["no-mask"] ? "(マスク無効)" : ` / 認証情報マスク ${output.maskedCount} 件`;
   const uiSummaryNote = output.uiSummaryCount > 0 ? ` / UI サマリー ${output.uiSummaryCount} 件` : "";
-  const extraNote = output.extraRootFileCount > 0 ? ` / 追加ルート ${output.extraRootFileCount} 件` : "";
+  const extraNote =
+    gitFiles !== undefined || output.extraRootFileCount === 0
+      ? ""
+      : ` / 追加ルート ${output.extraRootFileCount} 件`;
   const contractNote = output.contractSummaryIncluded ? " / 契約サマリーあり" : "";
   err(
     `${output.fileCount} ファイル / 約 ${Math.max(1, Math.round(output.totalChars / 1000))}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote}${extraNote}${contractNote})`,

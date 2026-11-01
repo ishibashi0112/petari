@@ -191,8 +191,19 @@ suite("initProject", () => {
     assert.ok(fs.logs.some((line) => line.includes("複数") && line.includes("target")));
   });
 
-  test(".sln / .vbproj が無ければ generic 構成(--init-config と同じ)を作る", () => {
-    const fs = fakeFs([".git/", "src/", "tests/", "package.json"]);
+  test(".sln / .vbproj が無い git のリポジトリでは、git が管理しているファイルを対象にする generic 構成を作る", () => {
+    const fs = fakeFs([".git/", "lib2/", "package.json"]);
+    const result = initProject(REPO, fs.deps);
+    assert.deepStrictEqual(result, { exitCode: 0, layout: "generic" });
+    assert.ok(!fs.logs.some((line) => line.includes("npx petari build")));
+    assert.deepStrictEqual(readJson(fs, "petari.config.json"), { kind: "generic", docs: DOCS_CONFIG });
+    assert.ok(fs.logs.some((line) => line.includes("git が管理しているファイルを対象にする")));
+    assert.ok(fs.logs.some((line) => line.includes(".repomixignore")));
+    assert.ok(fs.logs.some((line) => line.includes("2 段以上深い") && line.includes('"target"')));
+  });
+
+  test(".sln / .vbproj も git も無ければ、候補のディレクトリで generic 構成(--init-config と同じ)を作る", () => {
+    const fs = fakeFs(["src/", "tests/", "package.json"]);
     const result = initProject(REPO, fs.deps);
     assert.deepStrictEqual(result, { exitCode: 0, layout: "generic" });
     // generic では MSBuild のビルドを案内しない
@@ -209,8 +220,8 @@ suite("initProject", () => {
     assert.ok(fs.logs.some((line) => line.includes("2 段以上深い") && line.includes('"target"')));
   });
 
-  test("ソースの候補も無ければ推測せずに止まる", () => {
-    const fs = fakeFs([".git/", "package.json", "lib2/"]);
+  test("git の外でソースの候補も無ければ推測せずに止まる", () => {
+    const fs = fakeFs(["package.json", "lib2/"]);
     const result = initProject(REPO, fs.deps);
     assert.strictEqual(result.exitCode, 1);
     assert.ok(!fs.files.has(path.join(REPO, "petari.config.json")));

@@ -38,6 +38,9 @@ import {
 } from "./designerSummary.ts";
 import {
   collectExtraRoots,
+  collectGitFiles,
+  GIT_FILE_MAX_BYTES,
+  GIT_FILES_KIND,
   type ExtraRootFile,
   type ExtraRootsResult,
 } from "./extraRootsCollector.ts";
@@ -61,6 +64,8 @@ export interface RepomixExportDeps {
    * 絶対パス(再帰)。未指定なら extraRoots は扱えない(スキップ一覧に明記)
    */
   listFilesRecursive?(absoluteDir: string): string[] | undefined;
+  /** git の一覧から集めるときのファイルサイズ(バイト。通常のファイルでなければ undefined) */
+  fileSize?(absolutePath: string): number | undefined;
 }
 
 export interface RepomixExportOptions {
@@ -93,6 +98,13 @@ export interface RepomixExportOptions {
   rootDir?: string | undefined;
   /** .vbproj に乗らない追加ディレクトリ(rootDir 必須。設定ファイルの extraRoots) */
   extraRoots?: readonly ExtraRootConfig[] | undefined;
+  /**
+   * git が管理しているファイル(ルート相対・`/` 区切り。`git ls-files --cached --others --exclude-standard`)。
+   * generic 構成で extraRoots が無いときの対象(設計書 §25.7)。指定すると extraRoots は使わない
+   */
+  gitFiles?: readonly string[] | undefined;
+  /** gitFiles のうちパックの別の場所(<docs> / <db_schema>)に入るファイルなら、その説明 */
+  gitFilesShownElsewhere?: ((relativePath: string) => string | undefined) | undefined;
   /** 設定ファイルの名前(ヘッダーの説明用。既定は新しい名前。旧名の slnmix.config.json のときはそれ) */
   configFileName?: string | undefined;
   /** contract.schema.json のルート相対パス(rootDir 必須)。あれば <contract_summary> を生成 */
@@ -424,6 +436,9 @@ function generatedDirOf(
   return generatedDirs.find((dir) => lower.startsWith(`${dir.toLowerCase()}/`));
 }
 
+/** git が管理しているファイルをルート直下からのツリーとして描くための疑似的な追加ルート */
+const GIT_FILES_ROOT: ExtraRootConfig = { path: "", kind: GIT_FILES_KIND, include: [], exclude: [] };
+
 /** extraRoots のファイルを [kind] path/ 配下のフォルダツリーとして描く */
 function renderExtraRootTree(
   root: ExtraRootConfig,
@@ -436,7 +451,7 @@ function renderExtraRootTree(
   }
   const top: DirNode = { dirs: new Map(), files: [] };
   for (const file of files) {
-    const segments = file.relativePath.slice(root.path.length + 1).split("/");
+    const segments = file.relativePath.slice(root.path === "" ? 0 : root.path.length + 1).split("/");
     let cursor = top;
     for (const segment of segments.slice(0, -1)) {
       let next = cursor.dirs.get(segment);
@@ -459,7 +474,7 @@ function renderExtraRootTree(
       lines.push(`${indent}${name}`);
     }
   };
-  lines.push(`[${root.kind}] ${root.path}/`);
+  lines.push(root.path === "" ? "./" : `[${root.kind}] ${root.path}/`);
   render(top, 1);
 }
 
@@ -619,10 +634,28 @@ export function buildRepomixOutput(
     }
   }
 
-  // ---- extraRoots(.vbproj に乗らない web / 契約ディレクトリ) ----
-  const extraRoots = options.extraRoots ?? [];
+  // ---- extraRoots(.vbproj に乗らない web / 契約ディレクトリ)。generic 構成で extraRoots が
+  // 無ければ git が管理しているファイル ----
+  const gitFiles = options.gitFiles;
+  const extraRoots: readonly ExtraRootConfig[] =
+    gitFiles !== undefined ? [GIT_FILES_ROOT] : (options.extraRoots ?? []);
   let extra: ExtraRootsResult | undefined;
-  if (extraRoots.length > 0) {
+  if (gitFiles !== undefined) {
+    if (rootDir === undefined || deps.fileSize === undefined) {
+      diagnostics.push({
+        severity: "warning",
+        message: "git が管理しているファイルは物理パス化(rootDir)とファイルサイズの取得が有効なときだけ扱えます",
+      });
+    } else {
+      extra = collectGitFiles(rootDir, gitFiles, {
+        fileSize: deps.fileSize,
+        ignoreReasonFor: deps.ignoreReasonFor,
+        shownElsewhere: options.gitFilesShownElsewhere,
+      });
+      diagnostics.push(...extra.diagnostics);
+      skipped.push(...extra.skipped.map((s) => ({ path: s.relativePath, reason: s.reason })));
+    }
+  } else if (extraRoots.length > 0) {
     if (rootDir === undefined) {
       diagnostics.push({
         severity: "warning",
@@ -675,6 +708,11 @@ export function buildRepomixOutput(
           skipped.push({ path: file.relativePath, reason: "読み込みに失敗しました" });
           continue;
         }
+        // git の一覧には拡張子で見分けられないバイナリも入り得る(.jar / .sqlite など)
+        if (gitFiles !== undefined && rawContent.includes("\u0000")) {
+          skipped.push({ path: file.relativePath, reason: "バイナリ(NUL を含む)" });
+          continue;
+        }
         let content = rawContent;
         if (options.maskCredentials) {
           const masked = maskCredentials(rawContent, { vbSource: false, strict: strictMask });
@@ -684,7 +722,9 @@ export function buildRepomixOutput(
           }
         }
         fileEntries.push(
-          `<file path="${escapeAttribute(file.relativePath)}" root="${escapeAttribute(file.kind)}">\n${content}\n</file>`,
+          gitFiles !== undefined
+            ? `<file path="${escapeAttribute(file.relativePath)}">\n${content}\n</file>`
+            : `<file path="${escapeAttribute(file.relativePath)}" root="${escapeAttribute(file.kind)}">\n${content}\n</file>`,
         );
         filePaths.push(file.relativePath);
         fileCount += 1;
@@ -737,7 +777,9 @@ export function buildRepomixOutput(
   const configFileName = options.configFileName ?? CONFIG_FILE_NAME;
 
   const content = [
-    generic
+    generic && gitFiles !== undefined
+      ? `このファイルは ${TOOL_NAME} が「${title}」の git が管理しているファイル(git ls-files)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`
+      : generic
       ? `このファイルは ${TOOL_NAME} が「${title}」の ${configFileName}(extraRoots)に宣言されたディレクトリに基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`
       : `このファイルは ${TOOL_NAME} が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
     "",
@@ -803,7 +845,12 @@ export function buildRepomixOutput(
           `- SDK スタイルのプロジェクト(${sdkExpandedLabels.join(", ")})は Compile を明示列挙しないため、既定の Compile グロブ(**/*.vb)を展開した(bin/ obj/ ドットフォルダ・*.user・<Compile Remove> は除外)。MSBuild の完全評価ではない`,
         ]
       : []),
-    ...(extra !== undefined
+    ...(extra !== undefined && gitFiles !== undefined
+      ? [
+          `- 対象は git が管理しているファイル(追跡中のものと、.gitignore に一致しない未追跡のもの)。バイナリ・ロックファイル・${GIT_FILE_MAX_BYTES / 1024}KB を超えるもの・node_modules / dist / build / .env などは除外(<skipped_files> に理由)。対象を絞るときは .repomixignore に書く`,
+        ]
+      : []),
+    ...(extra !== undefined && gitFiles === undefined
       ? [
           generic
             ? `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは ${configFileName} の extraRoots に宣言されたディレクトリ(<file> の root 属性)。宣言されていないディレクトリは含まれない`

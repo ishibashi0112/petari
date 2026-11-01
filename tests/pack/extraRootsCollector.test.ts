@@ -7,7 +7,11 @@ import * as assert from "node:assert";
 import * as path from "node:path";
 import {
   collectExtraRoots,
+  collectGitFiles,
+  GIT_FILE_MAX_BYTES,
+  isLockFile,
   type ExtraRootsDeps,
+  type GitFilesDeps,
 } from "../../src/pack/services/extraRootsCollector.ts";
 import { defaultIncludeFor, type ExtraRootConfig } from "../../src/pack/slnmixConfig.ts";
 
@@ -122,5 +126,58 @@ suite("extraRootsCollector", () => {
         (d) => d.severity === "warning" && d.message.includes("missing"),
       ),
     );
+  });
+});
+
+suite("extraRootsCollector: git が管理しているファイル(設計書 §25.7)", () => {
+  const sizes: Record<string, number | undefined> = {
+    "src/app.py": 120,
+    "src/api/client.ts": 300,
+    "README.md": 50,
+    "package-lock.json": 9000,
+    "poetry.lock": 100,
+    "assets/logo.png": 4000,
+    "data/huge.csv": GIT_FILE_MAX_BYTES + 1,
+    "data/small.csv": GIT_FILE_MAX_BYTES,
+    "vendor/sub": undefined,
+    "secret/notes.txt": 10,
+  };
+  const deps: GitFilesDeps = {
+    fileSize: (abs) => sizes[path.relative(ROOT, abs).split(path.sep).join("/")],
+    ignoreReasonFor: (abs) => (abs.endsWith("notes.txt") ? path.join(ROOT, ".repomixignore") : undefined),
+  };
+
+  test("ロックファイル・バイナリ・大きいファイル・ファイルでないもの・ignore と既定の除外を外し、理由を残す", () => {
+    const result = collectGitFiles(
+      ROOT,
+      [...Object.keys(sizes), "node_modules/x/index.js", ".env", "web/.env.local", "dist/app.js", "../outside.ts"],
+      deps,
+    );
+    assert.deepStrictEqual(
+      result.files.map((f) => f.relativePath),
+      ["data/small.csv", "README.md", "src/api/client.ts", "src/app.py"],
+    );
+    assert.ok(result.files.every((f) => f.kind === "git" && f.rootPath === ""));
+    const reasons = Object.fromEntries(result.skipped.map((s) => [s.relativePath, s.reason]));
+    assert.match(reasons["package-lock.json"] ?? "", /ロックファイル/);
+    assert.match(reasons["poetry.lock"] ?? "", /ロックファイル/);
+    assert.match(reasons["assets/logo.png"] ?? "", /バイナリ/);
+    assert.match(reasons["data/huge.csv"] ?? "", /大きいファイル/);
+    assert.match(reasons["vendor/sub"] ?? "", /通常のファイルではない/);
+    assert.match(reasons["secret/notes.txt"] ?? "", /\.repomixignore/);
+    // node_modules / .env / dist は件数だけ(数千件になり得るため)
+    assert.strictEqual(reasons["node_modules/x/index.js"], undefined);
+    assert.strictEqual(reasons[".env"], undefined);
+    assert.ok(result.diagnostics.some((d) => d.message.includes("既定の除外 4 件")));
+  });
+
+  test("Windows の区切り(\\)でも同じパスとして扱う", () => {
+    const result = collectGitFiles(ROOT, ["src\\app.py"], deps);
+    assert.deepStrictEqual(result.files.map((f) => f.relativePath), ["src/app.py"]);
+  });
+
+  test("isLockFile は大文字小文字を区別しない", () => {
+    assert.strictEqual(isLockFile("Cargo.lock"), true);
+    assert.strictEqual(isLockFile("lock.ts"), false);
   });
 });

@@ -4,7 +4,8 @@
  *
  * - 既に設定ファイルがあれば(旧名の slnmix.config.json でも)何もしない(冪等。中身は変えない)
  * - その場所に .sln / .vbproj があれば作らない(従来の solution 構成で動くため)
- * - ソースのディレクトリは「候補名のうち実在するもの」だけを採用する(src / app /
+ * - git のリポジトリの中なら extraRoots を書かない(git が管理しているファイルが対象。設計書 §25.7)
+ * - git の外では、ソースのディレクトリは「候補名のうち実在するもの」だけを採用する(src / app /
  *   lib / apps / packages → kind: "src"、tests / test / e2e / __tests__ →
  *   kind: "test")。1 つも無ければ推測で書かずエラーにし、例を示す
  *
@@ -24,6 +25,7 @@ export interface InitConfigDeps {
 }
 
 export type InitConfigResult =
+  /** roots が空なら git が管理しているファイルを対象にする設定(extraRoots なし) */
   | { kind: "created"; path: string; content: string; roots: InitConfigRoot[] }
   | { kind: "kept"; path: string }
   | { kind: "error"; message: string };
@@ -55,10 +57,22 @@ function renderConfig(roots: readonly InitConfigRoot[]): string {
   return ["{", '  "kind": "generic",', '  "extraRoots": [', ...lines, "  ]", "}", ""].join("\n");
 }
 
+/** git が管理しているファイルを対象にする generic 構成(extraRoots なし。設計書 §25.7) */
+export const GIT_GENERIC_CONFIG = `{
+  "kind": "generic"
+}
+`;
+
 /**
  * @param rootDir 設定を置くディレクトリ(プロジェクトルート)の絶対パス
+ * @param options.gitRepository git のリポジトリの中か。そうなら extraRoots を書かず、git が管理している
+ *   ファイルを対象にする(候補のディレクトリを探さない)
  */
-export function initConfig(rootDir: string, deps: InitConfigDeps): InitConfigResult {
+export function initConfig(
+  rootDir: string,
+  deps: InitConfigDeps,
+  options: { gitRepository?: boolean | undefined } = {},
+): InitConfigResult {
   // 旧名(slnmix.config.json)の設定があればそれを使う(名前は変えない)
   if (hasConfigFile(rootDir, deps.isFile)) {
     return { kind: "kept", path: path.join(rootDir, configFileNameIn(rootDir, deps.isFile)) };
@@ -73,6 +87,10 @@ export function initConfig(rootDir: string, deps: InitConfigDeps): InitConfigRes
         `${rootDir} には ${solutionFiles.join(", ")} があります。VB.NET のプロジェクトは設定なしで npx ${PACK_COMMAND} を実行できます(kind: "generic" は .sln / .vbproj の無いプロジェクト向け)。`,
       ].join("\n"),
     };
+  }
+  if (options.gitRepository === true) {
+    deps.writeTextFile(configPath, GIT_GENERIC_CONFIG);
+    return { kind: "created", path: configPath, content: GIT_GENERIC_CONFIG, roots: [] };
   }
   const roots: InitConfigRoot[] = [];
   for (const name of SOURCE_DIR_CANDIDATES) {

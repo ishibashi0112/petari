@@ -9,8 +9,9 @@
  *   しない原則の、明示的でスコープの狭い例外)
  * - contractSchema / generatedDirs: 同じ場所に webview2-bridge.gen.json が
  *   あれば自動検出して既定値にする。明示すれば上書き
- * - kind: "generic"(v0.17.0〜)で .sln / .vbproj のないプロジェクト(TypeScript 等)
- *   を extraRoots だけでパックする。既定は "solution"(従来どおり)
+ * - kind: "generic"(旧 slnmix v0.17.0〜)で .sln / .vbproj のないプロジェクト(TypeScript 等)
+ *   をパックする。extraRoots があればそのディレクトリだけ、無ければ git が管理しているファイル
+ *   (設計書 §25.7)。既定は "solution"(従来どおり)
  *
  * 壊れた設定でもクラッシュせず、診断に残して設定なしとして続行する。
  * ファイルシステムは deps 注入(単体テスト可能)。
@@ -447,12 +448,7 @@ export function loadSlnmixConfig(
         }
       }
       config.extraRoots = parseExtraRoots(parsed["extraRoots"], fileName, diagnostics);
-      if (config.kind === "generic" && config.extraRoots.length === 0) {
-        diagnostics.push({
-          severity: "warning",
-          message: `${fileName}: kind が "generic" のときは extraRoots に少なくとも 1 つのディレクトリが必要です(出力対象がありません)`,
-        });
-      }
+      // generic で extraRoots が無ければ、git が管理しているファイルを対象にする(設計書 §25.7)
       config.docs = parseDocsConfig(parsed["docs"], fileName, diagnostics);
       const schema = asString(parsed["contractSchema"]);
       if (schema !== undefined && schema.trim() !== "") {

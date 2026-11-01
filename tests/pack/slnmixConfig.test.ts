@@ -332,13 +332,14 @@ suite("slnmixConfig: kind(generic 構成。v0.17.0)", () => {
     assert.ok(result.diagnostics.some((d) => d.message.includes("target は使いません")));
   });
 
-  test("generic で extraRoots が無ければ警告(出力対象がない)", () => {
+  test("generic で extraRoots が無くても警告しない(git が管理しているファイルが対象。設計書 §25.7)", () => {
     const result = loadSlnmixConfig(
       ROOT,
-      fakeDeps({ "slnmix.config.json": JSON.stringify({ kind: "generic" }) }),
+      fakeDeps({ "petari.config.json": JSON.stringify({ kind: "generic" }) }),
     );
     assert.strictEqual(result.config.kind, "generic");
-    assert.ok(result.diagnostics.some((d) => d.message.includes("少なくとも 1 つ")));
+    assert.deepStrictEqual(result.config.extraRoots, []);
+    assert.deepStrictEqual(result.diagnostics, []);
   });
 
   test('kind: "src" の include 既定は TS / JS / スタイル / JSON / HTML / Markdown', () => {

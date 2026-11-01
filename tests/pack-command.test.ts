@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -80,5 +81,77 @@ describe("petari pack (設計書 §25)", () => {
     const result = run(["--stdout", "--no-clip"], dir);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('<file path="dotnet/Module1.vb"');
+  });
+});
+
+const hasGit = spawnSync("git", ["--version"]).status === 0;
+
+describe("petari pack: generic 構成で extraRoots が無ければ git が管理しているファイル (設計書 §25.7)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** git init したリポジトリに Python / TS のファイルを置く */
+  function gitRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), "petari-pack-git-"));
+    const git = (...args: string[]): void => {
+      const r = spawnSync("git", args, { cwd: dir });
+      if (r.status !== 0) throw new Error(r.stderr.toString());
+    };
+    git("init", "-q", ".");
+    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic" }\n');
+    writeFileSync(join(dir, ".gitignore"), "node_modules/\n*.log\n");
+    mkdirSync(join(dir, "app"));
+    writeFileSync(join(dir, "app", "main.py"), 'import os\npassword = "hunter2xyz"\n');
+    writeFileSync(join(dir, "app", "web.ts"), "export const x = 1;\n");
+    writeFileSync(join(dir, "poetry.lock"), "# lock\n");
+    writeFileSync(join(dir, "app", "data.bin"), Buffer.from([0x50, 0x00, 0x01, 0x02]));
+    mkdirSync(join(dir, "node_modules", "m"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", "m", "index.js"), "module.exports = 1;\n");
+    writeFileSync(join(dir, "debug.log"), "secret log\n");
+    git("add", "petari.config.json", ".gitignore", "app/main.py", "poetry.lock", "app/data.bin");
+    // app/web.ts は未追跡(.gitignore に一致しないので対象)
+    return dir;
+  }
+
+  it.skipIf(!hasGit)("追跡中と未追跡(.gitignore 以外)のファイルを入れ、ロックファイル・バイナリ・ignore を除く", () => {
+    const dir = gitRepo();
+    const result = run(["--stdout", "--no-clip"], dir);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("git が管理しているファイル(git ls-files)に基づき");
+    expect(result.stdout).toContain('<file path="app/main.py">');
+    expect(result.stdout).toContain('<file path="app/web.ts">');
+    expect(result.stdout).toContain('<file path=".gitignore">');
+    expect(result.stdout).not.toContain('<file path="poetry.lock"');
+    expect(result.stdout).not.toContain('<file path="app/data.bin"');
+    expect(result.stdout).not.toContain("node_modules/m");
+    expect(result.stdout).not.toContain("debug.log");
+    expect(result.stdout).not.toContain("hunter2xyz");
+    expect(result.stdout).toMatch(/<directory_structure>\n\.\/\n {2}app\/\n/);
+    expect(result.stderr).toContain("設定: petari.config.json(git が管理しているファイル)");
+  });
+
+  it.skipIf(!hasGit)("<docs> / <db_schema> に入るファイルは <file> に重ねない", () => {
+    const dir = gitRepo();
+    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic", "docs": true }\n');
+    mkdirSync(join(dir, "docs", "design"), { recursive: true });
+    mkdirSync(join(dir, "docs", "db"), { recursive: true });
+    writeFileSync(join(dir, "docs", "design", "x.md"), "<!-- slnmix design: status=ready blocking=0 deferred=0 -->\n# x\n");
+    writeFileSync(join(dir, "docs", "db", "schema.md"), "# schema\n");
+    writeFileSync(join(dir, "docs", "notes.md"), "# notes\n");
+    const result = run(["--stdout", "--no-clip"], dir);
+    expect(result.code).toBe(0);
+    expect(result.stdout).not.toContain('<file path="docs/design/x.md"');
+    expect(result.stdout).not.toContain('<file path="docs/db/schema.md"');
+    expect(result.stdout).toContain('<doc path="docs/design/x.md"');
+    expect(result.stdout).toContain("- docs/design/x.md: <docs> に入れたため <file> には入れない");
+    expect(result.stdout).toContain('<file path="docs/notes.md">');
+  });
+
+  it("git のリポジトリでなければ、extraRoots を書くよう案内して止める", () => {
+    const dir = mkdtempSync(join(tmpdir(), "petari-pack-nogit-"));
+    writeFileSync(join(dir, "petari.config.json"), '{ "kind": "generic" }\n');
+    const result = run(["--stdout", "--no-clip"], dir);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("git が管理しているファイルを一覧できません");
+    expect(result.stderr).toContain("extraRoots");
   });
 });

@@ -217,8 +217,8 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
     };
   }
 
-  // VB.NET 以外のプロジェクト
-  const result = initConfig(rootDir, deps);
+  // VB.NET 以外のプロジェクト。git のリポジトリなら git が管理しているファイルを対象にする
+  const result = initConfig(rootDir, deps, { gitRepository: findRepositoryRoot(rootDir, deps.exists) !== undefined });
   if (result.kind === "error") {
     return {
       kind: "error",
@@ -230,6 +230,17 @@ function setUpLayout(rootDir: string, deps: InitProjectDeps): LayoutStep {
   }
   if (result.kind === "kept") {
     return { kind: "ok", layout: "generic", lines: [`1. 構成: 既存の ${configName}(変更なし)`] };
+  }
+  if (result.roots.length === 0) {
+    return {
+      kind: "ok",
+      layout: "generic",
+      lines: [
+        `1. 構成: generic(.sln / .vbproj が無いため、git が管理しているファイルを対象にする ${configName} を作りました)`,
+        `   対象を絞るときは .repomixignore に除外を書くか、${configName} の extraRoots にディレクトリを書いてください`,
+        `   VB.NET のプロジェクトで .sln が 2 段以上深い場合は見つけられません。kind の代わりに "target": "<パス>/<名前>.sln" を書いてください`,
+      ],
+    };
   }
   return {
     kind: "ok",
