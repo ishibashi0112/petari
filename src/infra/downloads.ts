@@ -93,7 +93,7 @@ export function findRecentChangesFiles(
   return found.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 }
 
-/** petari watch 用: changes*.md を時刻・サイズ付きで列挙する (時刻での絞り込みはしない・§4.7) */
+/** tazuna watch 用: changes*.md を時刻・サイズ付きで列挙する (時刻での絞り込みはしない・§4.7) */
 export function listChangesFiles(dir: string): WatchedFile[] {
   let names: string[];
   try {

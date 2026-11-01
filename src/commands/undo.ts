@@ -1,5 +1,5 @@
 /**
- * petari undo [ID] — 履歴の巻き戻し (§4.2)。
+ * tazuna undo [ID] — 履歴の巻き戻し (§4.2)。
  * manifest の操作種別に基づき逆適用する:
  *   replace/rewrite → before を書き戻し / create → ファイル削除 / delete → before から復元
  * 適用後に手修正されている場合 (現状ハッシュ ≠ after ハッシュ) は警告して確認する。
@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { TOOL_NAME } from "../brand.ts";
 import { invalidPathReason } from "../core/applier.ts";
 import { loadConfig } from "../infra/config.ts";
 import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
@@ -29,6 +30,19 @@ interface UndoAction {
   modified: boolean;
 }
 
+/**
+ * 巻き戻していない直近の履歴 ID。manifest を読めない履歴はそこで止めて返す
+ * (後の readManifest で「見つかりません」と知らせる。読めない履歴を飛ばして古いものを戻さない)
+ */
+function latestNotUndone(root: string, ids: readonly string[]): string | undefined {
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const id = ids[i] as string;
+    const manifest = readManifest(root, id);
+    if (manifest === null || manifest.undoneAt === undefined) return id;
+  }
+  return undefined;
+}
+
 export async function undoCommand(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -43,20 +57,30 @@ export async function undoCommand(argv: string[]): Promise<number> {
 
   const ids = listHistoryIds(root);
   if (ids.length === 0) {
-    err("petari: 履歴がありません");
+    err(`${TOOL_NAME}: 履歴がありません`);
     return 1;
   }
-  const id = positionals[0] ?? (ids[ids.length - 1] as string);
+  // ID 省略時は巻き戻していない直近の履歴 (続けて実行すると 1 つずつ前へ戻る)。
+  // 巻き戻し済みの履歴をもう一度戻すと、その後の手修正を before で上書きしてしまうため対象にしない
+  const id = positionals[0] ?? latestNotUndone(root, ids);
+  if (id === undefined) {
+    err(`${TOOL_NAME}: 巻き戻せる履歴がありません (すべて巻き戻し済みです。${TOOL_NAME} list で確認してください)`);
+    return 1;
+  }
   const manifest = readManifest(root, id);
   if (manifest === null) {
-    err(`petari: 履歴 ${id} が見つかりません (petari list で確認してください)`);
+    err(`${TOOL_NAME}: 履歴 ${id} が見つかりません (${TOOL_NAME} list で確認してください)`);
+    return 1;
+  }
+  if (manifest.undoneAt !== undefined) {
+    err(`${TOOL_NAME}: 履歴 ${id} は巻き戻し済みです (${TOOL_NAME} list で確認してください)`);
     return 1;
   }
 
   const hdir = join(historyRoot(root), id);
   const applied = manifest.files.filter((f) => f.applied);
   if (applied.length === 0) {
-    err(`petari: 履歴 ${id} に適用済みファイルがありません`);
+    err(`${TOOL_NAME}: 履歴 ${id} に適用済みファイルがありません`);
     return 1;
   }
 
@@ -66,24 +90,24 @@ export async function undoCommand(argv: string[]): Promise<number> {
     // manifest は改ざんされ得るため、apply と同じパス検証をここでも行う (§9)
     const pathReason = invalidPathReason(entry.path);
     if (pathReason !== null) {
-      err(`petari: manifest のパスが不正です: ${entry.path} (${pathReason})`);
+      err(`${TOOL_NAME}: manifest のパスが不正です: ${entry.path} (${pathReason})`);
       return 1;
     }
     const abs = join(root, entry.path);
     if (!isInsideRoot(root, abs)) {
-      err(`petari: manifest のパスがプロジェクトルートの外を指しています: ${entry.path}`);
+      err(`${TOOL_NAME}: manifest のパスがプロジェクトルートの外を指しています: ${entry.path}`);
       return 1;
     }
     const current = readFileState(abs);
     if (current.symlink) {
-      err(`petari: シンボリックリンクは巻き戻し対象外です: ${entry.path}`);
+      err(`${TOOL_NAME}: シンボリックリンクは巻き戻し対象外です: ${entry.path}`);
       return 1;
     }
     let restoreBytes: Uint8Array | null = null;
     if (entry.op !== "create") {
       const beforePath = join(hdir, "before", entry.path);
       if (!existsSync(beforePath)) {
-        err(`petari: 履歴の before ファイルが欠損しています: ${beforePath}`);
+        err(`${TOOL_NAME}: 履歴の before ファイルが欠損しています: ${beforePath}`);
         return 1;
       }
       restoreBytes = new Uint8Array(readFileSync(beforePath));
@@ -126,7 +150,7 @@ export async function undoCommand(argv: string[]): Promise<number> {
     markUndone(root, id, new Date());
   } catch (e) {
     err(
-      `petari: 履歴 ${id} に巻き戻し済みの印を付けられませんでした (${e instanceof Error ? e.message : String(e)})。` +
+      `${TOOL_NAME}: 履歴 ${id} に巻き戻し済みの印を付けられませんでした (${e instanceof Error ? e.message : String(e)})。` +
         "同じ changes.md を再適用するには --force が必要です",
     );
   }

@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { FORMER_TOOL_NAME, TOOL_NAME } from "../brand.ts";
 import type { NewFileSetting } from "../core/new-file-style.ts";
+import { stateDir } from "./history.ts";
 
-/** .petari/config.json (§10) */
-export interface PetariConfig {
+/** 状態ディレクトリの config.json (.tazuna/config.json。旧版の .petari/ だけがあればそちら。§10) */
+export interface LocalConfig {
   downloadsDir: string | null;
   /**
    * 新規ファイルの形式。encoding "auto" は作成先の既存ファイルから推定する (設計書 §11.2)。
@@ -19,7 +21,7 @@ export interface PetariConfig {
   vbproj: { register: boolean };
 }
 
-export const DEFAULT_CONFIG: PetariConfig = {
+export const DEFAULT_CONFIG: LocalConfig = {
   downloadsDir: null,
   newFile: { encoding: "utf8", eol: "lf" },
   historyLimit: null,
@@ -28,19 +30,39 @@ export const DEFAULT_CONFIG: PetariConfig = {
   vbproj: { register: true },
 };
 
-/** グローバル設定のパス (§10)。Windows は %APPDATA%、他は XDG (~/.config) */
-export function globalConfigPath(): string {
+/** tazuna init が書く .tazuna/config.json の雛形 (PC ごとの設定。git の管理外) */
+export const CONFIG_TEMPLATE = `{
+  "downloadsDir": null,
+  "newFile": { "encoding": "auto" },
+  "historyLimit": null,
+  "vscodeCommand": "code",
+  "clipReportOnFailure": true,
+  "vbproj": { "register": true }
+}
+`;
+
+function globalConfigBase(): string {
   if (process.platform === "win32" && process.env["APPDATA"] !== undefined) {
-    return join(process.env["APPDATA"], "petari", "config.json");
+    return process.env["APPDATA"];
   }
-  const base = process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config");
-  return join(base, "petari", "config.json");
+  return process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config");
 }
 
-function readConfigFile(path: string): Partial<PetariConfig> {
+/**
+ * グローバル設定のパス (§10)。Windows は %APPDATA%、他は XDG (~/.config) の tazuna/config.json。
+ * それが無く旧版の petari/config.json があれば、そちらを読む
+ */
+export function globalConfigPath(): string {
+  const base = globalConfigBase();
+  const current = join(base, TOOL_NAME, "config.json");
+  const legacy = join(base, FORMER_TOOL_NAME, "config.json");
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
+function readConfigFile(path: string): Partial<LocalConfig> {
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as Partial<PetariConfig>;
+    return JSON.parse(readFileSync(path, "utf8")) as Partial<LocalConfig>;
   } catch (e) {
     throw new Error(
       `${path} を JSON として読めません: ${e instanceof Error ? e.message : String(e)}`,
@@ -49,7 +71,7 @@ function readConfigFile(path: string): Partial<PetariConfig> {
 }
 
 /** JSON 由来の値は型注釈を素通りするため、使う前に実行時検証する */
-function validateConfig(c: PetariConfig): PetariConfig {
+function validateConfig(c: LocalConfig): LocalConfig {
   const enc: unknown = c.newFile.encoding;
   if (enc !== "utf8" && enc !== "shift_jis" && enc !== "auto") {
     throw new Error(
@@ -85,9 +107,9 @@ function validateConfig(c: PetariConfig): PetariConfig {
 }
 
 /** 既定 < グローバル < プロジェクトの順でマージする (プロジェクト優先・§10) */
-export function loadConfig(root: string): PetariConfig {
+export function loadConfig(root: string): LocalConfig {
   const global = readConfigFile(globalConfigPath());
-  const project = readConfigFile(join(root, ".petari", "config.json"));
+  const project = readConfigFile(join(stateDir(root), "config.json"));
   return validateConfig({
     ...DEFAULT_CONFIG,
     ...global,

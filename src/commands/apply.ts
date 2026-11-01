@@ -1,8 +1,9 @@
 /**
- * petari [path] — 適用コマンド (§4.1)。
+ * tazuna [path] — 適用コマンド (§4.1)。
  * 手順: パース → 全件ドライラン検証 → (失敗があれば何も書かずレポート) →
  * before 保存 → 書き換え → after 保存 → サマリ表示。
  */
+import { INIT_COMMAND, TOOL_NAME } from "../brand.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -32,6 +33,7 @@ import {
   type CandidateFile,
 } from "../infra/downloads.ts";
 import { deleteFile, isInsideRoot, readFileState, sha256, writeBytes } from "../infra/files.ts";
+import { stateDir } from "../infra/history.ts";
 import { gitDirtyFiles } from "../infra/git.ts";
 import { collectStyleSampleGroups } from "../infra/new-file-style.ts";
 import { err, out, outEmphasis } from "../infra/term.ts";
@@ -100,7 +102,7 @@ function printAlreadyApplied(outcomes: FileOutcome[]): void {
   }
 }
 
-/** petari watch が検出したファイル (自動検出と同じ扱いで、成功後に履歴へ移動する・§4.7) */
+/** tazuna watch が検出したファイル (自動検出と同じ扱いで、成功後に履歴へ移動する・§4.7) */
 export interface DetectedChanges {
   path: string;
   origin: "downloads" | "project-root";
@@ -128,8 +130,8 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
 
   const root = findProjectRoot(process.cwd(), values.root);
   const config = loadConfig(root);
-  if (!existsSync(join(root, ".petari"))) {
-    out("ヒント: 初回は `petari init` を実行すると protocol.md や設定の雛形が整います");
+  if (!existsSync(stateDir(root))) {
+    out(`ヒント: 初回は \`${INIT_COMMAND}\` を実行すると設定の雛形と .gitignore などが整います`);
   }
 
   // レポートを標準出力へ出し、クリップボードにもコピーする (§7)。
@@ -146,7 +148,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
         outEmphasis("   → そのまま AI チャットに貼り付けて再依頼できます (Ctrl+V)");
         outEmphasis(rule);
       } catch (e) {
-        err(`petari: クリップボードへのコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
+        err(`${TOOL_NAME}: クリップボードへのコピーに失敗: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   };
@@ -161,7 +163,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     try {
       changesText = stripBom(readFileSync(detected.path, "utf8"));
     } catch {
-      err(`petari: ファイルを読めません: ${detected.path}`);
+      err(`${TOOL_NAME}: ファイルを読めません: ${detected.path}`);
       return 1;
     }
     source = { type: detected.origin, path: detected.path };
@@ -170,7 +172,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     try {
       changesText = stripBom(readFileSync(abs, "utf8"));
     } catch {
-      err(`petari: ファイルを読めません: ${abs}`);
+      err(`${TOOL_NAME}: ファイルを読めません: ${abs}`);
       return 1;
     }
     source = { type: "file", path: abs };
@@ -178,11 +180,11 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     try {
       changesText = stripBom(await readClipboard());
     } catch (e) {
-      err(`petari: クリップボードを読めません: ${e instanceof Error ? e.message : String(e)}`);
+      err(`${TOOL_NAME}: クリップボードを読めません: ${e instanceof Error ? e.message : String(e)}`);
       return 1;
     }
     if (changesText.trim() === "") {
-      err("petari: クリップボードが空です");
+      err(`${TOOL_NAME}: クリップボードが空です`);
       return 1;
     }
     source = { type: "clipboard" };
@@ -199,7 +201,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       .filter((c) => !seen.has(c.path) && (seen.add(c.path), true))
       .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
     if (candidates.length === 0) {
-      err(`petari: ${downloadsDir} にもプロジェクト直下にも直近 30 分以内の changes*.md が見つかりません`);
+      err(`${TOOL_NAME}: ${downloadsDir} にもプロジェクト直下にも直近 30 分以内の changes*.md が見つかりません`);
       err("  ファイルパスを指定するか、--clip でクリップボードから読み込んでください");
       return 1;
     }
@@ -216,7 +218,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     try {
       changesText = stripBom(readFileSync(newest.path, "utf8"));
     } catch {
-      err(`petari: ファイルを読めません: ${newest.path}`);
+      err(`${TOOL_NAME}: ファイルを読めません: ${newest.path}`);
       return 1;
     }
     source = { type: newest.origin, path: newest.path };
@@ -225,7 +227,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
   // 1. パース (構文エラーは即時失敗・§4.1)。strict で失敗したら寛容パースを試す (§3.5)
   const { changeSet, issues, repairs } = parseChangesRecovering(changesText);
   if (issues.length > 0) {
-    err("petari: changes.md の構文エラーです。何も書き込んでいません。\n");
+    err(`${TOOL_NAME}: changes.md の構文エラーです。何も書き込んでいません。\n`);
     await emitReport(buildParseErrorReport(issues));
     return 1;
   }
@@ -296,7 +298,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       !planChangeSet(changeSet, states, resolveNewFile, { literalMasked: true }).failures.some(
         (f) => f.kind === "masked-value",
       );
-    // petari watch は --literal-masked を受け付けないため案内しない
+    // tazuna watch は --literal-masked を受け付けないため案内しない
     const canSpecify = detected === undefined && values["literal-masked"] !== true;
     if (canSpecify && masked.some((f) => f.literalAllowed === true) && literalWorks()) {
       err(
@@ -308,7 +310,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
 
   // 3. 失敗があれば何も書き込まずレポート (§4.1, §7)
   if (!plan.ok && !values.partial) {
-    err(`petari: 検証に失敗しました (${plan.failures.length} 件)。何も書き込んでいません。\n`);
+    err(`${TOOL_NAME}: 検証に失敗しました (${plan.failures.length} 件)。何も書き込んでいません。\n`);
     if (previousNote !== null) err(`注: ${previousNote}。取り違えていないか確認してください\n`);
     literalHint();
     await emitReport(
@@ -337,7 +339,7 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       for (const o of plan.outcomes) out(`  ${opLabel(o)}`);
       return 0;
     }
-    err("petari: 適用できる変更がありません。\n");
+    err(`${TOOL_NAME}: 適用できる変更がありません。\n`);
     literalHint();
     await emitReport(
       buildFailureReport(plan.failures, { outcomes: plan.outcomes, nothingWritten: true }),
@@ -351,11 +353,11 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
     } else if (values["dry-run"]) {
       out(`警告: ${previousNote}。実際の適用は --force を付けない限り止まります`);
     } else {
-      err(`petari: ${previousNote}。何も書き込んでいません。`);
+      err(`${TOOL_NAME}: ${previousNote}。何も書き込んでいません。`);
       err("  このまま適用すると次のファイルに書き込みが発生します (二重適用のおそれ):");
       for (const o of applicable) err(`    ${opLabel(o)}`);
       err("  取り違えでなければ --force を付けて再実行してください");
-      err("  (petari undo で巻き戻した履歴は対象外です。git 等で手動で戻した場合は --force が必要です)");
+      err(`  (${TOOL_NAME} undo で巻き戻した履歴は対象外です。git 等で手動で戻した場合は --force が必要です)`);
       return 1;
     }
   }
@@ -506,11 +508,11 @@ export async function applyCommand(argv: string[], detected?: DetectedChanges): 
       deleteFile(source.path);
       out(`${source.path} を履歴へ移動しました`);
     } catch {
-      err(`petari: ${source.path} を削除できませんでした (履歴には保存済み)`);
+      err(`${TOOL_NAME}: ${source.path} を削除できませんでした (履歴には保存済み)`);
     }
   }
 
   out("");
-  out("git diff で差分を確認してください。巻き戻しは `petari undo` です。");
+  out(`git diff で差分を確認してください。巻き戻しは \`${TOOL_NAME} undo\` です。`);
   return 0;
 }

@@ -3,12 +3,13 @@
  *
  * 2026-08-25 の実運用事例 (AI が失敗原因を空白/エンコーディング差と誤診し、SEARCH の
  * 空白調整や ASCII 化に 4 往復を浪費) を受けて、レポートに次を含める:
- * - petari の照合仕様 (空白・エンコーディング差は吸収済み = 失敗は文字内容の差) の明記
+ * - tazuna の照合仕様 (空白・エンコーディング差は吸収済み = 失敗は文字内容の差) の明記
  * - 全ファイル・全ブロックの検証結果一覧 (どこが通りどこが落ちたかの対比が診断の鍵)
  * - all-or-nothing で未書き込みであることの明記 (端末表示はチャットに貼られないため)
  * - block-not-found への実ファイル近傍抜粋 (nearest.ts。AI が推測せずコピーで直せる)。
  *   抜粋は伏せた表示 (mask.ts) から作り、認証情報らしき値は [MASKED] で載せる
  */
+import { TOOL_NAME } from "../brand.ts";
 import type { Failure } from "./applier.ts";
 import type { FileOutcome } from "./applier.ts";
 import { STAGE_LABEL } from "./matcher.ts";
@@ -16,9 +17,9 @@ import { renderNearest, renderNearestReplace } from "./nearest.ts";
 import type { ParseIssue } from "../types.ts";
 
 const MATCH_SPEC_NOTE = [
-  "## petari の照合仕様 (SEARCH を修正する前に必ず読んでください)",
+  `## ${TOOL_NAME} の照合仕様 (SEARCH を修正する前に必ず読んでください)`,
   "",
-  "- petari は行末空白・インデントの深さ (タブ/スペース混在含む)・空行の位置と数・改行コード・",
+  `- ${TOOL_NAME} は行末空白・インデントの深さ (タブ/スペース混在含む)・空行の位置と数・改行コード・`,
   "  文字コード (UTF-8 / Shift_JIS) の違いを自動で吸収して照合しています",
   "- 空行の差は双方から空行を除いた照合で吸収されます。ただし空行を除くと複数箇所に一致して",
   "  しまう場合は曖昧エラーになります (前後の行を追加して一意に特定できる範囲にしてください)",
@@ -44,7 +45,7 @@ const EDGE_REQUEST_LINES = [
 /** 照合仕様のうち伏せ字の項 (レポートに [MASKED] が出るときだけ載せる) */
 const MASK_SPEC_NOTE = [
   "- 抜粋の [MASKED] は実際の値を伏せた印です。[MASKED] を含む行は SEARCH にも REPLACE にも一字も",
-  "  変えずに写してください (petari が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・",
+  `  変えずに写してください (${TOOL_NAME} が元の値に戻して書き込みます)。[MASKED] を含む行の書き換え・`,
   "  追加はできません (値を推測して書かず、その行は利用者に直してもらってください)",
 ];
 /** 照合仕様の伏せ字の項のうち、複数行にまたがる値を伏せた範囲の行 (抜粋にその行があるときだけ載せる) */
@@ -205,7 +206,7 @@ export function buildFailureReport(failures: Failure[], ctx: FailureReportContex
   if (ctx.nothingWritten === true) {
     parts.push(
       "",
-      "※ この失敗により petari は何も書き込んでいません (all-or-nothing)。下の一覧で「一致」と",
+      `※ この失敗により ${TOOL_NAME} は何も書き込んでいません (all-or-nothing)。下の一覧で「一致」と`,
       "表示されたブロックもまだファイルには適用されていないため、再出力には失敗していない",
       "ブロックもすべて含めてください。",
     );

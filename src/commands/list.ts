@@ -1,11 +1,11 @@
 /**
- * petari list — 履歴の一覧 (§4.4)。
+ * tazuna list — 履歴の一覧 (§4.4)。
  * ID・日時・概要 (CHANGES 先頭行)・対象ファイル数・成否と、履歴全体のサイズを表示する。
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { historyRoot, listHistoryIds, readManifest } from "../infra/history.ts";
+import { historyRoot, listHistoryIds, readManifest, stateDirName } from "../infra/history.ts";
 import { findProjectRoot } from "../infra/root.ts";
 import { out } from "../infra/term.ts";
 
@@ -68,6 +68,6 @@ export async function listCommand(argv: string[]): Promise<number> {
     out(`${id}  ${status}  ${appliedCount} ファイル  ${summary}`);
   }
   out("");
-  out(`履歴 ${ids.length} 件 / 合計 ${formatSize(total)} (.petari/history)`);
+  out(`履歴 ${ids.length} 件 / 合計 ${formatSize(total)} (${stateDirName(root)}/history)`);
   return 0;
 }

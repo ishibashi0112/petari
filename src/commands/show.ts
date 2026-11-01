@@ -1,5 +1,5 @@
 /**
- * petari show [ID] — 履歴の差分表示 (§4.3)。
+ * tazuna show [ID] — 履歴の差分表示 (§4.3)。
  * - 既定: before vs after。VS Code の差分ビューで開き、VS Code が見つからない
  *   場合 (ENOENT/EINVAL) は自己完結 HTML レポートを生成してブラウザで開く
  * - --mine: after vs 現在のファイル = 適用後の手修正分だけを可視化
@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
+import { FORMER_TOOL_NAME, STATE_DIRECTORY, TOOL_NAME } from "../brand.ts";
 import { invalidPathReason } from "../core/applier.ts";
 import { diffLines, toSideBySideRows } from "../core/diff.ts";
 import { buildReportPage, type ReportFileSection } from "../core/diff-html.ts";
@@ -26,7 +27,13 @@ import { parseChangesRecovering } from "../core/parser.ts";
 import { openInBrowser } from "../infra/browser.ts";
 import { loadConfig } from "../infra/config.ts";
 import { isInsideRoot } from "../infra/files.ts";
-import { historyRoot, listHistoryIds, readManifest, type ManifestFileEntry } from "../infra/history.ts";
+import {
+  historyRoot,
+  listHistoryIds,
+  readManifest,
+  stateDirName,
+  type ManifestFileEntry,
+} from "../infra/history.ts";
 import { createInterface } from "node:readline/promises";
 import { findProjectRoot } from "../infra/root.ts";
 import { err, out } from "../infra/term.ts";
@@ -63,15 +70,19 @@ function isCommandMissing(e: unknown): boolean {
  * シェル非経由では起動できない (ENOENT / EINVAL) ため、既定の "code" では常に不在扱いになる。
  * Code.exe の絶対パスなら --diff を渡して起動できる
  */
-export function vscodeMissingHint(cmd: string, platform: NodeJS.Platform = process.platform): string | null {
+export function vscodeMissingHint(
+  cmd: string,
+  platform: NodeJS.Platform = process.platform,
+  stateDirectory: string = STATE_DIRECTORY,
+): string | null {
   if (platform !== "win32" || win32.isAbsolute(cmd)) return null;
-  return '  VS Code で開くには .petari/config.json に "vscodeCommand": "C:/Users/<ユーザー名>/AppData/Local/Programs/Microsoft VS Code/Code.exe" のように Code.exe の絶対パスを書いてください';
+  return `  VS Code で開くには ${stateDirectory}/config.json に "vscodeCommand": "C:/Users/<ユーザー名>/AppData/Local/Programs/Microsoft VS Code/Code.exe" のように Code.exe の絶対パスを書いてください`;
 }
 
 let emptyFileCache: string | null = null;
 function emptyFile(): string {
   if (emptyFileCache === null) {
-    emptyFileCache = join(mkdtempSync(join(tmpdir(), "petari-")), "empty");
+    emptyFileCache = join(mkdtempSync(join(tmpdir(), `${TOOL_NAME}-`)), "empty");
     writeFileSync(emptyFileCache, "");
   }
   return emptyFileCache;
@@ -184,17 +195,19 @@ export function generateReportHtml(
       return { path: e.path, op: e.op, body: { kind: "note" as const, note: `差分を表示できません: ${msg}` } };
     }
   });
-  const title = `petari 履歴 ${id}${mine ? " (手修正分)" : ""}`;
+  const title = `${TOOL_NAME} 履歴 ${id}${mine ? " (手修正分)" : ""}`;
   return buildReportPage(title, new Date().toLocaleString("ja-JP"), sections);
 }
 
-const REPORT_DIR_PREFIX = "petari-report-";
+const REPORT_DIR_PREFIX = `${TOOL_NAME}-report-`;
+/** 掃除の対象 (旧版 petari が残したものも消す) */
+const REPORT_DIR_PREFIXES = [REPORT_DIR_PREFIX, `${FORMER_TOOL_NAME}-report-`];
 const REPORT_TTL_MS = 60 * 60_000;
 
 /**
  * 過去の一時レポートを掃除する (§4.3)。レポートはコードの中身を平文で含むため
  * 残し続けない。ブラウザで閲覧中かもしれない直近 1 時間分は残し、次回実行時に消す。
- * 対象は tmpdir 直下の petari-report-* ディレクトリのみ (symlink は Dirent 判定で除外)。
+ * 対象は tmpdir 直下の tazuna-report-* (と旧版の petari-report-*) ディレクトリのみ (symlink は Dirent 判定で除外)。
  */
 export function cleanupOldReports(now: number = Date.now()): number {
   let removed = 0;
@@ -205,7 +218,7 @@ export function cleanupOldReports(now: number = Date.now()): number {
     return 0;
   }
   for (const ent of entries) {
-    if (!ent.isDirectory() || !ent.name.startsWith(REPORT_DIR_PREFIX)) continue;
+    if (!ent.isDirectory() || !REPORT_DIR_PREFIXES.some((prefix) => ent.name.startsWith(prefix))) continue;
     const dir = join(tmpdir(), ent.name);
     try {
       if (now - statSync(dir).mtimeMs < REPORT_TTL_MS) continue;
@@ -257,7 +270,7 @@ export async function showCommand(argv: string[]): Promise<number> {
     allowPositionals: true,
   });
   if (values.edit && values.browser) {
-    err("petari: --edit は VS Code 専用です (ブラウザでの編集は v0.13.0 で廃止しました)");
+    err(`${TOOL_NAME}: --edit は VS Code 専用です (ブラウザでの編集は v0.13.0 で廃止しました)`);
     err("  差分は git (VS Code のソース管理など) で確認し、ファイルはエディタで直接修正してください");
     return 1;
   }
@@ -267,13 +280,13 @@ export async function showCommand(argv: string[]): Promise<number> {
 
   const ids = listHistoryIds(root);
   if (ids.length === 0) {
-    err("petari: 履歴がありません");
+    err(`${TOOL_NAME}: 履歴がありません`);
     return 1;
   }
   const id = positionals[0] ?? (ids[ids.length - 1] as string);
   const manifest = readManifest(root, id);
   if (manifest === null) {
-    err(`petari: 履歴 ${id} が見つかりません (petari list で確認してください)`);
+    err(`${TOOL_NAME}: 履歴 ${id} が見つかりません (${TOOL_NAME} list で確認してください)`);
     return 1;
   }
   const hdir = join(historyRoot(root), id);
@@ -289,7 +302,7 @@ export async function showCommand(argv: string[]): Promise<number> {
 
   const applied = manifest.files.filter((f) => f.applied);
   if (applied.length === 0) {
-    err(`petari: 履歴 ${id} に適用済みファイルがありません`);
+    err(`${TOOL_NAME}: 履歴 ${id} に適用済みファイルがありません`);
     return 1;
   }
 
@@ -297,7 +310,7 @@ export async function showCommand(argv: string[]): Promise<number> {
   for (const e of applied) {
     const pathReason = invalidPathReason(e.path);
     if (pathReason !== null) {
-      err(`petari: manifest のパスが不正です: ${e.path} (${pathReason})`);
+      err(`${TOOL_NAME}: manifest のパスが不正です: ${e.path} (${pathReason})`);
       return 1;
     }
   }
@@ -305,7 +318,7 @@ export async function showCommand(argv: string[]): Promise<number> {
   if (values.edit) {
     for (const e of applied) {
       if (!isInsideRoot(root, join(root, e.path))) {
-        err(`petari: manifest のパスがプロジェクト外を指しています: ${e.path}`);
+        err(`${TOOL_NAME}: manifest のパスがプロジェクト外を指しています: ${e.path}`);
         return 1;
       }
     }
@@ -315,7 +328,7 @@ export async function showCommand(argv: string[]): Promise<number> {
   if (values.file !== undefined) {
     const found = applied.find((e) => e.path === values.file);
     if (found === undefined) {
-      err(`petari: ${values.file} は履歴 ${id} にありません`);
+      err(`${TOOL_NAME}: ${values.file} は履歴 ${id} にありません`);
       return 1;
     }
     fileEntry = found;
@@ -326,7 +339,7 @@ export async function showCommand(argv: string[]): Promise<number> {
     // VS Code 経路。壊れた vscodeCommand 設定はここで止める (--browser には影響させない)
     const cmdReason = invalidVscodeCommandReason(config.vscodeCommand);
     if (cmdReason !== null) {
-      err(`petari: ${cmdReason}: ${config.vscodeCommand}`);
+      err(`${TOOL_NAME}: ${cmdReason}: ${config.vscodeCommand}`);
       return 1;
     }
     let entry: ManifestFileEntry;
@@ -337,7 +350,7 @@ export async function showCommand(argv: string[]): Promise<number> {
     } else {
       const picked = await pickEntry(applied);
       if (picked === null) {
-        err("petari: 中止しました");
+        err(`${TOOL_NAME}: 中止しました`);
         return 1;
       }
       entry = picked;
@@ -347,7 +360,7 @@ export async function showCommand(argv: string[]): Promise<number> {
       ? resolveEditPair(root, hdir, entry, values.mine)
       : resolveDiffPair(root, hdir, entry, values.mine);
     if ("error" in pair) {
-      err(`petari: ${pair.error}`);
+      err(`${TOOL_NAME}: ${pair.error}`);
       return 1;
     }
     out(`${config.vscodeCommand} --diff で開きます: ${pair.title}`);
@@ -356,13 +369,13 @@ export async function showCommand(argv: string[]): Promise<number> {
       return 0;
     } catch (e) {
       if (!isCommandMissing(e)) {
-        err(`petari: ${config.vscodeCommand} の起動に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
-        err("  .petari/config.json の vscodeCommand を確認してください");
+        err(`${TOOL_NAME}: ${config.vscodeCommand} の起動に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+        err(`  ${stateDirName(root)}/config.json の vscodeCommand を確認してください`);
         return 1;
       }
-      const hint = vscodeMissingHint(config.vscodeCommand);
+      const hint = vscodeMissingHint(config.vscodeCommand, process.platform, stateDirName(root));
       if (values.edit) {
-        err(`petari: ${config.vscodeCommand} が見つからないため --edit は使えません`);
+        err(`${TOOL_NAME}: ${config.vscodeCommand} が見つからないため --edit は使えません`);
         if (hint !== null) err(hint);
         err("  差分は git で確認し、ファイルはエディタで直接修正してください");
         return 1;

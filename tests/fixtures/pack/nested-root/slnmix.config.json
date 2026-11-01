@@ -1,0 +1,7 @@
+{
+  "target": "dotnet/App.sln",
+  "extraRoots": [
+    { "path": "web", "kind": "web" },
+    { "path": "e2e", "kind": "test" }
+  ]
+}

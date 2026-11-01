@@ -4,7 +4,7 @@ import { parseChanges } from "../src/core/parser.ts";
 
 describe("規約文 (§4.5)", () => {
   it("バージョン識別子を含む", () => {
-    expect(PROTOCOL_TEXT).toContain(`petari protocol v${PROTOCOL_VERSION}`);
+    expect(PROTOCOL_TEXT).toContain(`tazuna protocol v${PROTOCOL_VERSION}`);
   });
 
   it("規約の必須要素をすべて説明している", () => {
@@ -39,7 +39,7 @@ describe("規約文 (§4.5)", () => {
     expect(changeSet.files.map((f) => f.op)).toEqual(["replace", "create", "rewrite", "delete"]);
   });
 
-  it("smoke: petari protocol が 0 で終了する", async () => {
+  it("smoke: tazuna protocol が 0 で終了する", async () => {
     const { protocolCommand } = await import("../src/commands/protocol.ts");
     expect(await protocolCommand([])).toBe(0);
   });

@@ -1,16 +1,19 @@
 /**
  * 認証情報の伏せ字 (§7 失敗レポート / 伏せ字の行の照合)。
  *
- * slnmix がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
- * (SEARCH / REPLACE / CONTENT) にも [MASKED] が入る。petari は次の 3 点でこれを扱う:
+ * tazuna pack (旧 slnmix) がパックを作るときに認証情報らしき値を [MASKED] に置き換えるため、AI の返答
+ * (SEARCH / REPLACE / CONTENT) にも [MASKED] が入る。適用では次の 3 点でこれを扱う:
  * - 失敗レポートの「実ファイルの該当箇所」を伏せる (AI に貼るレポートから実際の値が漏れない)
  * - SEARCH の [MASKED] を「伏せた後の実ファイル」と照合する (伏せ字の行も変更できる)
  * - 書き込む行の [MASKED] を元の値に戻す。戻せなければ書かずに止める
  *
- * maskCredentials / maskLinesForDisplay / maskedValuesForDisplay は slnmix の src/services/credentialMasker.ts の写し
- * (slnmix 0.22.2 時点)。判定を変えるときは両方を揃える (slnmix と petari の統合で 1 つに戻す。設計書 §25)。
+ * 伏せる処理 (maskCredentials) はパック・tazuna build のエラーの文面・適用の失敗レポートで共通の 1 本
+ * (0.15.0 の統合で slnmix の credentialMasker.ts の写しから 1 つに戻した。設計書 §25)。旧 slnmix のパック
+ * (言語ごとの伏せ方の前の版) から写した SEARCH も照合できるよう、照合用の表示は旧版の伏せ方の分も作る。
  * I/O を持たない純粋ロジック。
  */
+
+import { literalRegions, sourceLanguageOf, type SourceLanguage } from "./source-lexer.ts";
 
 export interface MaskFinding {
   /** 1 始まりの行番号(置換前テキスト基準の近似値) */
@@ -27,6 +30,12 @@ export interface MaskResult {
 export interface MaskOptions {
   /** VB ソース(.vb)として文字列リテラル単位で処理するか */
   vbSource: boolean;
+  /**
+   * VB 以外で、言語の分かるソースとして伏せる(source-lexer.ts。設計書 §25.7)。汎用テキストとして伏せた範囲の
+   * うち、文字列・コメント・数値の中の部分だけを伏せ、コードの部分(`process.env.API_KEY` など)は戻す。
+   * 省略時は汎用テキストとして伏せる。vbSource が true なら使わない
+   */
+  language?: SourceLanguage | undefined;
   /**
    * 高エントロピー文字列(ランダムな英数字列)も機械的にマスクするか。
    * 省略時は true(厳格モードが既定)。対象は文字列リテラル・コメント・
@@ -1543,6 +1552,9 @@ function maskGenericText(
  * 認証情報らしき値を [MASKED] に置換し、置換箇所の一覧を返す。
  */
 export function maskCredentials(content: string, options: MaskOptions): MaskResult {
+  if (options.language !== undefined && !options.vbSource) {
+    return maskLanguageSource(content, options.strict ?? true, options.language);
+  }
   const findings: MaskFinding[] = [];
   const strict = options.strict ?? true;
   let result = options.vbSource
@@ -1595,20 +1607,111 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
 }
 
 // ---------------------------------------------------------------------------
-// 伏せた表示 (行の位置を保つ)。slnmix のビルドエラーの抜粋と同じ処理
+// 言語の分かるソースの伏せ方 (設計書 §25.7)
 // ---------------------------------------------------------------------------
 
-/** slnmix が置き換える伏せ字 */
+const QUOTE_CHARS = new Set(['"', "'", "`"]);
+
+/**
+ * 汎用テキストとして伏せた範囲のうち、リテラル (文字列の中身・コメント・数値) の中の部分だけを伏せる。
+ * コードの部分は戻す。ただし次のコードの部分は伏せたままにする (字句解析を読み違えたときに値を出さない):
+ * - 読み違えの恐れのある行 (1 行で閉じる文字列が閉じていない行など) の中
+ * - 前後が引用符で挟まれている (文字列の中身に見える)
+ * - その部分だけを汎用テキストとして伏せても伏せる (トークンの形式・高エントロピーなど)
+ * 伏せた範囲を元の位置に対応づけられなければ、汎用テキストとしての結果をそのまま返す
+ */
+function maskLanguageSource(content: string, strict: boolean, language: SourceLanguage): MaskResult {
+  const generic = maskCredentials(content, { vbSource: false, strict });
+  if (generic.content === content) return generic;
+  const spans = spansOfMasked(content, generic.content);
+  if (spans === null) return generic;
+  const lexed = literalRegions(content, language);
+  // 読み違えの恐れのある行は全体をリテラルとみなす
+  const literal: Array<[number, number]> = [...lexed.regions];
+  if (lexed.uncertainLines.size > 0) {
+    let lineStart = 0;
+    let line = 0;
+    while (lineStart <= content.length) {
+      const newline = content.indexOf("\n", lineStart);
+      const lineEnd = newline < 0 ? content.length : newline;
+      if (lexed.uncertainLines.has(line)) literal.push([lineStart, lineEnd]);
+      if (newline < 0) break;
+      lineStart = newline + 1;
+      line += 1;
+    }
+    literal.sort((a, b) => a[0] - b[0]);
+  }
+  const pieces: Array<[number, number]> = [];
+  const keepCode = (from: number, to: number): boolean => {
+    const piece = content.slice(from, to);
+    if (piece.trim() === "") return false;
+    if (QUOTE_CHARS.has(content.charAt(from - 1)) && QUOTE_CHARS.has(content.charAt(to))) return true;
+    return maskCredentials(piece, { vbSource: false, strict }).content !== piece;
+  };
+  const push = (from: number, to: number): void => {
+    if (to > from && content.slice(from, to).trim() !== "") pieces.push([from, to]);
+  };
+  let r = 0;
+  for (const span of spans) {
+    while (r < literal.length && (literal[r]?.[1] ?? 0) <= span.start) r += 1;
+    let cursor = span.start;
+    for (let k = r; k < literal.length; k++) {
+      const region = literal[k];
+      if (region === undefined || region[0] >= span.end) break;
+      const from = Math.max(region[0], span.start);
+      const to = Math.min(region[1], span.end);
+      if (from > cursor) {
+        if (keepCode(cursor, from)) push(cursor, from);
+      }
+      if (to > Math.max(from, cursor)) push(Math.max(from, cursor), to);
+      cursor = Math.max(cursor, to);
+    }
+    if (cursor < span.end && keepCode(cursor, span.end)) push(cursor, span.end);
+  }
+  // 隣り合う部分は 1 つの伏せ字にする
+  const merged: Array<[number, number]> = [];
+  for (const piece of pieces) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && piece[0] <= last[1]) last[1] = Math.max(last[1], piece[1]);
+    else merged.push([piece[0], piece[1]]);
+  }
+  let out = "";
+  let cursor = 0;
+  const keptLines = new Set<number>();
+  for (const [from, to] of merged) {
+    const value = content.slice(from, to);
+    // 複数行の値 (秘密鍵の本文など) は汎用テキストと同じく「改行 + 伏せ字 + 改行」にする
+    const block = value.length > 1 && value.startsWith("\n") && value.endsWith("\n");
+    out += content.slice(cursor, from) + (block ? `\n${MASK}\n` : MASK);
+    cursor = to;
+    const first = lineOf(content, from);
+    const last = lineOf(content, Math.max(from, to - 1));
+    for (let line = first; line <= last; line++) keptLines.add(line);
+  }
+  out += content.slice(cursor);
+  lineIndexText = undefined;
+  lineIndexBreaks = [];
+  if (merged.length === 0) return { content, findings: [] };
+  const findings = generic.findings.filter((finding) => keptLines.has(finding.line));
+  return { content: out, findings: findings.length > 0 ? findings : generic.findings };
+}
+
+// ---------------------------------------------------------------------------
+// 伏せた表示 (行の位置を保つ)。tazuna build のエラーの抜粋と失敗レポートの抜粋で使う
+// ---------------------------------------------------------------------------
+
+/** パックで置き換える伏せ字 */
 export const MASK_TOKEN = MASK;
 
 export function hasMaskToken(line: string): boolean {
   return line.includes(MASK);
 }
 
-/** 伏せ方 (slnmix のパックが取り得る組み合わせ) */
+/** 伏せ方 (パックが取り得る組み合わせ) */
 interface MaskMode {
   vbSource: boolean;
   strict: boolean;
+  language?: SourceLanguage | undefined;
 }
 
 /** 伏せた範囲 (元の文字列の位置。tokens は隣り合った伏せ字をまとめた数) */
@@ -1619,12 +1722,18 @@ interface MaskSpan {
 }
 
 /**
- * slnmix が使い得る伏せ方。.vb は VB として伏せるのが通常だが、generic 構成の追加ディレクトリでは
+ * パックが使い得る伏せ方。.vb は VB として伏せるのが通常だが、generic 構成の追加ディレクトリでは
  * 汎用テキストとして伏せる。strict は --no-strict-mask で切られる
  */
 function maskModes(path: string, stricts: boolean[]): MaskMode[] {
   const vbs = /\.vb$/i.test(path) ? [true, false] : [false];
-  return vbs.flatMap((vbSource) => stricts.map((strict) => ({ vbSource, strict })));
+  const modes: MaskMode[] = vbs.flatMap((vbSource) => stricts.map((strict) => ({ vbSource, strict })));
+  // 言語の分かるソースは、言語ごとの伏せ方 (tazuna pack) と汎用テキストの伏せ方 (旧 slnmix のパック) の両方
+  const language = sourceLanguageOf(path);
+  if (language !== undefined) {
+    modes.push(...stricts.map((strict) => ({ vbSource: false, strict, language })));
+  }
+  return modes;
 }
 
 /** 秘密鍵ブロックの置換 (BEGIN と END の間を「改行 + 伏せ字 + 改行」にする) の跡 */
@@ -1639,7 +1748,12 @@ const COLLAPSED_PRIVATE_KEY =
  * 対応づけられなければ null (呼び出し側は安全側に倒す)
  */
 function maskedSpans(text: string, mode: MaskMode): MaskSpan[] | null {
-  const masked = maskCredentials(text, mode).content.replace(
+  return spansOfMasked(text, maskCredentials(text, mode).content);
+}
+
+/** 伏せた結果 (maskedContent) から、伏せた範囲を元の文字列 (text) の位置で求める。対応づけられなければ null */
+function spansOfMasked(text: string, maskedContent: string): MaskSpan[] | null {
+  const masked = maskedContent.replace(
     COLLAPSED_PRIVATE_KEY,
     (_whole, begin: string, end: string) => `${begin}${MASK}${end}`,
   );
@@ -1679,7 +1793,7 @@ export interface MaskedLine {
    */
   values: string[] | null;
   /**
-   * 複数行にまたがる値 (秘密鍵の本文・複数行の属性値) の一部を伏せた行。slnmix のパックでは
+   * 複数行にまたがる値 (秘密鍵の本文・複数行の属性値) の一部を伏せた行。パックでは
    * これらの行は 1 行にまとめて表示されるため、AI が写した SEARCH とは本来一致しない
    */
   wrapped: boolean;
@@ -1745,7 +1859,7 @@ export interface MaskLinesOptions {
   /** 高エントロピー文字列も伏せるか (省略時は true) */
   strict?: boolean;
   /**
-   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (slnmix build) に指定する。
+   * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (tazuna build) に指定する。
    * 省略時は拡張子から、パックが取り得る伏せ方をすべて使う (.vb は VB / 汎用テキストの両方)
    */
   vbSource?: boolean;
@@ -1771,7 +1885,7 @@ function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | nul
 
 /**
  * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
- * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
+ * パックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
 export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
@@ -1802,11 +1916,11 @@ export function maskedValuesForDisplay(lines: string[], options: MaskLinesOption
 }
 
 // ---------------------------------------------------------------------------
-// petari 側の扱い (伏せ字の行の照合と復元)
+// 適用側の扱い (伏せ字の行の照合と復元)
 // ---------------------------------------------------------------------------
 
 /**
- * 照合と伏せ字の復元に使う伏せた表示。slnmix のパックが取り得る伏せ方ごとと、失敗レポート・
+ * 照合と伏せ字の復元に使う伏せた表示。パックが取り得る伏せ方ごとと、失敗レポート・
  * ビルドエラーの抜粋 (maskLinesForDisplay) と同じ合わせ方のもの (抜粋から写した SEARCH 用) を作る。
  * 同じ表示になるものは 1 つにまとめ、対応づけられない伏せ方は含めない
  */

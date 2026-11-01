@@ -10,7 +10,7 @@ describe("escapeHtml (§9)", () => {
 
 describe("buildReportPage (§4.3)", () => {
   it("meta CSP と charset を含み、外部リソース参照がない", () => {
-    const html = buildReportPage("petari 履歴 X", "2026-08-12", []);
+    const html = buildReportPage("tazuna 履歴 X", "2026-08-12", []);
     expect(html).toContain(`http-equiv="Content-Security-Policy"`);
     expect(html).toContain("default-src 'none'");
     expect(html).toContain(`<meta charset="utf-8">`);

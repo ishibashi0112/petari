@@ -1,6 +1,6 @@
 /**
- * petari protocol — 規約文を標準出力に出す (§4.5)。
- * slnmix / repomix 連携の single source。
+ * tazuna protocol — 規約文を標準出力に出す (§4.5)。
+ * パック (tazuna pack) は内蔵の規約文を直接使う。repomix など別の道具で使うとき用。
  */
 import { PROTOCOL_TEXT } from "../assets/protocol.ts";
 

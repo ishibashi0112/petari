@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractVersion": 1,
+  "$defs": {
+    "Part": {
+      "type": "object",
+      "properties": {
+        "partNo": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "qty": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO 8601。日付は初期は文字列で往復する（HANDOFF.md §10）"
+        }
+      },
+      "required": [
+        "partNo",
+        "name",
+        "qty",
+        "updatedAt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "methods": {
+    "parts": {
+      "search": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "keyword": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "keyword"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Part"
+              }
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "events": {
+    "progress": {
+      "type": "object",
+      "properties": {
+        "percent": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "percent"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

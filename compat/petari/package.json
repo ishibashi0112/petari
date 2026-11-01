@@ -1,0 +1,30 @@
+{
+  "name": "petari",
+  "version": "0.15.0",
+  "description": "petari は tazuna に改名しました。npx tazuna を使ってください(このパッケージは tazuna を呼ぶだけの互換コマンドです)",
+  "keywords": [
+    "tazuna"
+  ],
+  "license": "MIT",
+  "author": "Yuki Sakakibara",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ishibashi0112/tazuna.git",
+    "directory": "compat/petari"
+  },
+  "homepage": "https://github.com/ishibashi0112/tazuna#readme",
+  "type": "module",
+  "bin": {
+    "petari": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "forward.js"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "tazuna": "^0.15.0"
+  }
+}

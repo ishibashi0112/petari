@@ -36,7 +36,7 @@ const CHANGES = doc(
 const ORIGINAL_VB = sjis("' コメント\r\nDim count As Integer = 1\r\nEnd Module");
 
 async function setupApplied(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "petari-undo-"));
+  const dir = mkdtempSync(join(tmpdir(), "tazuna-undo-"));
   writeFileSync(join(dir, "legacy.vb"), ORIGINAL_VB);
   writeFileSync(join(dir, "old.txt"), utf8("obsolete\n"));
   writeFileSync(join(dir, "changes.md"), CHANGES, "utf8");
@@ -72,8 +72,41 @@ describe("undoCommand (§4.2)", () => {
   });
 
   it("履歴がなければエラー", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-undo-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-undo-empty-"));
     expect(await undoCommand(["--root", dir, "--yes"])).toBe(1);
+  });
+
+  it("ID 省略で続けて実行すると 1 つずつ前の履歴へ戻り、巻き戻し済みの履歴は戻さない", async () => {
+    const dir = await setupApplied();
+    writeFileSync(join(dir, "changes2.md"), doc(
+      "## CHANGES",
+      "",
+      "2 回目の変更。",
+      "",
+      "### FILE: legacy.vb (replace)",
+      "<<<<<<< SEARCH",
+      "Dim count As Integer = 100",
+      "=======",
+      "Dim count As Integer = 200",
+      ">>>>>>> REPLACE",
+    ), "utf8");
+    expect(await applyCommand([join(dir, "changes2.md"), "--root", dir, "--yes"])).toBe(0);
+    const [first, second] = listHistoryIds(dir) as [string, string];
+
+    // 1 回目: 2 回目の適用を戻す
+    expect(await undoCommand(["--root", dir, "--yes"])).toBe(0);
+    expect(readFileSync(join(dir, "legacy.vb"), "latin1")).toContain("Dim count As Integer = 100");
+    // 戻した後の手修正は、巻き戻し済みの履歴をもう一度戻して上書きしない
+    writeFileSync(join(dir, "legacy.vb"), sjis("' コメント\r\nDim count As Integer = 150\r\nEnd Module"));
+    expect(await undoCommand([second, "--root", dir, "--yes"])).toBe(1);
+    expect(readFileSync(join(dir, "legacy.vb"), "latin1")).toContain("Dim count As Integer = 150");
+    // 2 回目: 1 回目の適用を戻す (手修正は警告のうえ --yes で戻る)
+    expect(await undoCommand(["--root", dir, "--yes"])).toBe(0);
+    expect(new Uint8Array(readFileSync(join(dir, "legacy.vb")))).toEqual(ORIGINAL_VB);
+    expect(existsSync(join(dir, "sub", "new.ts"))).toBe(false);
+    // 3 回目: 戻せる履歴がない
+    expect(await undoCommand(["--root", dir, "--yes"])).toBe(1);
+    expect(await undoCommand([first, "--root", dir, "--yes"])).toBe(1);
   });
 
   it("手修正があっても --yes なら巻き戻す (undo 後は before の内容)", async () => {
@@ -91,7 +124,7 @@ describe("listCommand (§4.4)", () => {
   });
 
   it("履歴がなくても 0 で終了する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-list-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-list-empty-"));
     expect(await listCommand(["--root", dir])).toBe(0);
   });
 });
@@ -100,7 +133,7 @@ describe("resolveDiffPair (§4.3)", () => {
   it("通常は before/after、create は空 vs after、--mine は after vs 現在", async () => {
     const dir = await setupApplied();
     const id = listHistoryIds(dir)[0] as string;
-    const hdir = join(dir, ".petari", "history", id);
+    const hdir = join(dir, ".tazuna", "history", id);
 
     const rep = resolveDiffPair(
       dir,

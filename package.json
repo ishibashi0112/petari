@@ -1,27 +1,35 @@
 {
-  "name": "petari",
-  "version": "0.14.0",
-  "description": "petari — paste AI chat patches onto your codebase",
+  "name": "tazuna",
+  "version": "0.15.0",
+  "description": "Build with AI chat, without handing over the reins: pack your codebase for the chat, then verify and apply its patches locally (zero dependencies; formerly petari and slnmix)",
   "keywords": [
     "cli",
     "ai",
+    "chat",
+    "copilot",
     "patch",
     "diff",
-    "apply"
+    "apply",
+    "repomix",
+    "pack",
+    "vb.net",
+    "visual-studio",
+    "sln",
+    "vbproj"
   ],
   "license": "MIT",
   "author": "Yuki Sakakibara",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ishibashi0112/petari.git"
+    "url": "git+https://github.com/ishibashi0112/tazuna.git"
   },
-  "homepage": "https://github.com/ishibashi0112/petari#readme",
+  "homepage": "https://github.com/ishibashi0112/tazuna#readme",
   "bugs": {
-    "url": "https://github.com/ishibashi0112/petari/issues"
+    "url": "https://github.com/ishibashi0112/tazuna/issues"
   },
   "type": "module",
   "bin": {
-    "petari": "./dist/cli.js"
+    "tazuna": "./dist/cli.js"
   },
   "files": [
     "dist"

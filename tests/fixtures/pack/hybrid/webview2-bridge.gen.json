@@ -1,0 +1,12 @@
+{
+  "contract": "contract/contract.ts",
+  "schemaOut": "contract/contract.schema.json",
+  "ts": {
+    "outDir": "apps/web/src/generated",
+    "contractImport": "@app/contract"
+  },
+  "vb": {
+    "outDir": "dotnet/App.Contract/Generated",
+    "namespace": "App.Contract"
+  }
+}

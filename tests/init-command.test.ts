@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,106 +16,85 @@ const manifest = (id: string): Manifest => ({
   files: [],
 });
 
-describe("initCommand (§4.6)", () => {
-  it("--yes で config / protocol.md / repomix.config.json / .gitignore を一括生成する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init-"));
-    expect(await initCommand(["--root", dir, "--yes"])).toBe(0);
+describe("initCommand (§4.6、設計書 §25 の一本化)", () => {
+  /** .git と .sln のある空のリポジトリ */
+  const repo = (prefix: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    mkdirSync(join(dir, ".git"));
+    writeFileSync(join(dir, "App.sln"), "", "utf8");
+    return dir;
+  };
 
-    expect(existsSync(join(dir, ".petari", "config.json"))).toBe(true);
+  it("対話なしで .tazuna/config.json・設定ファイル・docs/・.gitignore を作る (protocol.md / repomix.config.json は作らない)", async () => {
+    const dir = repo("tazuna-init-");
+    expect(await initCommand(["--root", dir])).toBe(0);
+
     // 雛形の既定は newFile.encoding "auto" と vbproj 登録あり (設計書 §11)
-    const config = JSON.parse(readFileSync(join(dir, ".petari", "config.json"), "utf8")) as {
+    const config = JSON.parse(readFileSync(join(dir, ".tazuna", "config.json"), "utf8")) as {
       newFile: { encoding: string };
       vbproj: { register: boolean };
     };
     expect(config.newFile).toEqual({ encoding: "auto" });
     expect(config.vbproj).toEqual({ register: true });
-    expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
-    expect(JSON.parse(readFileSync(join(dir, "repomix.config.json"), "utf8"))).toEqual({
-      output: { instructionFilePath: "protocol.md" },
-    });
-    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".petari/\n");
-  });
-
-  // slnmix init が --yes --no-repomix で呼ぶ (slnmix 利用者に repomix.config.json は要らない)
-  it("--no-repomix は repomix.config.json を作らず、既存のものにも触れない", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init-norepomix-"));
-    expect(await initCommand(["--root", dir, "--yes", "--no-repomix"])).toBe(0);
-    expect(existsSync(join(dir, ".petari", "config.json"))).toBe(true);
-    expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
-    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".petari/\n");
+    expect(existsSync(join(dir, "tazuna.config.json"))).toBe(true);
+    expect(existsSync(join(dir, "docs", "README.md"))).toBe(true);
+    expect(existsSync(join(dir, "protocol.md"))).toBe(false);
     expect(existsSync(join(dir, "repomix.config.json"))).toBe(false);
+    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(
+      "repomix-output.xml\nrepomix-output.prompt.md\n.tazuna/\n",
+    );
+  });
 
-    const existing = JSON.stringify({ output: { removeEmptyLines: true } }, null, 2);
-    writeFileSync(join(dir, "repomix.config.json"), existing, "utf8");
+  // 旧 slnmix init が --yes --no-repomix で呼ぶ。受け付けて無視する
+  it("--yes / --no-repomix は受け付けて無視する", async () => {
+    const dir = repo("tazuna-init-compat-");
     expect(await initCommand(["--root", dir, "--yes", "--no-repomix"])).toBe(0);
-    expect(readFileSync(join(dir, "repomix.config.json"), "utf8")).toBe(existing);
+    expect(existsSync(join(dir, ".tazuna", "config.json"))).toBe(true);
+    expect(existsSync(join(dir, "repomix.config.json"))).toBe(false);
   });
 
-  it("再実行しても既存ファイルを壊さない (冪等)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init2-"));
-    await initCommand(["--root", dir, "--yes"]);
-    const config1 = readFileSync(join(dir, ".petari", "config.json"), "utf8");
-    await initCommand(["--root", dir, "--yes"]);
-    expect(readFileSync(join(dir, ".petari", "config.json"), "utf8")).toBe(config1);
-    // .gitignore の重複追記もない
-    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".petari/\n");
+  it("2 回目は何も変えない (冪等)", async () => {
+    const dir = repo("tazuna-init2-");
+    await initCommand(["--root", dir]);
+    const snapshot = (): string[] =>
+      [".tazuna/config.json", "tazuna.config.json", ".gitignore", "docs/README.md"].map((p) =>
+        readFileSync(join(dir, p), "utf8"),
+      );
+    const first = snapshot();
+    expect(await initCommand(["--root", dir])).toBe(0);
+    expect(snapshot()).toEqual(first);
   });
 
-  it("既存の repomix.config.json には instructionFilePath を追記し他のキーを保持する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init3-"));
-    writeFileSync(
-      join(dir, "repomix.config.json"),
-      JSON.stringify({ output: { style: "xml" }, ignore: { customPatterns: ["*.log"] } }, null, 2),
-      "utf8",
-    );
-    await initCommand(["--root", dir, "--yes"]);
-    const config = JSON.parse(readFileSync(join(dir, "repomix.config.json"), "utf8")) as {
-      output: { style: string; instructionFilePath: string };
-      ignore: { customPatterns: string[] };
-    };
-    expect(config.output.style).toBe("xml");
-    expect(config.output.instructionFilePath).toBe("protocol.md");
-    expect(config.ignore.customPatterns).toEqual(["*.log"]);
-  });
-
-  // 空行を落としたスナップショットは SEARCH 不一致 (空行欠落) の定番原因 (2026-08-25 実運用事例)
-  it("既存の repomix.config.json の removeEmptyLines: true は false へ修正する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init6-"));
-    writeFileSync(
-      join(dir, "repomix.config.json"),
-      JSON.stringify(
-        { output: { instructionFilePath: "protocol.md", removeEmptyLines: true } },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-    await initCommand(["--root", dir, "--yes"]);
-    const config = JSON.parse(readFileSync(join(dir, "repomix.config.json"), "utf8")) as {
-      output: { instructionFilePath: string; removeEmptyLines: boolean };
-    };
-    expect(config.output.removeEmptyLines).toBe(false);
-    expect(config.output.instructionFilePath).toBe("protocol.md");
-  });
-
-  it("既存 .gitignore には末尾に追記する", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init4-"));
+  it("既存の protocol.md・.gitignore は変えず、.gitignore には末尾に追記する", async () => {
+    const dir = repo("tazuna-init4-");
     writeFileSync(join(dir, ".gitignore"), "node_modules/\n", "utf8");
-    await initCommand(["--root", dir, "--yes"]);
-    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe("node_modules/\n.petari/\n");
+    writeFileSync(join(dir, "protocol.md"), PROTOCOL_TEXT, "utf8");
+    await initCommand(["--root", dir]);
+    expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(
+      "node_modules/\nrepomix-output.xml\nrepomix-output.prompt.md\n.tazuna/\n",
+    );
+    expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
   });
 
-  it("古い protocol.md は更新される", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-init5-"));
-    writeFileSync(join(dir, "protocol.md"), "<!-- petari protocol v0 -->\n古い規約", "utf8");
-    await initCommand(["--root", dir, "--yes"]);
-    expect(readFileSync(join(dir, "protocol.md"), "utf8")).toBe(PROTOCOL_TEXT);
+  it("--root がなければカレントから上に向かってルートを決める (.git の場所)", async () => {
+    const dir = repo("tazuna-init5-");
+    const sub = join(dir, "src");
+    mkdirSync(sub);
+    const cwd = process.cwd();
+    try {
+      process.chdir(sub);
+      expect(await initCommand([])).toBe(0);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(existsSync(join(dir, ".tazuna", "config.json"))).toBe(true);
+    expect(existsSync(join(sub, ".tazuna"))).toBe(false);
   });
 });
 
 describe("pruneHistory (§10 historyLimit)", () => {
   it("上限を超えた古い履歴から削除する", () => {
-    const dir = mkdtempSync(join(tmpdir(), "petari-prune-"));
+    const dir = mkdtempSync(join(tmpdir(), "tazuna-prune-"));
     for (const id of ["2026-08-01_0900", "2026-08-02_0900", "2026-08-03_0900"]) {
       beginHistory(dir, id, "## CHANGES\nx", new Map());
       finishHistory(dir, id, manifest(id), new Map());

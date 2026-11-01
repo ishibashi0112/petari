@@ -80,7 +80,7 @@ describe("resolveNewFileStyle (設計書 §11.2)", () => {
 
 describe("collectStyleSampleGroups (infra)", () => {
   it("作成先ディレクトリの手本を集め、なければ上位へ辿る。バイナリ・ドットファイルは除外", () => {
-    const root = mkdtempSync(join(tmpdir(), "petari-style-"));
+    const root = mkdtempSync(join(tmpdir(), "tazuna-style-"));
     mkdirSync(join(root, "App", "Forms"), { recursive: true });
     writeFileSync(join(root, "App", "A.vb"), sjisEncode("' 日本語\r\n").bytes);
     writeFileSync(join(root, "App", "B.vb"), sjisEncode("' 日本語\r\n").bytes);

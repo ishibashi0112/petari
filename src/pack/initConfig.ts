@@ -1,0 +1,118 @@
+/**
+ * tazuna pack --init-config: VB.NET 以外のプロジェクト(TypeScript 等)で使う
+ * ための設定ファイル(tazuna.config.json、kind: "generic")を作る(旧 slnmix v0.17.0、設計書 §19)。
+ *
+ * - 既に設定ファイルがあれば(旧名の slnmix.config.json でも)何もしない(冪等。中身は変えない)
+ * - その場所に .sln / .vbproj があれば作らない(従来の solution 構成で動くため)
+ * - git のリポジトリの中なら extraRoots を書かない(git が管理しているファイルが対象。設計書 §25.7)
+ * - git の外では、ソースのディレクトリは「候補名のうち実在するもの」だけを採用する(src / app /
+ *   lib / apps / packages → kind: "src"、tests / test / e2e / __tests__ →
+ *   kind: "test")。1 つも無ければ推測で書かずエラーにし、例を示す
+ *
+ * ファイルシステムは deps 注入(単体テスト可能)。
+ */
+
+import * as path from "node:path";
+import { PACK_COMMAND } from "../brand.ts";
+import { CONFIG_FILE_NAME, configFileNameIn, hasConfigFile } from "./slnmixConfig.ts";
+
+export interface InitConfigDeps {
+  isDirectory(absolutePath: string): boolean;
+  isFile(absolutePath: string): boolean;
+  /** ディレクトリ直下のファイル名一覧(取得できなければ undefined) */
+  listFileNames(absolutePath: string): string[] | undefined;
+  writeTextFile(absolutePath: string, content: string): void;
+}
+
+export type InitConfigResult =
+  /** roots が空なら git が管理しているファイルを対象にする設定(extraRoots なし) */
+  | { kind: "created"; path: string; content: string; roots: InitConfigRoot[] }
+  | { kind: "kept"; path: string }
+  | { kind: "error"; message: string };
+
+export interface InitConfigRoot {
+  path: string;
+  kind: "src" | "test";
+}
+
+/** ソースの候補ディレクトリ(この順で並ぶ) */
+export const SOURCE_DIR_CANDIDATES: readonly string[] = ["src", "app", "lib", "apps", "packages"];
+/** 自動テストの候補ディレクトリ */
+export const TEST_DIR_CANDIDATES: readonly string[] = ["tests", "test", "e2e", "__tests__"];
+
+/** 候補が 1 つも無いときに案内する設定例 */
+export const EXAMPLE_CONFIG = `{
+  "kind": "generic",
+  "extraRoots": [
+    { "path": "src", "kind": "src" },
+    { "path": "tests", "kind": "test" }
+  ]
+}`;
+
+function renderConfig(roots: readonly InitConfigRoot[]): string {
+  const lines = roots.map(
+    (root, index) =>
+      `    { "path": "${root.path}", "kind": "${root.kind}" }${index === roots.length - 1 ? "" : ","}`,
+  );
+  return ["{", '  "kind": "generic",', '  "extraRoots": [', ...lines, "  ]", "}", ""].join("\n");
+}
+
+/** git が管理しているファイルを対象にする generic 構成(extraRoots なし。設計書 §25.7) */
+export const GIT_GENERIC_CONFIG = `{
+  "kind": "generic"
+}
+`;
+
+/**
+ * @param rootDir 設定を置くディレクトリ(プロジェクトルート)の絶対パス
+ * @param options.gitRepository git のリポジトリの中か。そうなら extraRoots を書かず、git が管理している
+ *   ファイルを対象にする(候補のディレクトリを探さない)
+ */
+export function initConfig(
+  rootDir: string,
+  deps: InitConfigDeps,
+  options: { gitRepository?: boolean | undefined } = {},
+): InitConfigResult {
+  // 旧名(slnmix.config.json)の設定があればそれを使う(名前は変えない)
+  if (hasConfigFile(rootDir, deps.isFile)) {
+    return { kind: "kept", path: path.join(rootDir, configFileNameIn(rootDir, deps.isFile)) };
+  }
+  const configPath = path.join(rootDir, CONFIG_FILE_NAME);
+  const names = deps.listFileNames(rootDir) ?? [];
+  const solutionFiles = names.filter((name) => /\.(sln|vbproj)$/i.test(name)).sort();
+  if (solutionFiles.length > 0) {
+    return {
+      kind: "error",
+      message: [
+        `${rootDir} には ${solutionFiles.join(", ")} があります。VB.NET のプロジェクトは設定なしで npx ${PACK_COMMAND} を実行できます(kind: "generic" は .sln / .vbproj の無いプロジェクト向け)。`,
+      ].join("\n"),
+    };
+  }
+  if (options.gitRepository === true) {
+    deps.writeTextFile(configPath, GIT_GENERIC_CONFIG);
+    return { kind: "created", path: configPath, content: GIT_GENERIC_CONFIG, roots: [] };
+  }
+  const roots: InitConfigRoot[] = [];
+  for (const name of SOURCE_DIR_CANDIDATES) {
+    if (deps.isDirectory(path.join(rootDir, name))) {
+      roots.push({ path: name, kind: "src" });
+    }
+  }
+  for (const name of TEST_DIR_CANDIDATES) {
+    if (deps.isDirectory(path.join(rootDir, name))) {
+      roots.push({ path: name, kind: "test" });
+    }
+  }
+  if (!roots.some((root) => root.kind === "src")) {
+    return {
+      kind: "error",
+      message: [
+        `${rootDir} にソースのディレクトリ(${SOURCE_DIR_CANDIDATES.join(" / ")})が見つかりません。推測では作らないので、${CONFIG_FILE_NAME} を手で作ってください。例:`,
+        EXAMPLE_CONFIG,
+      ].join("\n"),
+    };
+  }
+  const content = renderConfig(roots);
+  deps.writeTextFile(configPath, content);
+  return { kind: "created", path: configPath, content, roots };
+}

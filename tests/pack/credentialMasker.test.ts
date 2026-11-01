@@ -1,18 +1,18 @@
 /**
- * mask.ts の maskCredentials (slnmix の credentialMasker の写し) の単体テスト。
- * slnmix の src/test/credentialMasker.test.ts を写したもの (判定を揃えるため)。
+ * credentialMasker の単体テスト。
  * 実業務プロジェクト(NBOM040)で実際に検出された形を含む
  * VB レガシーコードのパターンで検証する。
  */
 
-import { assert, describe, it } from "vitest";
-import { maskCredentials, maskLinesForDisplay } from "../src/core/mask.ts";
+import { suite, test } from "vitest";
+import * as assert from "node:assert";
+import { maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "../../src/core/mask.ts";
 
 const VB = { vbSource: true };
 const GENERIC = { vbSource: false };
 
-describe("credentialMasker: VB 変数代入リテラル", () => {
-  it("パスワード系変数への代入をマスクする(実例由来)", () => {
+suite("credentialMasker: VB 変数代入リテラル", () => {
+  test("パスワード系変数への代入をマスクする(実例由来)", () => {
     const result = maskCredentials(
       'Public Pub_KMSS_DB_Pswd As String = "inf001"',
       VB,
@@ -24,23 +24,23 @@ describe("credentialMasker: VB 変数代入リテラル", () => {
     assert.strictEqual(result.findings[0]?.kind, "パスワード");
   });
 
-  it("ユーザーID系変数への代入をマスクする(実例由来)", () => {
+  test("ユーザーID系変数への代入をマスクする(実例由来)", () => {
     const result = maskCredentials('wk_Bics_User = "komori"', VB);
     assert.strictEqual(result.content, 'wk_Bics_User = "[MASKED]"');
     assert.strictEqual(result.findings[0]?.kind, "ユーザーID");
   });
 
-  it("変数・式からの代入(リテラルでない)は触らない", () => {
+  test("変数・式からの代入(リテラルでない)は触らない", () => {
     const code = 'Pub_DB_Para_Nbom.DB_Pswd = wk_DbPara(1)';
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("空文字リテラルは触らない", () => {
+  test("空文字リテラルは触らない", () => {
     const code = 'Public Pub_LoginUserName As String = ""';
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("認証と無関係な変数名は触らない", () => {
+  test("認証と無関係な変数名は触らない", () => {
     const code = [
       'ComboBox_Unit.ValueMember = "UNIT_ID"',
       'wk_Row("UNIT_ID") = ""',
@@ -51,8 +51,8 @@ describe("credentialMasker: VB 変数代入リテラル", () => {
   });
 });
 
-describe("credentialMasker: VB 文字列リテラル内の接続文字列", () => {
-  it("PWD= / User ID= の値をマスクする(実例由来)", () => {
+suite("credentialMasker: VB 文字列リテラル内の接続文字列", () => {
+  test("PWD= / User ID= の値をマスクする(実例由来)", () => {
     const code = [
       'wk_ConStr = wk_ConStr & "Server=SSDB01;"',
       'wk_ConStr = wk_ConStr & "User ID=sales_admin;"',
@@ -68,13 +68,13 @@ describe("credentialMasker: VB 文字列リテラル内の接続文字列", () =
     assert.strictEqual(result.findings.length, 2);
   });
 
-  it("値が変数連結(リテラル外)の場合は触らない", () => {
+  test("値が変数連結(リテラル外)の場合は触らない", () => {
     const code =
       'wk_ConStr = wk_ConStr & "Password=" & In_Pswd & ";"';
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("SQL のバインド変数(:NAME)や比較式は触らない", () => {
+  test("SQL のバインド変数(:NAME)や比較式は触らない", () => {
     const code = [
       'wk_Sql = wk_Sql & " Where UNIT_ID = :UNIT_ID"',
       "'     TNTO = '\" & In_Tnto & \"'\"",
@@ -83,8 +83,8 @@ describe("credentialMasker: VB 文字列リテラル内の接続文字列", () =
   });
 });
 
-describe("credentialMasker: 非 VB ファイル(config / XML)", () => {
-  it("接続文字列属性の Password / User ID をマスクする", () => {
+suite("credentialMasker: 非 VB ファイル(config / XML)", () => {
+  test("接続文字列属性の Password / User ID をマスクする", () => {
     const xml =
       '<add name="Db" connectionString="Data Source=SV1;User ID=sa;Password=p@ss w0rd;" />';
     const result = maskCredentials(xml, GENERIC);
@@ -93,7 +93,7 @@ describe("credentialMasker: 非 VB ファイル(config / XML)", () => {
     assert.ok(result.content.includes("Data Source=SV1;"));
   });
 
-  it('password="値" の属性形式をマスクする', () => {
+  test('password="値" の属性形式をマスクする', () => {
     const xml = '<credential username="admin" password="secret123" />';
     const result = maskCredentials(xml, GENERIC);
     assert.ok(result.content.includes('username="[MASKED]"'));
@@ -101,10 +101,10 @@ describe("credentialMasker: 非 VB ファイル(config / XML)", () => {
   });
 });
 
-describe("credentialMasker: 設定ファイルのキーと値", () => {
+suite("credentialMasker: 設定ファイルのキーと値", () => {
   const LOOSE = { vbSource: false, strict: false };
 
-  it("appSettings の秘密系キーの値を伏せる(key と value の順はどちらでも)", () => {
+  test("appSettings の秘密系キーの値を伏せる(key と value の順はどちらでも)", () => {
     const config = [
       "<appSettings>",
       '  <add key="DbPassword" value="Hunter2Secret" />',
@@ -135,7 +135,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(result.findings.length, 4);
   });
 
-  it("My.Settings(app.config / Settings.settings)の秘密系の設定の値を伏せる", () => {
+  test("My.Settings(app.config / Settings.settings)の秘密系の設定の値を伏せる", () => {
     const config = [
       '<setting name="DbPassword" serializeAs="String">',
       "  <value>Hunter2Secret</value>",
@@ -173,7 +173,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("前に英数字以外が付いたキー(DB_PASSWORD= など)と単一引用符の値も伏せる", () => {
+  test("前に英数字以外が付いたキー(DB_PASSWORD= など)と単一引用符の値も伏せる", () => {
     const env = ["DB_PASSWORD=Hunter2", "export SECRET_TOKEN=zzz", "COMPASS=north", "BYPASS=1", "MY_UID=42"].join("\n");
     assert.strictEqual(
       maskCredentials(env, LOOSE).content,
@@ -190,7 +190,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("キー名の一部に秘密系の語を含むだけのもの・コード・表示の文言は伏せない", () => {
+  test("キー名の一部に秘密系の語を含むだけのもの・コード・表示の文言は伏せない", () => {
     const json = [
       '{ "jsonwebtoken": "^9.0.2", "passport": "^0.7.0",',
       '  "login.passwordPlaceholder": "8 chars", "errors.tokenExpired": "expired",',
@@ -215,7 +215,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(lexer, LOOSE).content, lexer);
   });
 
-  it("ODBC の {...} で囲んだ値は伏せ、番号の差し込み({0})だけの値は伏せない", () => {
+  test("ODBC の {...} で囲んだ値は伏せ、番号の差し込み({0})だけの値は伏せない", () => {
     assert.strictEqual(
       maskCredentials("Driver={SQL Server};Server=db;Uid={sa};Pwd={Hunter2Secret};", LOOSE).content,
       "Driver={SQL Server};Server=db;Uid=[MASKED];Pwd=[MASKED];",
@@ -230,7 +230,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("前に語が付いたキーの空白を含む値(パスフレーズ)も伏せる", () => {
+  test("前に語が付いたキーの空白を含む値(パスフレーズ)も伏せる", () => {
     const code = [
       'csb.Password = "correct horse battery";',
       'options.Password = "パスワード2024";',
@@ -245,7 +245,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("空の文字列が 2 つ並ぶ行を 1 つの値と読まない・同じ値を二重に数えない", () => {
+  test("空の文字列が 2 つ並ぶ行を 1 つの値と読まない・同じ値を二重に数えない", () => {
     const code = [
       'If password = "" OrElse userId = "" Then',
       'def connect(host="localhost", user="", password="", db=""):',
@@ -261,14 +261,14 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('password = @"ab""cdefgh";', LOOSE).content, 'password = @"[MASKED]";');
   });
 
-  it("C# / JSON の文字列の中で \\\" で囲んだ接続文字列の値も伏せる", () => {
+  test("C# / JSON の文字列の中で \\\" で囲んだ接続文字列の値も伏せる", () => {
     assert.strictEqual(
       maskCredentials('var cs = "Server=x;Password=\\"Hun;ter2\\";Database=y";', LOOSE).content,
       'var cs = "Server=x;Password=\\"[MASKED]\\";Database=y";',
     );
   });
 
-  it("リソース(.resx)の秘密系の名前の値を伏せる(表示の文言は除く)", () => {
+  test("リソース(.resx)の秘密系の名前の値を伏せる(表示の文言は除く)", () => {
     const resx = [
       '<data name="DbPassword" xml:space="preserve">',
       "  <value>Hunter2Secret</value>",
@@ -283,14 +283,14 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(resx, LOOSE).content, resx.replace("Hunter2Secret", "[MASKED]"));
   });
 
-  it("C# の逐語的・補間文字列の値も伏せる", () => {
+  test("C# の逐語的・補間文字列の値も伏せる", () => {
     assert.strictEqual(
       maskCredentials('var pwd = @"Zq9\\Secret";\nvar password = $"Zq9{x}";\nvar uid = @"sa";', LOOSE).content,
       'var pwd = @"[MASKED]";\nvar password = $"[MASKED]";\nvar uid = @"[MASKED]";',
     );
   });
 
-  it("token / credentials は値が秘密らしいとき・キーに別の秘密系の語があるときだけ伏せる", () => {
+  test("token / credentials は値が秘密らしいとき・キーに別の秘密系の語があるときだけ伏せる", () => {
     assert.strictEqual(
       maskCredentials('{ "token": "ghp_9fK2aQ7xZ1", "authToken": "a1b2c3d4e5", "secretToken": "x" }', LOOSE).content,
       '{ "token": "[MASKED]", "authToken": "[MASKED]", "secretToken": "[MASKED]" }',
@@ -305,7 +305,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("JSON などの秘密系キーの文字列の値を伏せる", () => {
+  test("JSON などの秘密系キーの文字列の値を伏せる", () => {
     const json = '{ "Password": "Hun\\"ter2", "ApiKey": "abc123", "Name": "x", "tokenTtl": 30, \'db_pass\': \'p@ss\' }';
     assert.strictEqual(
       maskCredentials(json, LOOSE).content,
@@ -313,7 +313,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("${NAME} だけの値は伏せず、${NAME:-既定値} の既定値は伏せる", () => {
+  test("${NAME} だけの値は伏せず、${NAME:-既定値} の既定値は伏せる", () => {
     assert.strictEqual(
       maskCredentials("spring.datasource.password=${DB_PASSWORD}\nDB_PASSWORD=${SECRET_PW}", LOOSE).content,
       "spring.datasource.password=${DB_PASSWORD}\nDB_PASSWORD=${SECRET_PW}",
@@ -329,7 +329,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(!maskCredentials('Dim s = "Server=db;Password=${PW:-Hunter2Secret};"', { vbSource: true, strict: false }).content.includes("Hunter2"));
   });
 
-  it("コメントの次の行・YAML の : のキーも伏せる(三項演算子は伏せない)", () => {
+  test("コメントの次の行・YAML の : のキーも伏せる(三項演算子は伏せない)", () => {
     for (const input of [
       '{\n  // DB settings\n  "Password": "hunter2"\n}',
       "'default': {\n  # PostgreSQL\n  'PASSWORD': 'hunter2',",
@@ -343,7 +343,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(ternary, LOOSE).content, ternary);
   });
 
-  it("早く閉じた引用符・\\' の後ろの値も伏せる", () => {
+  test("早く閉じた引用符・\\' の後ろの値も伏せる", () => {
     assert.ok(!maskCredentials("Server=x;Password='ab'cd;Database=y", LOOSE).content.includes("cd;"));
     assert.ok(!maskCredentials("const password = 'it\\'s-Hunter2';", LOOSE).content.includes("Hunter2"));
     assert.strictEqual(
@@ -352,13 +352,13 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("行末の空白のある値を二重に数えない", () => {
+  test("行末の空白のある値を二重に数えない", () => {
     const result = maskCredentials("PASSWORD=Hunter2 \nAPI_KEY=abc123\t", LOOSE);
     assert.strictEqual(result.content, "PASSWORD=[MASKED] \nAPI_KEY=[MASKED]\t");
     assert.strictEqual(result.findings.length, 2);
   });
 
-  it("真偽値の設定と、ユーザー ID 系のリソースの表示の文言は伏せない", () => {
+  test("真偽値の設定と、ユーザー ID 系のリソースの表示の文言は伏せない", () => {
     for (const input of [
       '<add key="EncryptPassword" value="false"/>',
       '<add key="RequireToken" value="true"/>',
@@ -379,7 +379,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(!maskCredentials('<data name="UserId" xml:space="preserve"><value>sa</value></data>', LOOSE).content.includes(">sa<"));
   });
 
-  it("キーが秘密系で ; を含む値は全体を伏せる(接続文字列の形の値は ; まで)", () => {
+  test("キーが秘密系で ; を含む値は全体を伏せる(接続文字列の形の値は ; まで)", () => {
     assert.strictEqual(
       maskCredentials("DB_PASSWORD=Hunter2;Server=x\nMYSQL_PWD=Hunter2; charset=utf8", LOOSE).content,
       "DB_PASSWORD=[MASKED]\nMYSQL_PWD=[MASKED]",
@@ -390,7 +390,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("設定ファイルの token / credentials のキーは値によらず伏せる(真偽値は除く)", () => {
+  test("設定ファイルの token / credentials のキーは値によらず伏せる(真偽値は除く)", () => {
     for (const input of [
       '<add key="WebhookToken" value="Kanri#2024!" />',
       '<setting name="WebhookToken" serializeAs="String">\n  <value>Kanri#2024!</value>\n</setting>',
@@ -403,7 +403,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('<add key="RequireToken" value="true"/>', LOOSE).content, '<add key="RequireToken" value="true"/>');
   });
 
-  it("番号の付いたキーも伏せる", () => {
+  test("番号の付いたキーも伏せる", () => {
     for (const input of [
       '<add key="Password2" value="Hunter2Secret" />',
       "DB_PASSWORD_2=Hunter2Secret",
@@ -416,7 +416,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('const sha256 = "abc"; const md5 = "x";', LOOSE).content, 'const sha256 = "abc"; const md5 = "x";');
   });
 
-  it("型の注釈・VB の As 型・C# の自動プロパティ・Go の := の宣言の値も伏せる", () => {
+  test("型の注釈・VB の As 型・C# の自動プロパティ・Go の := の宣言の値も伏せる", () => {
     for (const input of [
       'const password: string = "Hunter2Secret";',
       'db_password: str = "Hunter2Secret"',
@@ -434,7 +434,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(plain, LOOSE).content, plain);
   });
 
-  it("複数行の三項演算子・型の文字列リテラルの合併は伏せない", () => {
+  test("複数行の三項演算子・型の文字列リテラルの合併は伏せない", () => {
     for (const input of [
       'const m = isPw ?\n  "password" :\n  "text";',
       'interface A {\n  user: string;\n  token: "abcdefgh1" | "b";\n}',
@@ -443,7 +443,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("閉じた単一引用符の後ろが日本語などでも引用符の中だけを伏せ、区切りでなければ後ろまで伏せる", () => {
+  test("閉じた単一引用符の後ろが日本語などでも引用符の中だけを伏せ、区切りでなければ後ろまで伏せる", () => {
     assert.strictEqual(
       maskCredentials("' 接続は Password='abc123'とする (確認済み)", { vbSource: true, strict: false }).content,
       "' 接続は Password='[MASKED]'とする (確認済み)",
@@ -452,19 +452,19 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(!maskCredentials("Password='a;b'cd;Server=x", LOOSE).content.includes("b'cd"));
   });
 
-  it("\\ で終わる単一引用符の値も伏せる", () => {
+  test("\\ で終わる単一引用符の値も伏せる", () => {
     for (const input of ["$db_password = 'Hunter2\\';", "db_password = 'Hunter2\\'", "db_password='Hunter2\\' # comment"]) {
       assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
     }
   });
 
-  it("VB のコメントの . や数字から始まる代入も伏せる", () => {
+  test("VB のコメントの . や数字から始まる代入も伏せる", () => {
     for (const input of ['    \' .Password = "OldPass99"', '\'.Password = "OldPass99"', '\' 1.pwd = "OldPass99"', "'２pwd = \"OldPass99\""]) {
       assert.ok(!maskCredentials(input, { vbSource: true, strict: false }).content.includes("OldPass99"), input);
     }
   });
 
-  it("型の注釈と読める : の後ろの代入も伏せる", () => {
+  test("型の注釈と読める : の後ろの代入も伏せる", () => {
     for (const input of [
       '  case "prod": dbPassword = "Pr0dSecret!"; break;',
       'else: dbPassword = "devSecret1"',
@@ -476,7 +476,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('last_synced_token:label="Last_Synced_Token"', LOOSE).content, 'last_synced_token:label="Last_Synced_Token"');
   });
 
-  it("? で終わるコメントの次の行のキーも伏せる", () => {
+  test("? で終わるコメントの次の行のキーも伏せる", () => {
     for (const input of [
       '# Which DB password?\npassword: "Pr0dSecret"',
       'CONFIG = {\n    # which password?\n    "password": "Pr0dSecret",\n}',
@@ -487,7 +487,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("C# の getter だけの自動プロパティ・@\"...\" / $\"...\" の値も伏せ、pass1 / pass2 は伏せない", () => {
+  test("C# の getter だけの自動プロパティ・@\"...\" / $\"...\" の値も伏せ、pass1 / pass2 は伏せない", () => {
     for (const input of [
       'public string Password { get; } = "Pr0dSecret";',
       'public string DbPassword { get; protected internal set; } = "Pr0dSecret";',
@@ -501,14 +501,14 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(passes, LOOSE).content, passes);
   });
 
-  it("長い語を含む VB のコメントでも止まらない", { timeout: 20000 }, () => {
+  test("長い語を含む VB のコメントでも止まらない", { timeout: 20000 }, () => {
     const started = Date.now();
     maskCredentials("x = 1 '" + "b".repeat(2000000), { vbSource: true, strict: true });
     maskCredentials("Password='a'" + "b".repeat(1000000), { vbSource: true, strict: true });
     assert.ok(Date.now() - started < 10000);
   });
 
-  it("VB の真偽値の代入は伏せない", () => {
+  test("VB の真偽値の代入は伏せない", () => {
     const vb = 'Dim savePassword As String = "True"\nMy.Settings.SavePassword = "False"';
     assert.strictEqual(maskCredentials(vb, { vbSource: true, strict: false }).content, vb);
     assert.ok(!maskCredentials('Dim savePassword As String = "Truthy1"', { vbSource: true, strict: false }).content.includes("Truthy1"));
@@ -518,12 +518,12 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     );
   });
 
-  it("日本語のキーは語の数によらず秘密系として伏せる", () => {
+  test("日本語のキーは語の数によらず秘密系として伏せる", () => {
     assert.ok(!maskCredentials('{ "パスワード": "Hunter2" }', LOOSE).content.includes("Hunter2"));
     assert.ok(!maskCredentials('{ "DB接続パスワード": "abc" }', LOOSE).content.includes("abc"));
   });
 
-  it("VB のコメントアウトした As 型つきの宣言・名前付き引数の値も伏せる", () => {
+  test("VB のコメントアウトした As 型つきの宣言・名前付き引数の値も伏せる", () => {
     for (const input of [
       "'Private Const DB_PASSWORD As String = \"Pr0dPass!\"",
       "' Dim strPwd As String = \"Pr0dPass!\"",
@@ -537,7 +537,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(name, { vbSource: true, strict: false }).content, name);
   });
 
-  it("型の注釈の : の後に空白がない宣言も伏せる(token などのキーでは探さない)", () => {
+  test("型の注釈の : の後に空白がない宣言も伏せる(token などのキーでは探さない)", () => {
     for (const input of ['password:string = "Hunter2"', "let apiKey:string = 'Hunter2xyz';", 'def connect(password:str="Hunter2"):']) {
       assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
     }
@@ -546,7 +546,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('def f(api_token:str="ghp_abc123DEF456"):', LOOSE).content, 'def f(api_token:str="[MASKED]"):');
   });
 
-  it("Python の接頭辞つきの文字列(u\"...\" / f\"...\" / rb'...')は引用符の中を伏せる", () => {
+  test("Python の接頭辞つきの文字列(u\"...\" / f\"...\" / rb'...')は引用符の中を伏せる", () => {
     assert.strictEqual(maskCredentials('password = u"Hunter2"', LOOSE).content, 'password = u"[MASKED]"');
     assert.strictEqual(maskCredentials('"password": u"Hunter2",', LOOSE).content, '"password": u"[MASKED]",');
     assert.strictEqual(maskCredentials('api_key = f"sk{suffix}Hunter2"', LOOSE).content, 'api_key = f"[MASKED]"');
@@ -560,7 +560,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials("Server=a;Password=b'abc'def;", LOOSE).content, "Server=a;Password=[MASKED];");
   });
 
-  it("属性の形の Password=\" の後に + で続くコードの連結は伏せない(値が + で始まる文字列は伏せる)", () => {
+  test("属性の形の Password=\" の後に + で続くコードの連結は伏せない(値が + で始まる文字列は伏せる)", () => {
     for (const input of [
       'var cs = "Server=" + host + ";Password="+password;\nif (x) {\n    Log("connecting");\n}',
       'cs := "pwd="+dir\n}\nif x == "" {\n\ty := "PATH"',
@@ -572,7 +572,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials('password="+Abc123"', LOOSE).content, 'password="[MASKED]"');
   });
 
-  it("番号の付いた pass のキー(SMTP_PASS1 / dbPass2)は伏せ、小文字の pass1 だけのキーは伏せない", () => {
+  test("番号の付いた pass のキー(SMTP_PASS1 / dbPass2)は伏せ、小文字の pass1 だけのキーは伏せない", () => {
     for (const input of ["SMTP_PASS1=Hunter2", '"dbPass2": "Hunter2"', '<add key="SmtpPass2" value="Hunter2" />', "PASS1=Hunter2"]) {
       assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
     }
@@ -580,7 +580,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(stage, LOOSE).content, stage);
   });
 
-  it("token 系のキーは語をつないだ識別子の形の値を伏せず、値がキー名そのものなら前に語が付いたキーでも伏せない", () => {
+  test("token 系のキーは語をつないだ識別子の形の値を伏せず、値がキー名そのものなら前に語が付いたキーでも伏せない", () => {
     for (const input of [
       '"input_token": "nextToken",',
       'paginationToken: "NextToken"',
@@ -597,7 +597,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(words, LOOSE).content, words);
   });
 
-  it("ODBC の波括弧で囲んだ値は ; を含んでも全体を伏せる", () => {
+  test("ODBC の波括弧で囲んだ値は ; を含んでも全体を伏せる", () => {
     const cs = '"Driver={SQL Server};Uid=sa;Pwd={Pr0d;Secret}};x};"';
     for (const vbSource of [true, false]) {
       const masked = maskCredentials(cs, { vbSource, strict: false }).content;
@@ -607,7 +607,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials("Pwd={0};", LOOSE).content, "Pwd={0};");
   });
 
-  it("URL の利用者情報のパスワードを伏せる(差し込み・利用者名だけのものは伏せない)", () => {
+  test("URL の利用者情報のパスワードを伏せる(差し込み・利用者名だけのものは伏せない)", () => {
     assert.strictEqual(
       maskCredentials('url = "postgres://admin:Hunter2@db.example.com:5432/app"', LOOSE).content,
       'url = "postgres://admin:[MASKED]@db.example.com:5432/app"',
@@ -630,7 +630,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("VB のコメントの値の \"\" の後ろも伏せる・型文字つきの宣言も伏せる", () => {
+  test("VB のコメントの値の \"\" の後ろも伏せる・型文字つきの宣言も伏せる", () => {
     const LV = { vbSource: true, strict: false };
     for (const input of [
       "' Dim strUserDb As String = \"Server=x;User ID=sa;Password=\"\"p;ss99\"\";\"",
@@ -646,7 +646,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(maskCredentials(name, LV).content, name);
   });
 
-  it(".env の行末コメント・Dockerfile の ENV / ARG・compose の一覧・docker の -e の値を伏せる", () => {
+  test(".env の行末コメント・Dockerfile の ENV / ARG・compose の一覧・docker の -e の値を伏せる", () => {
     for (const [input, expected] of [
       ["DB_PASSWORD=Prod123x # prod", "DB_PASSWORD=[MASKED] # prod"],
       ['DB_PASSWORD="Prod123x" # prod', 'DB_PASSWORD="[MASKED]" # prod'],
@@ -662,7 +662,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.strictEqual(run, 'docker run -e DB_PASSWORD=[MASKED] -e "API_KEY=[MASKED]" img');
   });
 
-  it("URL の文字参照・$ で始まるパスワード、波括弧・接頭辞つきの値の後ろも伏せる", () => {
+  test("URL の文字参照・$ で始まるパスワード、波括弧・接頭辞つきの値の後ろも伏せる", () => {
     for (const [input, expected] of [
       ['<add key="RedisUrl" value="redis://:p&amp;ssw0rd@cache:6379" />', '<add key="RedisUrl" value="redis://:[MASKED]@cache:6379" />'],
       ["postgres://admin:$ecretPass1@db/app", "postgres://admin:[MASKED]@db/app"],
@@ -684,7 +684,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("引用符の中の # ・既定値つきの URL のパスワード・Dockerfile の継続行・区切りのないキーも伏せる", () => {
+  test("引用符の中の # ・既定値つきの URL のパスワード・Dockerfile の継続行・区切りのないキーも伏せる", () => {
     for (const [input, expected] of [
       ['DB_PASSWORD="abc #def"', 'DB_PASSWORD="[MASKED]"'],
       ['DB_password=""#Zq9x""', 'DB_password="[MASKED]"'],
@@ -711,7 +711,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("SQL の UPDATE ... SET・文字列や属性の中の set は、その終わりより後ろを伏せない", () => {
+  test("SQL の UPDATE ... SET・文字列や属性の中の set は、その終わりより後ろを伏せない", () => {
     for (const [input, expected] of [
       ['db.query("UPDATE users SET password=? WHERE id=?", [hash, id]);', 'db.query("UPDATE users SET password=[MASKED]", [hash, id]);'],
       [
@@ -731,7 +731,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(maskCredentials(cs, LOOSE).content.endsWith('"; // 更新'));
   });
 
-  it("行の前の update の語・別の行の SQL の SET・エスケープした引用符の set を正しく読む", () => {
+  test("行の前の update の語・別の行の SQL の SET・エスケープした引用符の set を正しく読む", () => {
     for (const [input, expected] of [
       ['if /i "%1"=="update" set DB_PASSWORD=Secret123', 'if /i "%1"=="update" set DB_PASSWORD=[MASKED]'],
       ["call update.bat & set DB_PASSWORD=Secret123", "call update.bat & set DB_PASSWORD=[MASKED]"],
@@ -759,7 +759,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("パスワードを引数で渡すコマンド(sqlcmd -P・mysql -p・net use・schtasks /RP)の値を伏せる", () => {
+  test("パスワードを引数で渡すコマンド(sqlcmd -P・mysql -p・net use・schtasks /RP)の値を伏せる", () => {
     for (const [input, expected] of [
       ["sqlcmd -S DBSV01 -U sa -P Secret123 -i setup.sql", "sqlcmd -S DBSV01 -U sa -P [MASKED] -i setup.sql"],
       ['osql -S srv -U sa -P "Sec ret" -Q "select 1"', 'osql -S srv -U sa -P "[MASKED]" -Q "select 1"'],
@@ -792,7 +792,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("コマンドの引数のパスワード: /user の後の net use・引用符で囲んだ値・行の継続・MSBuild・VB の文字列", () => {
+  test("コマンドの引数のパスワード: /user の後の net use・引用符で囲んだ値・行の継続・MSBuild・VB の文字列", () => {
     for (const [input, expected] of [
       ["net use Z: \\\\srv\\share /user:CORP\\deploy Secr3t!", "net use Z: \\\\srv\\share /user:CORP\\deploy [MASKED]"],
       ['NET USE \\\\srv\\share /u:deploy "Secr3t 1" /persistent:no', 'NET USE \\\\srv\\share /u:deploy "[MASKED]" /persistent:no'],
@@ -847,7 +847,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("SQL の SET のバインド変数・UPDATE の別名・MERGE の UPDATE SET を伏せない(バッチの set の @ で始まる値は伏せる)", () => {
+  test("SQL の SET のバインド変数・UPDATE の別名・MERGE の UPDATE SET を伏せない(バッチの set の @ で始まる値は伏せる)", () => {
     for (const input of [
       "UPDATE T_USER\n   SET USER_PWD=:1\nWHERE USER_ID=:2",
       '"UPDATE Config " +\n"SET SmtpPassword=@p1 WHERE Id=1"',
@@ -869,7 +869,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("コマンドの引数のパスワード: -Usa の形・+ や & を含む値・$ で始まる値を伏せ、PostgreSQL の -P・オプションの値のコマンド名・パスの末尾の \\ は読まない", () => {
+  test("コマンドの引数のパスワード: -Usa の形・+ や & を含む値・$ で始まる値を伏せ、PostgreSQL の -P・オプションの値のコマンド名・パスの末尾の \\ は読まない", () => {
     for (const [input, expected] of [
       ["osql -Ssrv -Usa -PZq9xY2 -iinstall.sql", "osql -Ssrv -Usa -P[MASKED] -iinstall.sql"],
       ["bcp db..t out t.dat -c -Usa -PZq9xY2 -Ssrv", "bcp db..t out t.dat -c -Usa -P[MASKED] -Ssrv"],
@@ -897,7 +897,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     }
   });
 
-  it("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
+  test("細工した長い入力でも止まらない(波括弧の値・大文字の長い並び・Dockerfile の ENV)", { timeout: 30000 }, () => {
     const started = Date.now();
     for (const vbSource of [false, true]) {
       maskCredentials("pwd={a;".repeat(150000), { vbSource, strict: true });
@@ -920,7 +920,7 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
     assert.ok(Date.now() - started < 15000);
   });
 
-  it("バッチファイルの set の値を伏せる", () => {
+  test("バッチファイルの set の値を伏せる", () => {
     assert.strictEqual(maskCredentials("set DB_PASSWORD=Hunter2", LOOSE).content, "set DB_PASSWORD=[MASKED]");
     assert.strictEqual(maskCredentials('  set "API_SECRET=Hunter2xyz"', LOOSE).content, '  set "API_SECRET=[MASKED]"');
     assert.strictEqual(maskCredentials("SET PASSWORD=abc123\r\necho done", LOOSE).content, "SET PASSWORD=[MASKED]\r\necho done");
@@ -954,10 +954,10 @@ describe("credentialMasker: 設定ファイルのキーと値", () => {
   });
 });
 
-describe("credentialMasker: VB の連結で続く秘密の値", () => {
+suite("credentialMasker: VB の連結で続く秘密の値", () => {
   const LOOSE_VB = { vbSource: true, strict: false };
 
-  it("秘密として伏せたリテラルに連結で続くリテラルも伏せる", () => {
+  test("秘密として伏せたリテラルに連結で続くリテラルも伏せる", () => {
     const vb = [
       'Dim password As String = "Hunter2Secret" & _',
       '    "morepart"',
@@ -981,7 +981,7 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
     );
   });
 
-  it("間に変数や別の文があれば続きとみなさない", () => {
+  test("間に変数や別の文があれば続きとみなさない", () => {
     const vb = [
       'pwd = "abc" & userName & "def"',
       'pwd = "abc"',
@@ -995,7 +995,7 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
     );
   });
 
-  it("接続文字列の値がリテラルをまたいで続くときは続きの先頭も伏せる", () => {
+  test("接続文字列の値がリテラルをまたいで続くときは続きの先頭も伏せる", () => {
     const vb = [
       'cs = "Server=x;Password=Hun" & "ter2Secret;Database=y"',
       'cs = "Server=x;Password=" & "Hun" & _',
@@ -1027,14 +1027,14 @@ describe("credentialMasker: VB の連結で続く秘密の値", () => {
   });
 });
 
-describe("credentialMasker: 汎用シークレット形式", () => {
-  it("AWS アクセスキーをマスクする", () => {
+suite("credentialMasker: 汎用シークレット形式", () => {
+  test("AWS アクセスキーをマスクする", () => {
     const result = maskCredentials("key = AKIAIOSFODNN7EXAMPLE", GENERIC);
     assert.ok(!result.content.includes("AKIAIOSFODNN7EXAMPLE"));
     assert.ok(result.content.includes("[MASKED]"));
   });
 
-  it("GitHub トークンをマスクする", () => {
+  test("GitHub トークンをマスクする", () => {
     const result = maskCredentials(
       "url = https://ghp_abcdefghijklmnopqrstuvwxyz123456@github.com",
       GENERIC,
@@ -1042,7 +1042,7 @@ describe("credentialMasker: 汎用シークレット形式", () => {
     assert.ok(!result.content.includes("ghp_abcdefghijk"));
   });
 
-  it("Bearer トークンはトークン部のみマスクする", () => {
+  test("Bearer トークンはトークン部のみマスクする", () => {
     const result = maskCredentials(
       "Authorization: Bearer abcdef1234567890TOKEN",
       GENERIC,
@@ -1050,7 +1050,7 @@ describe("credentialMasker: 汎用シークレット形式", () => {
     assert.ok(/Bearer \[MASKED\]/.test(result.content));
   });
 
-  it("PRIVATE KEY ブロックは BEGIN/END を残して中身をマスクする", () => {
+  test("PRIVATE KEY ブロックは BEGIN/END を残して中身をマスクする", () => {
     const pem = [
       "-----BEGIN RSA PRIVATE KEY-----",
       "MIIEpAIBAAKCAQEA1234567890",
@@ -1064,7 +1064,7 @@ describe("credentialMasker: 汎用シークレット形式", () => {
     assert.strictEqual(result.findings[0]?.kind, "秘密鍵");
   });
 
-  it("コメントアウトされた認証情報コードもマスクする(実例由来)", () => {
+  test("コメントアウトされた認証情報コードもマスクする(実例由来)", () => {
     const code = [
       "'Case \"3\"",
       "'    wk_Bics_Pswd = \"komori\"",
@@ -1077,7 +1077,7 @@ describe("credentialMasker: 汎用シークレット形式", () => {
     assert.ok(result.content.includes('In_Label.Text = "BICS 本番環境(ツバゴ)"'));
   });
 
-  it("行番号が findings に記録される", () => {
+  test("行番号が findings に記録される", () => {
     const code = ['Dim a As String = "x"', 'wk_Pswd = "secret1"'].join("\n");
     const result = maskCredentials(code, VB);
     assert.strictEqual(result.findings.length, 1);
@@ -1085,14 +1085,14 @@ describe("credentialMasker: 汎用シークレット形式", () => {
   });
 });
 
-describe("credentialMasker: 日本語識別子・日本語キー", () => {
-  it("日本語の秘密系変数への代入をマスクする", () => {
+suite("credentialMasker: 日本語識別子・日本語キー", () => {
+  test("日本語の秘密系変数への代入をマスクする", () => {
     const result = maskCredentials('パスワード = "himitsu123"', VB);
     assert.strictEqual(result.content, 'パスワード = "[MASKED]"');
     assert.strictEqual(result.findings[0]?.kind, "パスワード");
   });
 
-  it("複合語の日本語変数(接続パスワード等)もマスクする", () => {
+  test("複合語の日本語変数(接続パスワード等)もマスクする", () => {
     const result = maskCredentials(
       'Public 接続パスワード As String = "abc"',
       VB,
@@ -1103,13 +1103,13 @@ describe("credentialMasker: 日本語識別子・日本語キー", () => {
     );
   });
 
-  it("日本語のユーザー系変数への代入をマスクする", () => {
+  test("日本語のユーザー系変数への代入をマスクする", () => {
     const result = maskCredentials('ログインユーザ名 = "yamada"', VB);
     assert.strictEqual(result.content, 'ログインユーザ名 = "[MASKED]"');
     assert.strictEqual(result.findings[0]?.kind, "ユーザーID");
   });
 
-  it("リテラル内の日本語キー=値をマスクする(半角カナ含む)", () => {
+  test("リテラル内の日本語キー=値をマスクする(半角カナ含む)", () => {
     const result = maskCredentials(
       'wk = "ﾊﾟｽﾜｰﾄﾞ=abc123;ユーザーID=yamada;"',
       VB,
@@ -1118,7 +1118,7 @@ describe("credentialMasker: 日本語識別子・日本語キー", () => {
     assert.ok(result.content.includes("ユーザーID=[MASKED];"));
   });
 
-  it("設定ファイルの日本語キー(全角=・属性形式)をマスクする", () => {
+  test("設定ファイルの日本語キー(全角=・属性形式)をマスクする", () => {
     const text = ['パスワード=abc123', '<設定 パスワード="p@ss" />'].join("\n");
     const result = maskCredentials(text, GENERIC);
     assert.ok(!result.content.includes("abc123"));
@@ -1126,7 +1126,7 @@ describe("credentialMasker: 日本語識別子・日本語キー", () => {
     assert.ok(result.content.includes('パスワード="[MASKED]"'));
   });
 
-  it("UI 文言(=を伴わない日本語)は触らない", () => {
+  test("UI 文言(=を伴わない日本語)は触らない", () => {
     const code = [
       'Label1.Text = "パスワードを入力してください"',
       'Msg = "ユーザー名または暗証番号が違います"',
@@ -1136,14 +1136,14 @@ describe("credentialMasker: 日本語識別子・日本語キー", () => {
   });
 });
 
-describe("credentialMasker: メソッド引数", () => {
-  it("秘密系メソッドの引数リテラルをマスクする", () => {
+suite("credentialMasker: メソッド引数", () => {
+  test("秘密系メソッドの引数リテラルをマスクする", () => {
     const result = maskCredentials('Login("admin", "pass123")', VB);
     assert.strictEqual(result.content, 'Login("[MASKED]", "[MASKED]")');
     assert.strictEqual(result.findings.length, 2);
   });
 
-  it("名前付き引数(password:=)をマスクする", () => {
+  test("名前付き引数(password:=)をマスクする", () => {
     const result = maskCredentials(
       'Connect(server, password:="secret1", timeout:=30)',
       VB,
@@ -1154,12 +1154,12 @@ describe("credentialMasker: メソッド引数", () => {
     );
   });
 
-  it("メンバー経由の呼び出し(auth.SetPassword)もマスクする", () => {
+  test("メンバー経由の呼び出し(auth.SetPassword)もマスクする", () => {
     const result = maskCredentials('auth.SetPassword("abc")', VB);
     assert.strictEqual(result.content, 'auth.SetPassword("[MASKED]")');
   });
 
-  it("無関係なメソッドの引数は触らない", () => {
+  test("無関係なメソッドの引数は触らない", () => {
     const code = [
       'MsgBox("パスワードを入力")',
       'wk_Row("UNIT_ID") = ""',
@@ -1168,14 +1168,14 @@ describe("credentialMasker: メソッド引数", () => {
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("閉じた括弧の後(引数外)は触らない", () => {
+  test("閉じた括弧の後(引数外)は触らない", () => {
     const code = '.Columns(0).Label = "ﾕﾆｯﾄｺｰﾄﾞ"';
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 });
 
-describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
-  it("リテラル内のランダム英数字列を既定でマスクする", () => {
+suite("credentialMasker: 高エントロピー値(厳格モード)", () => {
+  test("リテラル内のランダム英数字列を既定でマスクする", () => {
     const result = maskCredentials(
       'Dim k As String = "x9Kp2mQ7vR4tW8nZ3cJ6bL1s"',
       VB,
@@ -1184,7 +1184,7 @@ describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
     assert.strictEqual(result.findings[0]?.kind, "高エントロピー値");
   });
 
-  it("設定ファイル内の base64 らしき値もマスクする", () => {
+  test("設定ファイル内の base64 らしき値もマスクする", () => {
     const result = maskCredentials(
       "<value>QWxhZGRpbjra29wZW4gc2Vz4W1l</value>",
       GENERIC,
@@ -1192,7 +1192,7 @@ describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
     assert.ok(!result.content.includes("QWxhZGRpb"));
   });
 
-  it("GUID・普通の語・日本語文はマスクしない", () => {
+  test("GUID・普通の語・日本語文はマスクしない", () => {
     const code = [
       'Dim g As String = "{8A5B1234-C81C-45F6-A57F-5ABD9991F28F}"',
       'Dim s As String = "Windows10Update2026Info"',
@@ -1201,12 +1201,12 @@ describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("識別子・コード構造は触らない(リテラル外は対象外)", () => {
+  test("識別子・コード構造は触らない(リテラル外は対象外)", () => {
     const code = "Dim wk_NBOM_2026_TotalCount1x9K As Integer = 0";
     assert.strictEqual(maskCredentials(code, VB).content, code);
   });
 
-  it("strict: false で高エントロピーマスクだけ無効化できる", () => {
+  test("strict: false で高エントロピーマスクだけ無効化できる", () => {
     const code = 'Dim k As String = "x9Kp2mQ7vR4tW8nZ3cJ6bL1s"';
     const result = maskCredentials(code, { vbSource: true, strict: false });
     assert.strictEqual(result.content, code);
@@ -1219,28 +1219,29 @@ describe("credentialMasker: 高エントロピー値(厳格モード)", () => {
   });
 });
 
-describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モード)", () => {
-  it("Bearer トークンの「.」の後ろの短い部分も伏せる", () => {
+
+suite("credentialMasker: 一部だけ伏せたトークンの残り(厳格モード)", () => {
+  test("Bearer トークンの「.」の後ろの短い部分も伏せる", () => {
     const vb = 'req.Headers.Add("Authorization", "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe")';
     const result = maskCredentials(vb, VB);
     assert.ok(!result.content.includes("sEcReTtAiLvAlUe"), result.content);
     assert.ok(result.content.includes('"Bearer [MASKED]"'));
   });
 
-  it("JWT の 20 文字未満の部分も伏せる", () => {
+  test("JWT の 20 文字未満の部分も伏せる", () => {
     const jwt = "token: eyJhbGciOiJub25lIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.abcdefghijklmnop";
     const result = maskCredentials(jwt, GENERIC);
     assert.strictEqual(result.content, "token: [MASKED]");
   });
 
-  it("すべて伏せた部分だけなら変えない", () => {
+  test("すべて伏せた部分だけなら変えない", () => {
     const jwt =
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
     assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
   });
 
-  it("JWT の形でないドット区切りの語は伏せすぎない", () => {
+  test("JWT の形でないドット区切りの語は伏せすぎない", () => {
     const url = "https://k7Qx9Pz2Lm4Vb8Nc3Rt.execute-api.ap-northeast-1.amazonaws.com";
     assert.strictEqual(
       maskCredentials(url, { ...GENERIC, strict: true }).content,
@@ -1279,5 +1280,96 @@ describe("credentialMasker: 一部だけ伏せたトークンの残り(厳格モ
       maskCredentials("cb/[MASKED].[MASKED].aaaaaaaaaabbbbbbbbbbcccccccccc.json", GENERIC).content,
       "cb/[MASKED].json",
     );
+  });
+});
+
+suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", () => {
+  test("行数を変えずに伏せる", () => {
+    const lines = ['Dim pwd As String = "s3cret"', "Open(pwd)"];
+    assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb" }), [
+      'Dim pwd As String = "[MASKED]"',
+      "Open(pwd)",
+    ]);
+  });
+
+  test("秘密鍵のブロックは本文を伏せ、行数と前後の行を変えない", () => {
+    const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7";
+    const lines = ["-----BEGIN PRIVATE KEY-----", body, body, "-----END PRIVATE KEY-----", "x = 1"];
+    const masked = maskLinesForDisplay(lines, { path: "key.pem" });
+    assert.strictEqual(masked.length, lines.length);
+    assert.strictEqual(masked[0], lines[0]);
+    assert.strictEqual(masked[3], lines[3]);
+    assert.strictEqual(masked[4], "x = 1");
+    assert.ok(!masked.join("\n").includes(body));
+  });
+
+  test("複数行の秘密鍵があっても、行継続の代入の値を伏せる(行ごとに伏せると漏れる)", () => {
+    const lines = [
+      '    Const PEM As String = "-----BEGIN RSA PRIVATE KEY-----" & vbCrLf &',
+      '        "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun" & vbCrLf &',
+      '        "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK" & vbCrLf &',
+      '        "-----END RSA PRIVATE KEY-----"',
+      "        Dim dbPassword As String = _",
+      '            "Hunter2Secret"',
+    ];
+    const masked = maskLinesForDisplay(lines, { path: "Keys.vb" });
+    assert.strictEqual(masked.length, lines.length);
+    assert.ok(!masked.join("\n").includes("Hunter2Secret"), masked.join("\n"));
+    assert.ok(!masked.join("\n").includes("MIIEowIBAAKCAQEA"));
+  });
+
+  test("複数行にまたがる属性値を伏せる", () => {
+    const lines = ['  <add key="Mail" password="Hunter2', '     Secret" />', "</configuration>"];
+    const masked = maskLinesForDisplay(lines, { path: "App.config" });
+    assert.ok(!masked.join("\n").includes("Hunter2"));
+    assert.strictEqual(masked[2], "</configuration>");
+  });
+
+  test("1 行に収まった秘密鍵で、後ろの行の位置がずれない", () => {
+    const lines = [
+      '  key: "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n"',
+      '  conn: "Server=db1;Password=Hunter2Secret"',
+    ];
+    const masked = maskLinesForDisplay(lines, { path: "a.yaml" });
+    assert.strictEqual(masked.length, 2);
+    assert.strictEqual(masked[1], '  conn: "Server=db1;Password=[MASKED]"');
+  });
+
+  test("END のない BEGIN の行で、後ろを伏せない", () => {
+    const lines = ['Return s.StartsWith("-----BEGIN RSA PRIVATE KEY-----")', "Dim x = 1"];
+    assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "Pem.vb" }), lines);
+  });
+
+  test(".vb は汎用テキストとしての伏せ方の範囲も伏せる(generic 構成の追加ディレクトリと同じ)", () => {
+    const lines = ["Module M", "    Private Const pass = 48291375", "End Module"];
+    assert.ok(!maskCredentials(lines.join("\n"), GENERIC).content.includes("48291375"));
+    assert.ok(!maskLinesForDisplay(lines, { path: "M.vb" }).join("\n").includes("48291375"));
+  });
+
+  test("伏せる範囲が非常に多いファイルでも止まらない", { timeout: 20000 }, () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 150000; i++) lines.push(`password=p${i}`);
+    const shown = maskLinesForDisplay(lines, { path: "a.txt", strict: false });
+    assert.strictEqual(shown.length, lines.length);
+    assert.strictEqual(shown[149999], "password=[MASKED]");
+  });
+
+  test("maskedValuesForDisplay は抜粋で伏せる元の値を返す", () => {
+    const lines = ['Dim pwd As String = "s3cret"', "x = 1", "pwd = Hunter2Secret"];
+    const values = maskedValuesForDisplay(lines, { path: "a.vb" });
+    assert.ok(values !== null);
+    assert.ok(values.includes("s3cret"), JSON.stringify(values));
+    assert.ok(values.includes("Hunter2Secret"), JSON.stringify(values));
+  });
+
+  test("strict のときは厳格でない伏せ方の範囲も伏せる", () => {
+    const lines = ['h = "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe"'];
+    assert.ok(!maskLinesForDisplay(lines, { path: "a.txt" }).join("").includes("sEcReT"));
+  });
+
+  test("strict: false では高エントロピー値を伏せない(--no-strict-mask)", () => {
+    const lines = ['Dim k = "Zx9Qw8Er7Ty6Ui5Op4As3Df2"'];
+    assert.ok(maskLinesForDisplay(lines, { path: "a.vb", strict: true })[0]?.includes("[MASKED]"));
+    assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb", strict: false }), lines);
   });
 });
