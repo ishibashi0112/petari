@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,9 +30,12 @@ function run(argv: string[], cwd: string): { code: number; stdout: string; stder
   }
 }
 
-/** .git のあるリポジトリの dotnet/ に basic フィクスチャを置く */
+/**
+ * .git のあるリポジトリの dotnet/ に basic フィクスチャを置く。一時フォルダはリンクを解いた実際のパスで返す
+ * (macOS の /var は /private/var へのリンクで、process.cwd() は解いた側を返すため)
+ */
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "tazuna-pack-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "tazuna-pack-")));
   mkdirSync(join(dir, ".git"));
   cpSync(BASIC, join(dir, "dotnet"), { recursive: true });
   return dir;
