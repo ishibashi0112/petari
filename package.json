@@ -1,7 +1,7 @@
 {
   "name": "tazuna",
   "version": "0.15.0",
-  "description": "tazuna — pack your codebase for AI chat, then apply its patches safely (zero dependencies; formerly petari and slnmix)",
+  "description": "Build with AI chat, without handing over the reins: pack your codebase for the chat, then verify and apply its patches locally (zero dependencies; formerly petari and slnmix)",
   "keywords": [
     "cli",
     "ai",

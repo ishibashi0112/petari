@@ -1,10 +1,12 @@
 # tazuna
 
-**tazuna — pack your codebase for AI chat, then apply its patches safely**
-**tazuna (手綱) — AI チャットにコードを渡し、返答は手元で確かめてから当てる。**
+**AI に手綱を渡さずに、AI と開発する。**
+**Build with AI chat, without handing over the reins.**
 
-チャットベース AI (M365 Copilot Chat 等) で開発するための CLI ツールです。1 つのコマンドで、
-往復の両側を受け持ちます。
+チャットベース AI (M365 Copilot Chat 等) で開発するための CLI ツールです。名前は「手綱 (たづな)」から。
+AI エージェントは手綱を AI に渡し、AI が PC の上でファイルを書き換えたりコマンドを実行したりするのを、人が承認しながら見守ります。
+tazuna では AI はあなたの PC に一切触れません。コードを渡すのも、返答を確かめて当てるのも、ビルドするのも
+手元の tazuna で、手綱はずっと人が握ったままです。1 つのコマンドで、往復の両側を受け持ちます。
 
 1. **渡す** (`tazuna pack`): プロジェクトのソースを 1 ファイル (パック) にまとめ、チャットに貼る指示文
    (作業手順・出力規約) と一緒にクリップボードへ入れる。認証情報らしき値は `[MASKED]` に伏せる

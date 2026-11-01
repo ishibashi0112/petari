@@ -1,7 +1,7 @@
 # tazuna 要件定義書(適用)
 
-**tazuna — pack your codebase for AI chat, then apply its patches safely**
-**tazuna (手綱) — AI チャットにコードを渡し、返答は手元で確かめてから当てる。**
+**tazuna — build with AI chat, without handing over the reins**
+**tazuna (手綱) — AI に手綱を渡さずに、AI と開発する。**
 
 上記を正式タグラインとする(npm の description・README 冒頭・リポジトリ説明に使用)。
 名前は npm / コマンド / リポジトリすべて `tazuna` で統一し、意味の伝達はタグラインが担う。
