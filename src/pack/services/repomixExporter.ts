@@ -32,6 +32,7 @@ import { isBinaryExtension } from "./binaryExtensions.ts";
 import { summarizeContractSchema } from "./contractSummary.ts";
 import { decodeShiftJis } from "../../core/encoding.ts";
 import { type MaskFinding, maskCredentials } from "../../core/mask.ts";
+import { sourceLanguageOf } from "../../core/source-lexer.ts";
 import {
   parseDesignerVb,
   renderDesignerControlLines,
@@ -576,8 +577,10 @@ export function buildRepomixOutput(
       }
       let content = rawContent;
       if (options.maskCredentials) {
+        // .vb は VB のソースとして、言語の分かるソース(.ts / .cs / .py など)は文字列・コメントの中だけを伏せる
         const masked = maskCredentials(rawContent, {
           vbSource: /\.vb$/i.test(displayPath),
+          language: sourceLanguageOf(displayPath),
           strict: strictMask,
         });
         content = masked.content;
@@ -715,7 +718,13 @@ export function buildRepomixOutput(
         }
         let content = rawContent;
         if (options.maskCredentials) {
-          const masked = maskCredentials(rawContent, { vbSource: false, strict: strictMask });
+          // 追加ディレクトリ・git の一覧のファイルは、言語の分かるソースならその言語として伏せる
+          // (.vb は汎用テキストのまま。generic 構成の .vb の伏せ方は v0.22 と同じに保つ)
+          const masked = maskCredentials(rawContent, {
+            vbSource: false,
+            language: sourceLanguageOf(file.relativePath),
+            strict: strictMask,
+          });
           content = masked.content;
           if (masked.findings.length > 0) {
             maskedFiles.push({ path: file.relativePath, findings: masked.findings });
